@@ -64,15 +64,15 @@ export function evaluateCanonicalInputReadiness(
   if (input.cloudUniverseReadStatus === 'loading') {
     return { ready: false, blockedReason: 'instrument_universe_loading' };
   }
-  if (input.cloudUniverseReadStatus === 'timeout') {
+  if (input.cloudUniverseReadStatus === 'timeout' && input.universeSourceOrigin !== 'bundled') {
     return { ready: false, blockedReason: 'instrument_universe_timeout' };
   }
-  if (input.cloudUniverseReadStatus === 'error') {
+  if (input.cloudUniverseReadStatus === 'error' && input.universeSourceOrigin !== 'bundled') {
     return { ready: false, blockedReason: 'instrument_universe_error' };
   }
   if (
-    input.universeSourceOrigin === 'none'
-    || input.cloudUniverseReadStatus === 'missing'
+    (input.universeSourceOrigin !== 'firestore' && input.universeSourceOrigin !== 'bundled')
+    || (input.cloudUniverseReadStatus === 'missing' && input.universeSourceOrigin !== 'bundled')
   ) {
     return { ready: false, blockedReason: 'instrument_universe_missing' };
   }

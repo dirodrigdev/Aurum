@@ -1187,7 +1187,7 @@ test('instrument universe derives simulation sleeves and assigns cash other to l
   approxEqual(derived.weights.rfChile, 0.1825);
 });
 
-test('effective mix resolver prioritizes universe then instrument base then defaults', () => {
+test('effective mix resolver prioritizes universe and otherwise stays blocked on missing official source', () => {
   const universe = { rvGlobal: 0.1, rfGlobal: 0.2, rvChile: 0.3, rfChile: 0.4 };
   const base = { rvGlobal: 0.4, rfGlobal: 0.3, rvChile: 0.2, rfChile: 0.1 };
   const withUniverse = resolveEffectiveMixFromUniverseFirst({
@@ -1196,27 +1196,27 @@ test('effective mix resolver prioritizes universe then instrument base then defa
     defaultWeights: DEFAULT_PARAMETERS.weights,
     universeSavedAt: 'u-saved',
     instrumentBaseSavedAt: 'b-saved',
+    universeSourceMode: 'instrument-universe-cloud',
   });
-  assert.equal(withUniverse.weightsSourceMode, 'instrument-universe');
+  assert.equal(withUniverse.weightsSourceMode, 'instrument-universe-cloud');
   assert.equal(withUniverse.activeWeightsSavedAt, 'u-saved');
   approxEqual(withUniverse.activeWeights.rvChile, 0.3);
 
-  const withBase = resolveEffectiveMixFromUniverseFirst({
+  const withMissing = resolveEffectiveMixFromUniverseFirst({
     universeWeights: null,
     instrumentBaseWeights: base,
     defaultWeights: DEFAULT_PARAMETERS.weights,
     instrumentBaseSavedAt: 'b-saved',
   });
-  assert.equal(withBase.weightsSourceMode, 'instrument-base');
-  assert.equal(withBase.fallbackReason, 'instrument_universe_missing_or_invalid');
-  approxEqual(withBase.activeWeights.rfGlobal, 0.3);
+  assert.equal(withMissing.weightsSourceMode, 'missing-instrument-universe');
+  assert.equal(withMissing.fallbackReason, 'instrument_universe_missing_legacy_recovery_not_allowed_for_runtime');
 
   const withDefaults = resolveEffectiveMixFromUniverseFirst({
     universeWeights: null,
     instrumentBaseWeights: null,
     defaultWeights: DEFAULT_PARAMETERS.weights,
   });
-  assert.equal(withDefaults.weightsSourceMode, 'system-defaults');
+  assert.equal(withDefaults.weightsSourceMode, 'missing-instrument-universe');
   approxEqual(
     withDefaults.activeWeights.rvGlobal +
       withDefaults.activeWeights.rfGlobal +

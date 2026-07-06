@@ -2,52 +2,25 @@ import {
   buildInstrumentUniverseSnapshotMetadata,
   type InstrumentUniverseSnapshot,
   type InstrumentUniverseSnapshotMetadata,
-  type InstrumentUniverseValidation,
   validateInstrumentUniverseJson,
   validateInstrumentUniverseSnapshot,
 } from '../instrumentUniverse';
-import { deriveOfficialDistributionWeights, deriveInstrumentUniverseDistributionWeights, normalizePortfolioWeights, resolveEffectiveMixFromUniverseFirst, type EffectiveMixDiagnostics, type EffectiveMixResolution } from './officialDistribution';
+import {
+  BUNDLED_INSTRUMENT_UNIVERSE_FILE_NAME,
+  BUNDLED_INSTRUMENT_UNIVERSE_RAW,
+  BUNDLED_INSTRUMENT_UNIVERSE_SAVED_AT,
+} from '../../data/instrumentUniverseBundled';
+import {
+  deriveOfficialDistributionWeights,
+  deriveInstrumentUniverseDistributionWeights,
+  isMissingInstrumentUniverseMode,
+  normalizePortfolioWeights,
+  resolveEffectiveMixFromUniverseFirst,
+  type EffectiveMixDiagnostics,
+  type EffectiveMixResolution,
+} from './officialDistribution';
 import type { InstrumentBaseSnapshot } from '../instrumentBase';
 import type { PortfolioWeights, ReturnAssumptions } from './types';
-
-const BUNDLED_UNIVERSE_RAW = JSON.stringify({
-  instruments: [
-    {
-      instrument_master: {
-        instrument_id: 'midas-bundled-canonical-v1',
-        name: 'MIDAS Bundled Canonical Universe',
-        vehicle_type: 'strategy',
-        currency: 'CLP',
-        is_captive: false,
-        is_sellable: true,
-      },
-      instrument_mix_profile: {
-        current_mix_used: { rv: 0.59, rf: 0.41, cash: 0, other: 0 },
-        current_exposure_used: { global: 0.68, local: 0.32 },
-        historical_used_range: {
-          rv: [0.55, 0.63],
-          rf: [0.37, 0.45],
-          cash: [0, 0],
-          other: [0, 0],
-        },
-      },
-      portfolio_position: {
-        amount_clp: 1,
-        weight_portfolio: 1,
-        role: 'core',
-      },
-      optimizer_metadata: {
-        structural_mix_driver: 'bundled_canonical',
-        estimated_mix_impact_points: 0,
-        replaceability_score: 1,
-        replacement_constraint: 'canonical_bundle',
-      },
-    },
-  ],
-});
-
-const BUNDLED_SAVED_AT = '2026-05-11T00:00:00.000Z';
-const BUNDLED_FILE_NAME = 'midas-bundled-instrument-universe.v1.json';
 
 const hashString = (value: string) => {
   let hash = 0x811c9dc5;
@@ -58,22 +31,29 @@ const hashString = (value: string) => {
   return `fnv1a-${(hash >>> 0).toString(16).padStart(8, '0')}`;
 };
 
-const bundledValidationRaw = validateInstrumentUniverseJson(BUNDLED_UNIVERSE_RAW);
-const bundledSnapshot = bundledValidationRaw.ok && bundledValidationRaw.snapshot
-  ? { ...bundledValidationRaw.snapshot, savedAt: BUNDLED_SAVED_AT }
+const bundledValidationRaw = BUNDLED_INSTRUMENT_UNIVERSE_RAW
+  ? validateInstrumentUniverseJson(BUNDLED_INSTRUMENT_UNIVERSE_RAW)
   : null;
-const bundledValidation: InstrumentUniverseValidation = bundledSnapshot
+const bundledSnapshot = bundledValidationRaw?.ok && bundledValidationRaw.snapshot
+  ? { ...bundledValidationRaw.snapshot, savedAt: BUNDLED_INSTRUMENT_UNIVERSE_SAVED_AT ?? bundledValidationRaw.snapshot.savedAt }
+  : null;
+const bundledValidation = bundledSnapshot
   ? validateInstrumentUniverseSnapshot(bundledSnapshot)
-  : bundledValidationRaw;
-const bundledMetadata = bundledSnapshot
+  : null;
+const bundledMetadata = bundledSnapshot && bundledValidation
   ? buildInstrumentUniverseSnapshotMetadata(bundledSnapshot, bundledValidation, {
-      fileName: BUNDLED_FILE_NAME,
+      fileName: BUNDLED_INSTRUMENT_UNIVERSE_FILE_NAME,
       source: 'bundled',
-      loadedAt: BUNDLED_SAVED_AT,
+      loadedAt: BUNDLED_INSTRUMENT_UNIVERSE_SAVED_AT ?? bundledSnapshot.savedAt,
     })
   : null;
 
-export type CanonicalInstrumentUniverseSource = 'cloud' | 'bundled' | 'local_cache' | 'system-defaults' | 'instrument-base' | 'error';
+export type CanonicalInstrumentUniverseSource =
+  | 'cloud'
+  | 'bundled'
+  | 'local_cache'
+  | 'missing-instrument-universe'
+  | 'error';
 export type CanonicalUniverseSourceOrigin = 'firestore' | 'bundled' | 'cache-local' | 'none';
 
 export type InstrumentUniverseDiagnostics = {
@@ -138,11 +118,17 @@ export function resolveCanonicalInstrumentUniverseState(input: {
   localCacheSnapshot: InstrumentUniverseSnapshot | null;
   localCacheMetadata?: InstrumentUniverseSnapshotMetadata | null;
   instrumentBaseSnapshot: InstrumentBaseSnapshot | null;
+  bundledSnapshotOverride?: InstrumentUniverseSnapshot | null;
+  bundledMetadataOverride?: InstrumentUniverseSnapshotMetadata | null;
   returns: Pick<ReturnAssumptions, 'rfGlobalAnnual' | 'rfChileUFAnnual'>;
   defaultWeights: PortfolioWeights;
 }): CanonicalInstrumentUniverseState {
-  const bundledSnapshotValue = getBundledInstrumentUniverseSnapshot();
-  const bundledMetadataValue = getBundledInstrumentUniverseMetadata();
+  const bundledSnapshotValue = Object.prototype.hasOwnProperty.call(input, 'bundledSnapshotOverride')
+    ? (input.bundledSnapshotOverride ?? null)
+    : getBundledInstrumentUniverseSnapshot();
+  const bundledMetadataValue = Object.prototype.hasOwnProperty.call(input, 'bundledMetadataOverride')
+    ? (input.bundledMetadataOverride ?? null)
+    : getBundledInstrumentUniverseMetadata();
   const cloudDerived = deriveInstrumentUniverseDistributionWeights({
     snapshot: input.cloudSnapshot,
     returns: input.returns,
@@ -168,6 +154,7 @@ export function resolveCanonicalInstrumentUniverseState(input: {
       universeSavedAt: metadata?.loadedAt ?? snapshot.savedAt,
       instrumentBaseSavedAt: input.instrumentBaseSnapshot?.savedAt ?? null,
       diagnostics: derived.diagnostics,
+      universeSourceMode: source === 'cloud' ? 'instrument-universe-cloud' : 'instrument-universe-bundled',
     });
     const summaries = summarizeWeights(resolved.activeWeights);
     return {
@@ -217,11 +204,9 @@ export function resolveCanonicalInstrumentUniverseState(input: {
     diagnostics: null,
   });
   const summaries = summarizeWeights(resolved.activeWeights);
-  const effectiveSource: CanonicalInstrumentUniverseSource = resolved.weightsSourceMode === 'instrument-base'
-    ? 'instrument-base'
-    : resolved.weightsSourceMode === 'system-defaults'
-      ? 'system-defaults'
-      : 'error';
+  const effectiveSource: CanonicalInstrumentUniverseSource = isMissingInstrumentUniverseMode(resolved.weightsSourceMode)
+    ? 'missing-instrument-universe'
+    : 'error';
   return {
     universeWeights: resolved.universeWeights,
     instrumentBaseWeights: resolved.instrumentBaseWeights,

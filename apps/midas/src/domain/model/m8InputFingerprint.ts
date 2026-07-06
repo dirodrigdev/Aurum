@@ -3,7 +3,7 @@ import type { SimulationConfigCloudDiagnostics } from '../../integrations/midas/
 import { buildM8ReplayTrace, type M8ReplayTrace } from './m8ReplayTrace';
 
 export type M8InputFingerprintSource = {
-  source: 'cloud' | 'bundled' | 'local_cache' | 'fallback' | 'mixed' | 'unknown';
+  source: 'cloud' | 'bundled' | 'local_cache' | 'fallback' | 'mixed' | 'none' | 'unknown';
   savedAt?: string | null;
   hash?: string | null;
   detail?: string | null;
@@ -110,11 +110,15 @@ function summarizeFutureCapitalEvents(params: ModelParameters) {
 function buildSources(input: M8InputFingerprintInput): M8InputFingerprintSources {
   const mixSource =
     input.weightsSourceMode === 'instrument-universe'
+    || input.weightsSourceMode === 'instrument-universe-cloud'
+    || input.weightsSourceMode === 'instrument-universe-bundled'
       ? input.universeSourceOrigin === 'firestore'
         ? 'cloud'
         : input.universeSourceOrigin === 'bundled'
           ? 'bundled'
           : 'local_cache'
+      : input.weightsSourceMode === 'missing-instrument-universe'
+        ? 'none'
       : 'fallback';
 
   const fxSource =

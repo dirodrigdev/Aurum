@@ -587,6 +587,7 @@ export const validateInstrumentUniverseJson = (
     };
   }
 
+  const declaredSchemaVersion = toFiniteNumber(parsed.schema_version ?? parsed.schemaVersion) ?? VERSION;
   const instruments = [...instrumentRows.values()].map(buildInstrument);
   const snapshot: InstrumentUniverseSnapshot = {
     version: VERSION,
@@ -597,7 +598,8 @@ export const validateInstrumentUniverseJson = (
     portfolioSummary: parsed.portfolio_summary ?? parsed.portfolioSummary ?? null,
     methodology: parsed.methodology ?? null,
   };
-  return validateInstrumentUniverseSnapshot(snapshot, targetWeights);
+  const validation = validateInstrumentUniverseSnapshot(snapshot, targetWeights);
+  return { ...validation, schemaVersion: declaredSchemaVersion };
 };
 
 export const validateInstrumentUniverseSnapshot = (

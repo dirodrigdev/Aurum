@@ -37,7 +37,10 @@ import { T, css } from './theme';
 type AurumIntegrationStatus = 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
 type SettingsWeightsSourceMode =
   | 'instrument-universe'
+  | 'instrument-universe-cloud'
+  | 'instrument-universe-bundled'
   | 'instrument-base'
+  | 'missing-instrument-universe'
   | 'json-official'
   | 'last-known-official'
   | 'system-defaults'
@@ -385,7 +388,10 @@ function resolveActiveMixSource(input: {
   weightsSourceMode: SettingsWeightsSourceMode;
   universeSourceOrigin: SettingsUniverseSourceOrigin;
 }) {
-  if (input.weightsSourceMode === 'instrument-universe' && input.universeSourceOrigin === 'firestore') {
+  if (
+    (input.weightsSourceMode === 'instrument-universe' || input.weightsSourceMode === 'instrument-universe-cloud')
+    && input.universeSourceOrigin === 'firestore'
+  ) {
     return {
       title: 'Fuente activa de mix: Instrument Universe V1 cloud',
       subtitle: 'Fuente oficial vigente para pesos y composición estructural.',
@@ -394,7 +400,10 @@ function resolveActiveMixSource(input: {
       official: true,
     };
   }
-  if (input.weightsSourceMode === 'instrument-universe' && input.universeSourceOrigin === 'bundled') {
+  if (
+    (input.weightsSourceMode === 'instrument-universe' || input.weightsSourceMode === 'instrument-universe-bundled')
+    && input.universeSourceOrigin === 'bundled'
+  ) {
     return {
       title: 'Fuente activa de mix: Instrument Universe V1 backup/bundled',
       subtitle: 'Usando backup oficial de Instrument Universe V1 porque cloud no está disponible.',
@@ -403,19 +412,10 @@ function resolveActiveMixSource(input: {
       official: true,
     };
   }
-  if (input.weightsSourceMode === 'instrument-base') {
-    return {
-      title: 'Fuente activa de mix: Legacy recovery — deprecated',
-      subtitle: 'MIDAS está usando recuperación legacy. Esta no es la fuente oficial de mix.',
-      warning: 'MIDAS no está usando una fuente oficial de Instrument Universe V1. La simulación puede no ser confiable hasta cargar un universe válido.',
-      tone: 'negative' as const,
-      official: false,
-    };
-  }
   return {
     title: 'Fuente activa de mix: Missing / no valid universe',
-    subtitle: 'No hay Instrument Universe V1 válido como fuente activa de mix.',
-    warning: 'MIDAS no está usando una fuente oficial de Instrument Universe V1. La simulación puede no ser confiable hasta cargar un universe válido.',
+    subtitle: 'No hay Instrument Universe V1 válido. Carga un universe oficial para habilitar simulación oficial.',
+    warning: 'No hay Instrument Universe V1 válido. La simulación oficial queda bloqueada hasta cargar una fuente cloud o backup/bundled oficial validada.',
     tone: 'negative' as const,
     official: false,
   };
@@ -529,8 +529,7 @@ export function SettingsPage({
   const activeUniverseLocalStale =
     Boolean(savedUniverseMetadata?.loadedAt && activeMixSavedAt)
     && new Date(savedUniverseMetadata!.loadedAt).getTime() < new Date(activeMixSavedAt!).getTime();
-  const canPersistLegacy =
-    !hasOfficialUniverseSource || legacyRecoveryConfirmed;
+  const canPersistLegacy = true;
 
   const runValidation = () => {
     const next = validateInstrumentBaseJson(editorValue, optimizableBaseReference.amountClp);
@@ -860,6 +859,7 @@ export function SettingsPage({
             >
               Cargar archivo
               <input
+                id="midas-universe-upload-input"
                 type="file"
                 accept="application/json,.json"
                 style={{ display: 'none' }}
@@ -1049,17 +1049,48 @@ export function SettingsPage({
         </summary>
         <div style={{ display: 'grid', gap: 12, marginTop: 14 }}>
           <div style={{ color: T.warning, fontSize: 13, lineHeight: 1.5 }}>
-            Esta fuente está deprecated, puede estar desactualizada y no es la fuente oficial. No usar salvo recuperación técnica.
+            Herramienta de recuperación/migración. El JSON legacy está deprecated, puede estar desactualizado y no habilita simulación oficial.
           </div>
-          {hasOfficialUniverseSource && (
-            <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', color: T.textSecondary, fontSize: 13 }}>
-              <input
-                type="checkbox"
-                checked={legacyRecoveryConfirmed}
-                onChange={(event) => setLegacyRecoveryConfirmed(event.target.checked)}
-              />
-              <span>Confirmo que deseo habilitar recuperación legacy aunque exista un Instrument Universe V1 válido.</span>
-            </label>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', color: T.textSecondary, fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={legacyRecoveryConfirmed}
+              onChange={(event) => {
+                setLegacyRecoveryConfirmed(event.target.checked);
+              }}
+            />
+            <span>Confirmo que usaré esta sección solo para recuperar, inspeccionar o migrar datos legacy. No habilita simulación oficial.</span>
+          </label>
+          <div style={{ color: T.textSecondary, fontSize: 13, lineHeight: 1.5 }}>
+            Para simular debes cargar Instrument Universe V1 válido. Legacy recovery nunca cambia la fuente oficial runtime.
+          </div>
+          {!hasOfficialUniverseSource && (
+            <div style={{ display: 'grid', gap: 8 }}>
+              <div style={{ color: T.negative, fontSize: 13, lineHeight: 1.5 }}>
+                Falta Instrument Universe V1 oficial. Carga un universe cloud o backup/bundled válido para habilitar simulación oficial.
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLegacyRecovery(false);
+                  const input = document.getElementById('midas-universe-upload-input');
+                  input?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                }}
+                style={{
+                  borderRadius: 14,
+                  border: `1px solid ${T.primaryStrong}`,
+                  background: T.primaryStrong,
+                  color: '#fff',
+                  padding: '10px 14px',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  justifySelf: 'start',
+                }}
+              >
+                Cargar Instrument Universe V1
+              </button>
+            </div>
           )}
           <div style={{ color: T.textSecondary, fontSize: 13 }}>
             Soporta arreglo directo o objeto con `instruments` / `instrumentos` (incluye campos en español).

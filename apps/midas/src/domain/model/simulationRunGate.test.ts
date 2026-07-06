@@ -10,7 +10,7 @@ const base = () => ({
   aurumIntegrationStatus: 'available' as const,
   aurumSnapshotAvailable: true,
   cloudUniverseReadStatus: 'loaded' as const,
-  universeSourceOrigin: 'cache-local' as const,
+  universeSourceOrigin: 'firestore' as const,
   simWorking: false,
   recalcWorkerStatus: 'idle' as const,
   simResultAvailable: false,
@@ -103,7 +103,7 @@ const base = () => ({
   const result = evaluateCanonicalInputReadiness({
     ...base(),
     cloudHydrationReady: false,
-    universeSourceOrigin: 'cache-local',
+    universeSourceOrigin: 'firestore',
   });
   assert.deepEqual(result, { ready: false, blockedReason: 'cloud_hydration_incomplete' });
 })();
@@ -141,6 +141,23 @@ const base = () => ({
   });
   assert.equal(result.status, 'blocked');
   if (result.status === 'blocked') assert.equal(result.blockedReason, 'instrument_universe_missing');
+})();
+
+(() => {
+  const result = evaluateCanonicalInputReadiness({
+    ...base(),
+    cloudUniverseReadStatus: 'missing',
+    universeSourceOrigin: 'bundled',
+  });
+  assert.deepEqual(result, { ready: true });
+})();
+
+(() => {
+  const result = evaluateCanonicalInputReadiness({
+    ...base(),
+    universeSourceOrigin: 'cache-local',
+  });
+  assert.deepEqual(result, { ready: false, blockedReason: 'instrument_universe_missing' });
 })();
 
 (() => {

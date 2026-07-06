@@ -394,4 +394,18 @@ const baseInput = (): M8InputFingerprintInput => {
   assert.ok(fingerprint.warnings.some((warning) => warning.includes('contaminando el input canónico')));
 })();
 
+(() => {
+  const input = baseInput();
+  input.weightsSourceMode = 'instrument-universe-cloud';
+  const cloud = buildM8InputFingerprint(input);
+  input.weightsSourceMode = 'instrument-universe-bundled';
+  input.universeSourceOrigin = 'bundled';
+  const bundled = buildM8InputFingerprint(input);
+  input.weightsSourceMode = 'missing-instrument-universe';
+  input.universeSourceOrigin = 'none';
+  const missing = buildM8InputFingerprint(input);
+  assert.notEqual(cloud.diagnosticHash, bundled.diagnosticHash, 'cloud and bundled sources must remain distinguishable');
+  assert.notEqual(bundled.diagnosticHash, missing.diagnosticHash, 'missing source must remain distinguishable from bundled source');
+})();
+
 console.log('m8InputFingerprint tests passed');

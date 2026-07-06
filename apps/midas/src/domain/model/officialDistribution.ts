@@ -5,14 +5,24 @@ import type { ModelParameters, PortfolioWeights, ReturnAssumptions } from './typ
 
 export type WeightsSourceMode =
   | 'instrument-universe'
+  | 'instrument-universe-cloud'
+  | 'instrument-universe-bundled'
   | 'instrument-base'
+  | 'missing-instrument-universe'
   | 'json-official'
   | 'last-known-official'
   | 'system-defaults'
   | 'simulation'
   | 'error';
 
-export type EffectiveMixSourceMode = 'instrument-universe' | 'instrument-base' | 'system-defaults' | 'error';
+export type EffectiveMixSourceMode =
+  | 'instrument-universe'
+  | 'instrument-universe-cloud'
+  | 'instrument-universe-bundled'
+  | 'instrument-base'
+  | 'missing-instrument-universe'
+  | 'system-defaults'
+  | 'error';
 
 export type EffectiveMixDiagnostics = {
   universeUsableCount: number;
@@ -32,6 +42,22 @@ export type EffectiveMixResolution = {
   activeWeightsSavedAt: string | null;
   diagnostics: EffectiveMixDiagnostics;
 };
+
+export function isOfficialInstrumentUniverseMode(mode: WeightsSourceMode | string): boolean {
+  return (
+    mode === 'instrument-universe'
+    || mode === 'instrument-universe-cloud'
+    || mode === 'instrument-universe-bundled'
+  );
+}
+
+export function isLegacyInstrumentUniverseMode(mode: WeightsSourceMode | string): boolean {
+  return mode === 'instrument-base';
+}
+
+export function isMissingInstrumentUniverseMode(mode: WeightsSourceMode | string): boolean {
+  return mode === 'missing-instrument-universe';
+}
 
 export type OfficialDistributionState = {
   officialWeights: PortfolioWeights | null;
@@ -174,6 +200,7 @@ export function resolveEffectiveMixFromUniverseFirst(input: {
   universeSavedAt?: string | null;
   instrumentBaseSavedAt?: string | null;
   diagnostics?: EffectiveMixDiagnostics | null;
+  universeSourceMode?: Extract<EffectiveMixSourceMode, 'instrument-universe' | 'instrument-universe-cloud' | 'instrument-universe-bundled'>;
 }): EffectiveMixResolution {
   const universeWeights = sanitizePortfolioWeights(input.universeWeights);
   const instrumentBaseWeights = sanitizePortfolioWeights(input.instrumentBaseWeights);
@@ -191,40 +218,35 @@ export function resolveEffectiveMixFromUniverseFirst(input: {
       universeWeights,
       instrumentBaseWeights,
       activeWeights: universeWeights,
-      weightsSourceMode: 'instrument-universe',
-      sourceLabel: 'Instrument Universe',
+      weightsSourceMode: input.universeSourceMode ?? 'instrument-universe',
+      sourceLabel:
+        input.universeSourceMode === 'instrument-universe-bundled'
+          ? 'Instrument Universe V1 backup/bundled'
+          : input.universeSourceMode === 'instrument-universe-cloud'
+            ? 'Instrument Universe V1 cloud'
+            : 'Instrument Universe',
       fallbackReason: null,
       activeWeightsSavedAt: input.universeSavedAt ?? null,
-      diagnostics: fallbackDiagnostics,
-    };
-  }
-  if (instrumentBaseWeights) {
-    return {
-      universeWeights: null,
-      instrumentBaseWeights,
-      activeWeights: instrumentBaseWeights,
-      weightsSourceMode: 'instrument-base',
-      sourceLabel: 'Base instrumental real',
-      fallbackReason: 'instrument_universe_missing_or_invalid',
-      activeWeightsSavedAt: input.instrumentBaseSavedAt ?? null,
       diagnostics: fallbackDiagnostics,
     };
   }
   if (defaultWeights) {
     return {
       universeWeights: null,
-      instrumentBaseWeights: null,
+      instrumentBaseWeights,
       activeWeights: defaultWeights,
-      weightsSourceMode: 'system-defaults',
-      sourceLabel: 'Defaults del sistema',
-      fallbackReason: 'instrument_universe_and_instrument_base_missing',
+      weightsSourceMode: 'missing-instrument-universe',
+      sourceLabel: 'Falta Instrument Universe V1 oficial',
+      fallbackReason: instrumentBaseWeights
+        ? 'instrument_universe_missing_legacy_recovery_not_allowed_for_runtime'
+        : 'instrument_universe_missing_no_official_source',
       activeWeightsSavedAt: null,
       diagnostics: fallbackDiagnostics,
     };
   }
   return {
     universeWeights: null,
-    instrumentBaseWeights: null,
+    instrumentBaseWeights,
     activeWeights: { rvGlobal: 0, rfGlobal: 0, rvChile: 0, rfChile: 1 },
     weightsSourceMode: 'error',
     sourceLabel: 'Error (sin distribución usable)',

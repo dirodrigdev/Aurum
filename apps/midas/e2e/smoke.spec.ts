@@ -92,10 +92,10 @@ test.skip('scenario lab tab loads official exploratory evaluation shell', async 
 
 test('settings tab stays read-only in local fallback', async ({ page }) => {
   await openApp(page);
-  await openTab(page, 'Ajustes', /Guardar \/ reemplazar base/);
+  await openTab(page, 'Ajustes', /Cargar Instrument Universe V1|Guardar mix aperturado cloud/);
   await expect(page.getByText('Modo local de revisión', { exact: true }).last()).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Guardar / reemplazar base' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Guardar mix aperturado cloud' })).toBeDisabled();
+  await expect(page.getByText('Recuperación legacy avanzada', { exact: true })).toBeVisible();
 });
 
 test.describe('mobile smoke', () => {

@@ -163,7 +163,7 @@ test('zero-weight instrument is shown as not usable without error semantics', ()
   });
 });
 
-test('bundled and legacy fallback states are labeled explicitly', () => {
+test('bundled source is labeled explicitly and legacy stays as advanced tool only', () => {
   withWindow(() => {
     seedUniverse();
     const bundledHtml = renderSettings({
@@ -172,14 +172,47 @@ test('bundled and legacy fallback states are labeled explicitly', () => {
       activeMixHash: 'fnv1a-bundled01',
     });
     assert.match(bundledHtml, /Fuente activa de mix: Instrument Universe V1 backup\/bundled/);
-    const legacyHtml = renderSettings({
-      weightsSourceMode: 'instrument-base',
+    assert.match(bundledHtml, /Usando backup oficial de Instrument Universe V1 porque cloud no está disponible/);
+    const missingHtml = renderSettings({
+      weightsSourceMode: 'missing-instrument-universe',
       universeSourceOrigin: 'none',
       activeMixHash: null,
       activeMixSavedAt: null,
     });
-    assert.match(legacyHtml, /Fuente activa de mix: Legacy recovery — deprecated/);
-    assert.match(legacyHtml, /MIDAS no está usando una fuente oficial de Instrument Universe V1/);
+    assert.match(missingHtml, /Herramienta de recuperación\/migración/);
+    assert.match(missingHtml, /No habilita simulación oficial/);
+    assert.doesNotMatch(missingHtml, /Fuente activa de mix: Legacy recovery — deprecated/);
+  });
+});
+
+test('missing universe keeps legacy behind advanced recovery and shows official CTA', () => {
+  withWindow(() => {
+    seedUniverse();
+    const html = renderSettings({
+      weightsSourceMode: 'missing-instrument-universe',
+      universeSourceOrigin: 'none',
+      activeMixHash: null,
+      activeMixSavedAt: null,
+    });
+    assert.match(html, /Fuente activa de mix: Missing \/ no valid universe/);
+    assert.match(html, /Cargar Instrument Universe V1/);
+    assert.match(html, /Recuperación legacy avanzada/);
+    assert.match(html, /Falta Instrument Universe V1 oficial/);
+    assert.doesNotMatch(html, /Pegar JSON/);
+  });
+});
+
+test('defaults do not become official active source', () => {
+  withWindow(() => {
+    seedUniverse();
+    const html = renderSettings({
+      weightsSourceMode: 'system-defaults',
+      universeSourceOrigin: 'none',
+      activeMixHash: null,
+      activeMixSavedAt: null,
+    });
+    assert.match(html, /Fuente activa de mix: Missing \/ no valid universe/);
+    assert.match(html, /simulación oficial queda bloqueada/);
   });
 });
 

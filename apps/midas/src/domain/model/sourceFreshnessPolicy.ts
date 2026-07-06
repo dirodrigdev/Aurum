@@ -289,12 +289,12 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
       label: 'Instrument Universe',
       source: input.instrumentUniverse.source,
       role:
-        input.instrumentUniverse.weightsMode === 'instrument-universe'
+        isOfficialInstrumentUniverseMode(input.instrumentUniverse.weightsMode)
           ? input.instrumentUniverse.source === 'cloud'
             ? 'effective_primary'
             : 'effective_fallback'
           : 'not_effective_for_run',
-      usedForRun: input.instrumentUniverse.weightsMode === 'instrument-universe',
+      usedForRun: isOfficialInstrumentUniverseMode(input.instrumentUniverse.weightsMode),
       savedAt: input.instrumentUniverse.savedAt,
       hash: input.instrumentUniverse.hash,
       freshness: instrumentUniverseFreshness,
@@ -305,6 +305,10 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
             ? 'Cache local aplicada como fuente efectiva'
             : input.instrumentUniverse.source === 'none'
               ? 'No hay Instrument Universe efectivo'
+              : isLegacyInstrumentUniverseMode(input.instrumentUniverse.weightsMode)
+                ? 'Legacy recovery activa; no es fuente oficial'
+                : isMissingInstrumentUniverseMode(input.instrumentUniverse.weightsMode)
+                  ? 'No hay Instrument Universe V1 válido'
               : null,
     },
     {
@@ -377,14 +381,23 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
     input.simulationActiveV1.source === 'local_cache' && simulationConfigFreshness.expired ? 'simulation_config_local_cache_stale' : null,
     input.simulationActiveV1.source === 'local_cache' && !input.simulationActiveV1.hash ? 'simulation_config_local_cache_without_hash' : null,
     input.simulationActiveV1.source === 'fallback' ? 'simulation_config_fallback_effective' : null,
-    input.instrumentUniverse.weightsMode === 'instrument-universe' && input.instrumentUniverse.source === 'bundled'
+    isOfficialInstrumentUniverseMode(input.instrumentUniverse.weightsMode) && input.instrumentUniverse.source === 'bundled'
       ? 'instrument_universe_bundled_effective'
       : null,
-    input.instrumentUniverse.weightsMode === 'instrument-universe' && input.instrumentUniverse.source === 'local_cache'
+    isOfficialInstrumentUniverseMode(input.instrumentUniverse.weightsMode) && input.instrumentUniverse.source === 'local_cache'
       ? 'instrument_universe_local_cache_effective'
       : null,
-    input.instrumentUniverse.weightsMode === 'instrument-universe' && input.instrumentUniverse.source === 'none'
+    isOfficialInstrumentUniverseMode(input.instrumentUniverse.weightsMode) && input.instrumentUniverse.source === 'none'
       ? 'instrument_universe_missing_effective'
+      : null,
+    isLegacyInstrumentUniverseMode(input.instrumentUniverse.weightsMode)
+      ? 'instrument_universe_legacy_recovery_effective'
+      : null,
+    isMissingInstrumentUniverseMode(input.instrumentUniverse.weightsMode)
+      ? 'instrument_universe_missing_effective'
+      : null,
+    input.instrumentUniverse.weightsMode === 'system-defaults'
+      ? 'instrument_universe_defaults_effective'
       : null,
     photoStatus === 'stale_snapshot' ? 'aurum_snapshot_stale' : null,
     photoStatus === 'missing_snapshot' ? 'aurum_snapshot_missing' : null,
@@ -470,7 +483,7 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
         : input.simulationActiveV1.source === 'local_cache'
           ? 'Modelo Base cache local'
           : 'Modelo Base fallback',
-      input.instrumentUniverse.weightsMode === 'instrument-universe'
+      isOfficialInstrumentUniverseMode(input.instrumentUniverse.weightsMode)
         ? input.instrumentUniverse.source === 'cloud'
           ? 'Universe cloud'
           : input.instrumentUniverse.source === 'bundled'
@@ -478,7 +491,13 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
             : input.instrumentUniverse.source === 'local_cache'
               ? 'Universe local'
               : 'Universe faltante'
-        : 'Mix respaldo',
+        : isLegacyInstrumentUniverseMode(input.instrumentUniverse.weightsMode)
+          ? 'Universe legacy recovery'
+          : isMissingInstrumentUniverseMode(input.instrumentUniverse.weightsMode)
+            ? 'Universe faltante'
+            : input.instrumentUniverse.weightsMode === 'system-defaults'
+              ? 'Universe defaults'
+              : 'Mix respaldo',
       photoStatusLabel(photoStatus, input.aurumSnapshot.publishedAt),
     ].join(' · '),
     photoStatus,
@@ -491,3 +510,8 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
     forbiddenSourcesUsed,
   };
 }
+import {
+  isLegacyInstrumentUniverseMode,
+  isMissingInstrumentUniverseMode,
+  isOfficialInstrumentUniverseMode,
+} from './officialDistribution';

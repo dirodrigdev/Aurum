@@ -10,7 +10,12 @@ import type {
 } from '../domain/model/types';
 import { SCENARIO_VARIANTS } from '../domain/model/defaults';
 import { buildSpendingPhaseUiLabels, normalizeModelSpendingPhases } from '../domain/model/spendingPhases';
-import type { WeightsSourceMode } from '../domain/model/officialDistribution';
+import {
+  isLegacyInstrumentUniverseMode,
+  isMissingInstrumentUniverseMode,
+  isOfficialInstrumentUniverseMode,
+  type WeightsSourceMode,
+} from '../domain/model/officialDistribution';
 import type { OperativeFxResolution } from '../domain/model/operativeFx';
 import type { M8InputFingerprint } from '../domain/model/m8InputFingerprint';
 import { buildMidasEvaluation } from '../domain/model/midasEvaluation';
@@ -141,7 +146,8 @@ export function buildMixSourceCompactLabel(input: {
   sourcePolicy: SourceFreshnessPolicy | null;
 }) {
   const { weightsSourceMode, instrumentUniverseCloudReadStatus, universeSourceOrigin, sourcePolicy } = input;
-  if (weightsSourceMode === 'instrument-universe') {
+  if (isOfficialInstrumentUniverseMode(weightsSourceMode)) {
+    if (universeSourceOrigin === 'bundled') return 'Mix respaldo oficial';
     if (instrumentUniverseCloudReadStatus === 'loading') return 'Mix cloud pendiente';
     if (instrumentUniverseCloudReadStatus === 'timeout') return 'Instrument Universe timeout';
     if (instrumentUniverseCloudReadStatus === 'missing') return 'Falta Universe cloud';
@@ -152,10 +158,12 @@ export function buildMixSourceCompactLabel(input: {
       const freshnessStatus = instrumentUniverseSource.freshness.expired ? 'actualizar' : 'vigente';
       return `Mix oficial · ${formatAgeDaysCompact(instrumentUniverseSource.freshness.ageDays)} · ${freshnessStatus}`;
     }
-    if (universeSourceOrigin === 'bundled') return 'Mix respaldo';
     return 'Mix local';
   }
   if (weightsSourceMode === 'simulation') return 'Mix override';
+  if (isLegacyInstrumentUniverseMode(weightsSourceMode)) return 'Mix legacy recovery';
+  if (isMissingInstrumentUniverseMode(weightsSourceMode)) return 'Mix faltante';
+  if (weightsSourceMode === 'system-defaults') return 'Mix defaults críticos';
   return 'Mix fallback';
 }
 
@@ -1711,15 +1719,16 @@ export function SimulationPage({
     [aurumSnapshotPublishedAt],
   );
   const mixTrustSourceLabel = useMemo(() => {
-    if (weightsSourceMode === 'instrument-universe') {
+    if (isOfficialInstrumentUniverseMode(weightsSourceMode)) {
       return universeSourceOrigin === 'firestore'
         ? 'Mix aperturado por instrumento · cloud'
         : universeSourceOrigin === 'bundled'
           ? 'Mix aperturado por instrumento · versión interna de respaldo'
           : 'Mix aperturado por instrumento · copia local';
     }
-    if (weightsSourceMode === 'instrument-base') return 'Mix por instrumento · respaldo';
-    if (weightsSourceMode === 'system-defaults') return 'Mix por instrumento · defaults del sistema';
+    if (isLegacyInstrumentUniverseMode(weightsSourceMode)) return 'Mix por instrumento · legacy recovery';
+    if (weightsSourceMode === 'missing-instrument-universe') return 'Mix por instrumento · falta universe oficial';
+    if (weightsSourceMode === 'system-defaults') return 'Mix por instrumento · defaults no auditados';
     if (weightsSourceMode === 'simulation') return 'Mix agregado M8 · override temporal';
     return weightsSourceLabel;
   }, [universeSourceOrigin, weightsSourceLabel, weightsSourceMode]);
@@ -1871,15 +1880,19 @@ export function SimulationPage({
     : hasPendingSnapshot
       ? 'Hay un snapshot Aurum detectado pendiente de aplicar.'
       : 'Esta corrida usa base local; puede diferir de Aurum.';
-  const mixSourceTone: SourceBadgeTone = weightsSourceMode === 'instrument-universe'
-    ? instrumentUniverseCloudReadStatus === 'loaded'
-      ? (universeSourceOrigin === 'firestore' ? 'ok' : universeSourceOrigin === 'bundled' ? 'warning' : 'warning')
-      : instrumentUniverseCloudReadStatus === 'loading'
-        ? 'warning'
-        : 'alert'
+  const mixSourceTone: SourceBadgeTone = isOfficialInstrumentUniverseMode(weightsSourceMode)
+    ? universeSourceOrigin === 'bundled'
+      ? 'warning'
+      : instrumentUniverseCloudReadStatus === 'loaded'
+        ? (universeSourceOrigin === 'firestore' ? 'ok' : 'warning')
+        : instrumentUniverseCloudReadStatus === 'loading'
+          ? 'warning'
+          : 'alert'
     : 'alert';
-  const mixSourceWarning = weightsSourceMode === 'instrument-universe'
-    ? instrumentUniverseCloudReadStatus === 'loading'
+  const mixSourceWarning = isOfficialInstrumentUniverseMode(weightsSourceMode)
+    ? universeSourceOrigin === 'bundled'
+      ? 'Usando backup oficial de Instrument Universe V1 porque cloud no está disponible.'
+      : instrumentUniverseCloudReadStatus === 'loading'
       ? 'Instrument Universe cloud sigue cargando; no lo tratamos como fuente lista.'
       : instrumentUniverseCloudReadStatus === 'timeout'
         ? 'Timeout de lectura cloud para Instrument Universe.'
@@ -1889,10 +1902,12 @@ export function SimulationPage({
             ? 'Error leyendo Instrument Universe cloud.'
             : universeSourceOrigin === 'cache-local'
               ? 'El mix aperturado por instrumento está usando copia local.'
-              : universeSourceOrigin === 'bundled'
-                ? 'El mix aperturado por instrumento está usando versión interna de respaldo.'
-                : null
-    : 'El mix aperturado por instrumento no está disponible y se está usando un respaldo.';
+              : 'El mix aperturado por instrumento está usando versión interna de respaldo.'
+    : isLegacyInstrumentUniverseMode(weightsSourceMode)
+      ? 'Legacy recovery está activa. No es una fuente oficial de Instrument Universe V1.'
+      : weightsSourceMode === 'system-defaults'
+        ? 'Advertencia crítica: no hay Instrument Universe válido; usando defaults no auditados.'
+        : 'No hay Instrument Universe V1 válido. Carga un universe oficial o activa manualmente recuperación legacy.';
   const usdFxSourceSummary = usingPrimaryFx
     ? 'Aurum current'
     : operativeFxResolution.reasonCode === 'manual_override_applied'
@@ -1984,15 +1999,17 @@ export function SimulationPage({
         : 'Toggle apagado y sin capital detectado, no corresponde aplicar.';
 
     let mixSeverity: TraceSeverity;
-    if (weightsSourceMode === 'instrument-universe') mixSeverity = 'OK';
+    if (isOfficialInstrumentUniverseMode(weightsSourceMode)) mixSeverity = 'OK';
     else if (weightsSourceMode === 'simulation') mixSeverity = mixDiffPp > 2 ? 'Alerta' : 'Aviso';
     else if (mixDiffPp > 2) mixSeverity = 'Alerta';
     else mixSeverity = 'Aviso';
     const mixFallbackName =
-      weightsSourceMode === 'instrument-base'
-        ? 'Mix por instrumento (respaldo)'
+      isLegacyInstrumentUniverseMode(weightsSourceMode)
+        ? 'Mix por instrumento (legacy recovery)'
+        : weightsSourceMode === 'missing-instrument-universe'
+          ? 'Instrument Universe faltante'
         : weightsSourceMode === 'system-defaults'
-          ? 'Mix por instrumento (defaults del sistema)'
+          ? 'Mix por instrumento (defaults no auditados)'
           : weightsSourceMode === 'simulation'
             ? 'Mix agregado M8 (override temporal)'
             : weightsSourceMode === 'json-official'
@@ -2001,8 +2018,10 @@ export function SimulationPage({
                 ? 'Último oficial válido'
                 : 'Sin respaldo usable';
     const mixFallbackTech =
-      weightsSourceMode === 'instrument-base'
+      isLegacyInstrumentUniverseMode(weightsSourceMode)
         ? 'midas.instrument-base.v1'
+        : weightsSourceMode === 'missing-instrument-universe'
+          ? 'instrument_universe_missing'
         : weightsSourceMode === 'system-defaults'
           ? 'DEFAULT_PARAMETERS.weights'
           : weightsSourceMode === 'simulation'
@@ -2012,12 +2031,14 @@ export function SimulationPage({
               : weightsSourceMode === 'last-known-official'
                 ? 'lastKnownOfficialWeights'
                 : 'weightsSourceMode=error';
-    const mixReason = weightsSourceMode === 'instrument-universe'
+    const mixReason = isOfficialInstrumentUniverseMode(weightsSourceMode)
       ? 'Se usa la fuente principal porque el mix aperturado por instrumento está disponible y se pudo derivar al mix agregado M8.'
       : weightsSourceMode === 'simulation'
         ? 'Se usa override manual temporal en el mix agregado M8; no reemplaza la fuente estructural.'
-        : weightsSourceMode === 'instrument-base'
-          ? 'Se usa respaldo porque el mix aperturado por instrumento no está disponible o no alcanza para derivar el mix agregado M8.'
+        : isLegacyInstrumentUniverseMode(weightsSourceMode)
+          ? 'Se activó recuperación legacy de forma explícita. No corresponde a una fuente oficial de Instrument Universe V1.'
+          : weightsSourceMode === 'missing-instrument-universe'
+            ? 'No hay Instrument Universe V1 válido. La simulación oficial debe permanecer bloqueada hasta cargar una fuente oficial.'
           : mixDiffPp <= 0.5
             ? 'Se usa fallback activo, sin diferencia material contra la mejor referencia disponible.'
             : 'Se usa fallback activo; la diferencia contra la mejor referencia disponible sí es material.';

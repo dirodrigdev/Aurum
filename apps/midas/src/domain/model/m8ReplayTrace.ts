@@ -140,7 +140,14 @@ const resolveInstrumentUniverseSource = (
   if (sourceOrigin === 'firestore') return 'cloud';
   if (sourceOrigin === 'bundled') return 'bundled';
   if (sourceOrigin === 'cache-local') return 'local_cache';
-  return weightsSourceMode === 'instrument-universe' ? 'none' : 'fallback';
+  if (weightsSourceMode === 'missing-instrument-universe') return 'none';
+  return (
+    weightsSourceMode === 'instrument-universe'
+    || weightsSourceMode === 'instrument-universe-cloud'
+    || weightsSourceMode === 'instrument-universe-bundled'
+  )
+    ? 'none'
+    : 'fallback';
 };
 
 export function buildM8ReplayTrace(input: M8ReplayTraceInput): M8ReplayTrace {

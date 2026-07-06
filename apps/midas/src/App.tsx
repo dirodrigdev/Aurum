@@ -25,6 +25,8 @@ import {
   applyActiveDistributionToParams,
   areWeightsEquivalent,
   deriveOfficialDistributionWeights,
+  isMissingInstrumentUniverseMode,
+  isOfficialInstrumentUniverseMode,
   normalizePortfolioWeights,
   resolveEffectiveMixFromUniverseFirst,
   sanitizePortfolioWeights,
@@ -629,10 +631,16 @@ function sourceStatusFromSimulationConfig(
   return source === 'local_cache' ? 'local' : 'fallback';
 }
 
-function sourceStatusFromInstrumentUniverse(origin: 'firestore' | 'bundled' | 'cache-local' | 'none'): SourceStatus {
-  if (origin === 'firestore') return 'canonical';
-  if (origin === 'bundled') return 'fallback';
-  if (origin === 'cache-local') return 'local';
+function sourceStatusFromInstrumentUniverse(
+  origin: 'firestore' | 'bundled' | 'cache-local' | 'none',
+  weightsSourceMode: WeightsSourceMode,
+): SourceStatus {
+  if (isOfficialInstrumentUniverseMode(weightsSourceMode)) {
+    if (origin === 'firestore') return 'canonical';
+    if (origin === 'bundled') return 'fallback';
+    if (origin === 'cache-local') return 'local';
+  }
+  if (isMissingInstrumentUniverseMode(weightsSourceMode) || weightsSourceMode === 'system-defaults') return 'missing';
   return 'missing';
 }
 
@@ -4096,11 +4104,15 @@ export default function App() {
 
   const weightsSourceLabel = useMemo(() => {
     if (weightsSourceMode === 'simulation') return 'Simulación';
-    if (weightsSourceMode === 'instrument-universe') return 'Instrument Universe';
-    if (weightsSourceMode === 'instrument-base') return 'Base instrumental real';
+    if (weightsSourceMode === 'instrument-universe' || weightsSourceMode === 'instrument-universe-cloud') {
+      return 'Instrument Universe V1 cloud';
+    }
+    if (weightsSourceMode === 'instrument-universe-bundled') return 'Instrument Universe V1 backup/bundled';
+    if (weightsSourceMode === 'instrument-base') return 'Legacy recovery';
+    if (weightsSourceMode === 'missing-instrument-universe') return 'Instrument Universe faltante';
     if (weightsSourceMode === 'json-official') return 'JSON oficial';
     if (weightsSourceMode === 'last-known-official') return 'Último JSON válido';
-    if (weightsSourceMode === 'system-defaults') return 'Defaults del sistema';
+    if (weightsSourceMode === 'system-defaults') return 'Defaults técnicos';
     return 'Error (sin distribución usable)';
   }, [weightsSourceMode]);
   const officialReferenceWeights = useMemo(
@@ -4426,7 +4438,9 @@ export default function App() {
           ? 'cloud'
           : universeSourceOrigin === 'bundled'
             ? 'bundled'
-            : 'local_cache',
+            : isMissingInstrumentUniverseMode(weightsSourceMode) || weightsSourceMode === 'system-defaults'
+                ? 'missing'
+                : 'local_cache',
       aurumSnapshot: lastAppliedAurumSnapshotSignature ? 'cloud' : 'fallback',
       fx: operativeFxResolution.sourceMode ?? 'fallback',
     },
@@ -4562,7 +4576,7 @@ export default function App() {
       criticalSources: {
         aurumSnapshot: aurumSnapshotStatus,
         simulationConfig: sourceStatusFromSimulationConfig(simulationConfigSource, simulationConfigHydrationStatus),
-        instrumentUniverse: sourceStatusFromInstrumentUniverse(universeSourceOrigin),
+        instrumentUniverse: sourceStatusFromInstrumentUniverse(universeSourceOrigin, weightsSourceMode),
         fx: sourceStatusFromFx(operativeFxResolution),
         capitalAdjustments: capitalAdjustmentsSource,
         runResult: runResultStatus,
@@ -4760,7 +4774,7 @@ export default function App() {
       && simParams.spendingPhases.length >= 4
       && simParams.spendingPhases.every((phase) => Number.isFinite(Number(phase.amountReal ?? NaN)) && Number(phase.amountReal) > 0),
     hasValidCapital: Number.isFinite(Number(simParams.capitalInitial ?? NaN)) && Number(simParams.capitalInitial) > 0,
-    hasValidUniverseMix: weightsSourceMode !== 'error',
+    hasValidUniverseMix: isOfficialInstrumentUniverseMode(weightsSourceMode),
     fingerprint: m8InputFingerprint,
   }), [
     authErrorMessage,
