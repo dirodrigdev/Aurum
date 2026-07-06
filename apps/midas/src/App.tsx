@@ -5007,6 +5007,10 @@ export default function App() {
           optimizableBaseReference={optimizableBaseAdjusted}
           aurumIntegrationStatus={aurumIntegrationStatus}
           targetWeights={optimizerSimulationParams.weights}
+          weightsSourceMode={weightsSourceMode}
+          universeSourceOrigin={universeSourceOrigin}
+          activeMixSavedAt={activeWeightsSavedAt}
+          activeMixHash={instrumentUniverseDiagnostics.effectiveHash}
           localReadOnlyMode={localReadOnlyCloudFallbackEnabled ? {
             enabled: true,
             reason: 'Modo local de revisión · configuración cloud no disponible · sin escrituras productivas.',
