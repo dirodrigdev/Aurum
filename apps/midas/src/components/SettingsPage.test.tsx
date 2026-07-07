@@ -6,6 +6,7 @@ import {
   buildInstrumentUniverseSnapshotMetadata,
   saveInstrumentUniverseSnapshotWithMetadata,
   validateInstrumentUniverseJson,
+  clearInstrumentUniverseSnapshot,
 } from '../domain/instrumentUniverse';
 import { SettingsPage } from './SettingsPage';
 
@@ -103,6 +104,7 @@ const VALID_UNIVERSE = JSON.stringify({
 });
 
 function seedUniverse() {
+  clearInstrumentUniverseSnapshot();
   const validation = validateInstrumentUniverseJson(VALID_UNIVERSE, {
     rvGlobal: 0.5,
     rfGlobal: 0.1,
@@ -145,7 +147,9 @@ test('official universe source is visible with simplified hierarchy and legacy f
     assert.match(html, />Instrument Universe V1</);
     assert.match(html, /Fuente oficial del mix estructural\./);
     assert.match(html, />Válido</);
-    assert.match(html, />Cloud</);
+    assert.match(html, /Cloud activo/);
+    assert.match(html, /Bundled oficial disponible/);
+    assert.match(html, /Guardado local disponible/);
     assert.match(html, /Mix oficial/);
     assert.match(html, /Rebalanceo/);
     assert.match(html, /No requerido/);
@@ -156,10 +160,11 @@ test('official universe source is visible with simplified hierarchy and legacy f
     assert.match(html, /Mix: Instrument Universe V1 · Capital: Aurum · Resultado: MIDAS/);
     assert.match(html, /Detalles técnicos/);
     assert.match(html, /Recuperación legacy avanzada/);
-    assert.match(html, /Cargar guardado local/);
+    assert.match(html, /Recuperar JSON local/);
     assert.doesNotMatch(html, /Pegar JSON/);
     assert.doesNotMatch(html, /Cambio estructural/);
     assert.doesNotMatch(html, /Mix derivado desde instruments: peso por instrumento × current_mix_used\./);
+    assert.doesNotMatch(html, /Backup: disponible/);
   });
 });
 
@@ -184,8 +189,7 @@ test('bundled source stays official while missing source gets a strong warning',
       universeSourceOrigin: 'bundled',
       activeMixHash: 'fnv1a-bundled01',
     });
-    assert.match(bundledHtml, />Bundled</);
-    assert.match(bundledHtml, /Backup: activo/);
+    assert.match(bundledHtml, /Bundled oficial activo/);
     assert.match(bundledHtml, /Usando backup oficial de Instrument Universe V1 porque cloud no está disponible/);
 
     const missingHtml = renderSettings({
@@ -211,6 +215,7 @@ test('missing universe keeps legacy behind advanced recovery and shows official 
       activeMixSavedAt: null,
     });
     assert.match(html, /Fuente activa de mix: Missing \/ no valid universe/);
+    assert.match(html, /Falta Universe oficial/);
     assert.match(html, /Cargar Instrument Universe V1/);
     assert.match(html, /Recuperación legacy avanzada/);
     assert.match(html, /Falta Instrument Universe V1 oficial/);
@@ -229,6 +234,19 @@ test('defaults do not become official active source', () => {
     });
     assert.match(html, /Fuente activa de mix: Missing \/ no valid universe/);
     assert.match(html, /La simulación puede no ser confiable hasta cargar un universe válido/);
+  });
+});
+
+test('bundled pending does not get confused with local saved availability', () => {
+  withWindow(() => {
+    seedUniverse();
+    const html = renderSettings({
+      bundledUniverseMetadataOverride: null,
+    });
+    assert.match(html, /Bundled oficial pendiente/);
+    assert.match(html, /Guardado local disponible/);
+    assert.doesNotMatch(html, /Bundled oficial disponible/);
+    assert.doesNotMatch(html, /Backup: disponible/);
   });
 });
 

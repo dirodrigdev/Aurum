@@ -33,6 +33,7 @@ import {
   hydrateInstrumentUniverseCacheFromFirestore,
   persistInstrumentUniverseActiveToFirestore,
 } from '../integrations/midas/instrumentUniversePersistence';
+import { getBundledInstrumentUniverseMetadata } from '../domain/model/canonicalInstrumentUniverse';
 import { T, css } from './theme';
 type AurumIntegrationStatus = 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
 type SettingsWeightsSourceMode =
@@ -506,6 +507,7 @@ export function SettingsPage({
   activeMixSavedAt,
   activeMixHash,
   localReadOnlyMode = { enabled: false, reason: null },
+  bundledUniverseMetadataOverride,
 }: {
   optimizableBaseReference: OptimizableBaseReference;
   aurumIntegrationStatus: AurumIntegrationStatus;
@@ -518,6 +520,7 @@ export function SettingsPage({
     enabled: boolean;
     reason: string | null;
   };
+  bundledUniverseMetadataOverride?: InstrumentUniverseSnapshotMetadata | null;
 }) {
   const [savedSnapshot, setSavedSnapshot] = useState(() => loadInstrumentBaseSnapshot());
   const [editorValue, setEditorValue] = useState(() => loadInstrumentBaseSnapshot()?.rawJson || '');
@@ -571,6 +574,10 @@ export function SettingsPage({
     [savedUniverseSnapshot, targetWeights],
   );
   const coverageQuality = classifyCoverageQuality(savedSummary?.coverageVsOptimizableBaseRatio ?? null);
+  const bundledUniverseMetadata = useMemo(
+    () => bundledUniverseMetadataOverride === undefined ? getBundledInstrumentUniverseMetadata() : bundledUniverseMetadataOverride,
+    [bundledUniverseMetadataOverride],
+  );
   const activeMixSource = useMemo(
     () => resolveActiveMixSource({ weightsSourceMode, universeSourceOrigin }),
     [weightsSourceMode, universeSourceOrigin],
@@ -581,26 +588,39 @@ export function SettingsPage({
     Boolean(savedUniverseMetadata?.loadedAt && activeMixSavedAt)
     && new Date(savedUniverseMetadata!.loadedAt).getTime() < new Date(activeMixSavedAt!).getTime();
   const canPersistLegacy = true;
-  const backupStatusLabel =
-    universeSourceOrigin === 'bundled'
-      ? 'Backup: activo'
-      : savedUniverseMetadata
-        ? activeUniverseLocalStale
-          ? 'Backup: desactualizado'
-          : 'Backup: disponible'
-        : 'Backup: sin backup';
-  const sourceChipLabel =
+  const activeSourceLabel =
     universeSourceOrigin === 'firestore'
-      ? 'Cloud'
+      ? 'Cloud activo'
       : universeSourceOrigin === 'bundled'
-        ? 'Bundled'
-        : 'Missing';
-  const sourceChipTone: 'positive' | 'warning' | 'negative' =
+        ? 'Bundled oficial activo'
+        : 'Falta Universe oficial';
+  const activeSourceTone: 'positive' | 'warning' | 'negative' =
     universeSourceOrigin === 'firestore'
       ? 'positive'
       : universeSourceOrigin === 'bundled'
         ? 'warning'
         : 'negative';
+  const bundledStatusLabel =
+    universeSourceOrigin === 'bundled'
+      ? 'Bundled oficial activo'
+      : bundledUniverseMetadata
+        ? 'Bundled oficial disponible'
+        : 'Bundled oficial pendiente';
+  const bundledStatusTone: 'positive' | 'warning' | 'negative' =
+    universeSourceOrigin === 'bundled'
+      ? 'warning'
+      : bundledUniverseMetadata
+        ? 'positive'
+        : 'negative';
+  const localSavedStatusLabel =
+    savedUniverseMetadata
+      ? activeUniverseLocalStale
+        ? 'Guardado local desactualizado'
+        : 'Guardado local disponible'
+      : null;
+  const localSavedStatusTone: 'neutral' | 'warning' =
+    activeUniverseLocalStale ? 'warning' : 'neutral';
+  const activeLoadedAtLabel = activeMixSavedAt ?? savedUniverseMetadata?.loadedAt ?? bundledUniverseMetadata?.loadedAt ?? null;
 
   const runValidation = () => {
     const next = validateInstrumentBaseJson(editorValue, optimizableBaseReference.amountClp);
@@ -751,9 +771,10 @@ export function SettingsPage({
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <StatusChip label={hasOfficialUniverseSource ? 'Válido' : 'Missing'} tone={hasOfficialUniverseSource ? 'positive' : 'negative'} />
-          <StatusChip label={sourceChipLabel} tone={sourceChipTone} />
-          <StatusChip label={`Última carga: ${savedUniverseMetadata?.loadedAt ? formatDateTime(savedUniverseMetadata.loadedAt) : '—'}`} />
-          <StatusChip label={backupStatusLabel} tone={universeSourceOrigin === 'bundled' ? 'warning' : activeUniverseLocalStale ? 'warning' : 'neutral'} />
+          <StatusChip label={activeSourceLabel} tone={activeSourceTone} />
+          <StatusChip label={`Última carga: ${activeLoadedAtLabel ? formatDateTime(activeLoadedAtLabel) : '—'}`} />
+          <StatusChip label={bundledStatusLabel} tone={bundledStatusTone} />
+          {localSavedStatusLabel ? <StatusChip label={localSavedStatusLabel} tone={localSavedStatusTone} /> : null}
         </div>
         {activeMixSource.warning && (
           <div style={{ color: activeMixSource.tone === 'warning' ? T.warning : T.negative, fontSize: 13, fontWeight: 700 }}>
@@ -794,6 +815,11 @@ export function SettingsPage({
               </div>
               <div style={{ color: T.textMuted, fontSize: 12, lineHeight: 1.5 }}>
                 Capital Aurum: {formatMoneyClp(optimizableBaseReference.amountClp)} · {normalizeVisibleText(aurumBaseSubtitle(aurumIntegrationStatus, optimizableBaseReference))}
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 12, lineHeight: 1.5 }}>
+                {bundledUniverseMetadata
+                  ? `Bundled oficial versionado: disponible · ${formatDateTime(bundledUniverseMetadata.loadedAt)}`
+                  : 'Bundled oficial versionado: pendiente o no generado.'}
               </div>
               {savedUniverseMetadata.warnings.length > 0 && (
                 <div style={{ color: T.warning, fontSize: 12, display: 'grid', gap: 5 }}>
@@ -844,6 +870,7 @@ export function SettingsPage({
                   <div>Origen local: {normalizeVisibleText(savedUniverseMetadata.source)} · archivo {normalizeVisibleText(savedUniverseMetadata.fileName || 'manual')}</div>
                   <div>Hash activo: {savedUniverseMetadata.checksum || '—'} · Hash runtime: {activeMixHash || '—'}</div>
                   <div>Última carga válida: {formatDateTime(savedUniverseMetadata.loadedAt)} · guardado activo {formatDateTime(activeMixSavedAt)}</div>
+                  <div>Bundled oficial: {bundledUniverseMetadata ? `disponible · hash ${bundledUniverseMetadata.checksum}` : 'pendiente o no generado'}</div>
                   <div>Fórmula agregada: peso por instrumento × current_mix_used.</div>
                   <div>current_mix_used es la composición usada por instrumento para derivar el mix agregado.</div>
                   <div>Driver estructural es diagnóstico; no define por sí solo si el instrumento entra al mix.</div>
@@ -943,7 +970,7 @@ export function SettingsPage({
                   cursor: 'pointer',
                 }}
               >
-                Cargar guardado local
+                Recuperar JSON local
               </button>
             )}
           </div>
@@ -953,6 +980,7 @@ export function SettingsPage({
           <div style={{ color: T.textMuted, fontSize: 12, lineHeight: 1.5 }}>
             Guardado local disponible: origen {normalizeVisibleText(savedUniverseMetadata.source)} · fecha {formatDateTime(savedUniverseMetadata.loadedAt)} · hash {shortHash(savedUniverseMetadata.checksum)}
             {activeUniverseLocalStale ? ' · Advertencia: el guardado local parece más antiguo que la fuente activa actual.' : ''}
+            {' · '}El guardado local no reemplaza la fuente oficial hasta validar y guardar en cloud.
           </div>
         )}
 
