@@ -286,6 +286,16 @@ const pack = buildOptimizationPack({
 assert.equal(pack.packType, OPTIMIZATION_PACK_TYPE);
 assert.equal(pack.baseline.fingerprint, fixture.fingerprint);
 assert.equal(pack.optimizationMenu.some((item) => item.id === 'custom'), true);
+assert.equal(JSON.stringify(pack.optimizationMenu).includes('reduce_house_sale'), false);
+assert.equal(
+  pack.optimizationMenu.some((item) => item.label === 'Reducir probabilidad de vender la casa'),
+  false,
+);
+assert.equal(pack.optimizationMenu.some((item) => item.id === 'reduce_liquidity_stress'), true);
+assert.equal(
+  pack.optimizationMenu.some((item) => item.label === 'Reducir estrés de liquidez'),
+  true,
+);
 assert.ok(pack.conversationProtocol);
 assert.ok(pack.externalAiInstructions);
 assert.ok(pack.candidatePreScreeningPolicy);
@@ -296,7 +306,48 @@ assert.equal(pack.candidatePreScreeningPolicy.allowProxyScores, true);
 assert.equal(pack.candidatePreScreeningPolicy.requirePreJsonReviewPrompt, true);
 assert.equal(pack.candidatePreScreeningPolicy.targetCandidateCount, TARGET_CANDIDATES_PER_SET);
 assert.equal(pack.candidatePreScreeningPolicy.maxCandidateCount, MAX_CANDIDATES_PER_SET);
+const conversationProtocol = pack.conversationProtocol as {
+  directCandidateSetForbiddenOnFirstTurn?: boolean;
+  firstResponseMustAskQuestion?: boolean;
+  finalJsonRequiresExplicitCommand?: string;
+  firstResponseTemplate?: string;
+  flow?: string[];
+};
+assert.equal(conversationProtocol.directCandidateSetForbiddenOnFirstTurn, true);
+assert.equal(conversationProtocol.firstResponseMustAskQuestion, true);
+assert.equal(conversationProtocol.finalJsonRequiresExplicitCommand, 'GENERAR_JSON_MIDAS');
+assert.match(conversationProtocol.firstResponseTemplate ?? '', /No generaré escenarios ni JSON todavía/i);
+assert.equal((conversationProtocol.firstResponseTemplate ?? '').includes('{'), false);
+assert.equal((conversationProtocol.firstResponseTemplate ?? '').includes('¿Qué quieres priorizar'), true);
+assert.equal(
+  conversationProtocol.flow?.some((item) => item.includes('Primera respuesta obligatoria: no JSON, no candidates, solo entrevista guiada.')),
+  true,
+);
+assert.equal(
+  conversationProtocol.flow?.some((item) => item.includes('GENERAR_JSON_MIDAS')),
+  true,
+);
 const interactionRules = (pack.externalAiInstructions as { interactionRules: string[] }).interactionRules;
+assert.equal(
+  interactionRules.some((item) => item.includes('NO generes JSON ni candidatos en la primera respuesta.')),
+  true,
+);
+assert.equal(
+  interactionRules.some((item) => item.includes('No emitas midas_candidate_set hasta que el usuario escriba exactamente GENERAR_JSON_MIDAS.')),
+  true,
+);
+assert.equal(
+  interactionRules.some((item) => item.includes('candidateSetSchema es solo el formato final, no una instrucción para generarlo ahora.')),
+  true,
+);
+assert.equal(
+  interactionRules.some((item) => item.includes('Aunque tengas baseline, goals y schema, debes entrevistar primero al usuario.')),
+  true,
+);
+assert.equal(
+  interactionRules.some((item) => item.includes('No generes 6, 12, 15 ni ningún número de escenarios en la primera respuesta.')),
+  true,
+);
 assert.equal(
   interactionRules.some((item) => item.includes('preselección de candidatos')),
   true,
