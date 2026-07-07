@@ -149,7 +149,6 @@ test('official universe source is visible with simplified hierarchy and legacy f
     assert.match(html, />Válido</);
     assert.match(html, /Cloud activo/);
     assert.match(html, /Bundled oficial disponible/);
-    assert.match(html, /Guardado local disponible/);
     assert.match(html, /Mix oficial/);
     assert.match(html, /Rebalanceo/);
     assert.match(html, /No requerido/);
@@ -161,10 +160,12 @@ test('official universe source is visible with simplified hierarchy and legacy f
     assert.match(html, /Detalles técnicos/);
     assert.match(html, /Recuperación legacy avanzada/);
     assert.match(html, /Recuperar JSON local/);
+    assert.match(html, /Guardado local disponible: origen/);
     assert.doesNotMatch(html, /Pegar JSON/);
     assert.doesNotMatch(html, /Cambio estructural/);
     assert.doesNotMatch(html, /Mix derivado desde instruments: peso por instrumento × current_mix_used\./);
     assert.doesNotMatch(html, /Backup: disponible/);
+    assert.doesNotMatch(html, /<div[^>]*>[^<]*Guardado local disponible<\/div>/);
   });
 });
 
@@ -244,7 +245,7 @@ test('bundled pending does not get confused with local saved availability', () =
       bundledUniverseMetadataOverride: null,
     });
     assert.match(html, /Bundled oficial pendiente/);
-    assert.match(html, /Guardado local disponible/);
+    assert.match(html, /Guardado local disponible: origen/);
     assert.doesNotMatch(html, /Bundled oficial disponible/);
     assert.doesNotMatch(html, /Backup: disponible/);
   });

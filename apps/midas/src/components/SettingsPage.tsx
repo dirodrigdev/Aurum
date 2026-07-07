@@ -612,14 +612,6 @@ export function SettingsPage({
       : bundledUniverseMetadata
         ? 'positive'
         : 'negative';
-  const localSavedStatusLabel =
-    savedUniverseMetadata
-      ? activeUniverseLocalStale
-        ? 'Guardado local desactualizado'
-        : 'Guardado local disponible'
-      : null;
-  const localSavedStatusTone: 'neutral' | 'warning' =
-    activeUniverseLocalStale ? 'warning' : 'neutral';
   const activeLoadedAtLabel = activeMixSavedAt ?? savedUniverseMetadata?.loadedAt ?? bundledUniverseMetadata?.loadedAt ?? null;
 
   const runValidation = () => {
@@ -774,7 +766,6 @@ export function SettingsPage({
           <StatusChip label={activeSourceLabel} tone={activeSourceTone} />
           <StatusChip label={`Última carga: ${activeLoadedAtLabel ? formatDateTime(activeLoadedAtLabel) : '—'}`} />
           <StatusChip label={bundledStatusLabel} tone={bundledStatusTone} />
-          {localSavedStatusLabel ? <StatusChip label={localSavedStatusLabel} tone={localSavedStatusTone} /> : null}
         </div>
         {activeMixSource.warning && (
           <div style={{ color: activeMixSource.tone === 'warning' ? T.warning : T.negative, fontSize: 13, fontWeight: 700 }}>
