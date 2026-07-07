@@ -215,6 +215,9 @@ function buildExternalAiInstructions() {
       'Si el usuario responde sí, muestra familias o candidatos y permite eliminar antes del JSON final.',
       'Si responde no, genera el JSON final.',
       'Cuando el usuario diga generar JSON, devuelve exclusivamente midas_candidate_set.',
+      'constraints debe salir como objeto JSON en la raíz. No uses un arreglo raíz para constraints.',
+      'Si necesitas listar restricciones, usa un objeto por id o un contenedor tipo constraints.items.',
+      'Si emites preM8Score, agrega siempre esta advertencia textual al inicio de preM8ScoreExplanation: "Score pre-M8 heurístico/no oficial; M8 es la fuente oficial de evaluación."',
     ],
     aiCanDo: [
       'Calcular scores heurísticos o proxy.',
@@ -272,7 +275,8 @@ function buildCandidateSetSchema() {
       candidateFamily: 'string',
       heuristicPriority: HEURISTIC_PRIORITY_VALUES,
       preM8Score: 'number(0..100)',
-      preM8ScoreExplanation: 'required when preM8Score exists',
+      preM8ScoreExplanation: 'required when preM8Score exists; must explicitly say it is heuristic/non-official and that M8 is the official source',
+      preM8ScoreExplanationPrefix: 'Score pre-M8 heurístico/no oficial; M8 es la fuente oficial de evaluación.',
       expectedDirectionalEffects: {
         qualityOfLife: DIRECTIONAL_EFFECT_VALUES,
         success40: DIRECTIONAL_EFFECT_VALUES,
@@ -280,6 +284,14 @@ function buildCandidateSetSchema() {
         terminalWealth: DIRECTIONAL_EFFECT_VALUES,
       },
       proxyScoresAreNotM8Results: true,
+    },
+    constraintsShape: {
+      rootType: 'object',
+      legacyArrayRootForbidden: true,
+      preferredForms: [
+        'Record<string, unknown>',
+        '{ items: Array<Record<string, unknown>> }',
+      ],
     },
     candidateShape: {
       required: ['candidateId', 'changes'],

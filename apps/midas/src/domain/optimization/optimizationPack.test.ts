@@ -301,6 +301,21 @@ assert.equal(
   interactionRules.some((item) => item.includes('preselección de candidatos')),
   true,
 );
+assert.equal(
+  interactionRules.some((item) => item.includes('constraints debe salir como objeto JSON en la raíz')),
+  true,
+);
+assert.equal(
+  interactionRules.some((item) => item.includes('Score pre-M8 heurístico/no oficial; M8 es la fuente oficial de evaluación.')),
+  true,
+);
+const candidateSetSchema = pack.candidateSetSchema as {
+  heuristicFields?: { preM8ScoreExplanationPrefix?: string };
+  constraintsShape?: { rootType?: string; legacyArrayRootForbidden?: boolean };
+};
+assert.equal(candidateSetSchema.heuristicFields?.preM8ScoreExplanationPrefix, 'Score pre-M8 heurístico/no oficial; M8 es la fuente oficial de evaluación.');
+assert.equal(candidateSetSchema.constraintsShape?.rootType, 'object');
+assert.equal(candidateSetSchema.constraintsShape?.legacyArrayRootForbidden, true);
 const serializedLineage = JSON.stringify(pack.sourceLineage);
 assert.equal(serializedLineage.includes('authDiagnostics'), false);
 assert.equal(serializedLineage.includes('authEmail'), false);

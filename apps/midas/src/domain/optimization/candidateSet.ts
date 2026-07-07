@@ -13,6 +13,7 @@ import { getScenarioLabBlockedVariableReason } from './scenarioLabEngineContract
 
 export const CANDIDATE_SET_TYPE = 'midas_candidate_set';
 export const CANDIDATE_SET_VERSION = '1.0';
+export const PRE_M8_SCORE_EXPLANATION_PREFIX = 'Score pre-M8 heurístico/no oficial; M8 es la fuente oficial de evaluación.';
 
 export type MidasCandidate = {
   candidateId: string;
@@ -64,6 +65,45 @@ const FORBIDDEN_KEYS = new Set<string>([
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+function ensurePreM8ScoreExplanation(value: unknown): string | undefined {
+  if (typeof value !== 'string') return PRE_M8_SCORE_EXPLANATION_PREFIX;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return PRE_M8_SCORE_EXPLANATION_PREFIX;
+  const normalized = trimmed.toLowerCase();
+  const hasOfficialDisclosure = normalized.includes('heur') && normalized.includes('m8') && normalized.includes('oficial');
+  if (hasOfficialDisclosure) return trimmed;
+  return `${PRE_M8_SCORE_EXPLANATION_PREFIX} ${trimmed}`;
+}
+
+function normalizeLegacyConstraints(constraints: unknown): unknown {
+  if (!Array.isArray(constraints)) return constraints;
+  const keyedEntries: Array<[string, Record<string, unknown>]> = [];
+  for (const entry of constraints) {
+    if (!isRecord(entry) || typeof entry.id !== 'string' || entry.id.trim().length === 0) {
+      return { items: constraints };
+    }
+    keyedEntries.push([entry.id, { ...entry }]);
+  }
+  return Object.fromEntries(keyedEntries);
+}
+
+function normalizeCandidate(candidate: unknown): unknown {
+  if (!isRecord(candidate)) return candidate;
+  if (typeof candidate.preM8Score === 'undefined') return candidate;
+  return {
+    ...candidate,
+    preM8ScoreExplanation: ensurePreM8ScoreExplanation(candidate.preM8ScoreExplanation),
+  };
+}
+
+function normalizeCandidateSetPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...payload,
+    constraints: normalizeLegacyConstraints(payload.constraints),
+    candidates: Array.isArray(payload.candidates) ? payload.candidates.map((candidate) => normalizeCandidate(candidate)) : payload.candidates,
+  };
+}
 
 function findForbiddenKeys(value: unknown, path: string[] = []): string[] {
   if (Array.isArray(value)) {
@@ -157,7 +197,7 @@ export function validateCandidateSet(
   input: unknown,
   options: { expectedPackFingerprint: string },
 ): CandidateSetValidationResult {
-  const payload = typeof input === 'string'
+  const parsedPayload = typeof input === 'string'
     ? (() => {
       try {
         return JSON.parse(input) as unknown;
@@ -167,8 +207,9 @@ export function validateCandidateSet(
     })()
     : input;
 
-  if (!payload) return { ok: false, errors: ['JSON inválido: no se pudo parsear el Candidate Set.'] };
-  if (!isRecord(payload)) return { ok: false, errors: ['Candidate Set inválido: la raíz debe ser un objeto.'] };
+  if (!parsedPayload) return { ok: false, errors: ['JSON inválido: no se pudo parsear el Candidate Set.'] };
+  if (!isRecord(parsedPayload)) return { ok: false, errors: ['Candidate Set inválido: la raíz debe ser un objeto.'] };
+  const payload = normalizeCandidateSetPayload(parsedPayload);
 
   const errors: string[] = [];
   if (payload.type !== CANDIDATE_SET_TYPE) errors.push(`type debe ser ${CANDIDATE_SET_TYPE}.`);

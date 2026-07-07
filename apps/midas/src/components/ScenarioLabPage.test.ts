@@ -196,6 +196,38 @@ const validCandidateSet = validateScenarioLabCandidateSetText(JSON.stringify({
   ],
 }), 'fnv1a-959dded4');
 assert.equal(validCandidateSet.ok, true);
+if (validCandidateSet.ok) {
+  assert.match(
+    validCandidateSet.value.candidates[0]?.preM8ScoreExplanation ?? '',
+    /Score pre-M8 heurístico\/no oficial; M8 es la fuente oficial de evaluación\./,
+  );
+}
+
+const legacyArrayConstraints = validateScenarioLabCandidateSetText(JSON.stringify({
+  type: 'midas_candidate_set',
+  version: '1.0',
+  packFingerprint: 'fnv1a-959dded4',
+  selectedGoals: ['improve_quality_of_life'],
+  customGoals: [],
+  constraints: [
+    { id: 'preserve_f1', mode: 'hard' },
+    { id: 'prioritize_f2_f3', mode: 'soft' },
+  ],
+  candidates: [
+    {
+      candidateId: 'qol_legacy',
+      preM8Score: 70,
+      preM8ScoreExplanation: 'Proxy inicial.',
+      changes: { cutRules: { cut1: 0.92 } },
+    },
+  ],
+}), 'fnv1a-959dded4');
+assert.equal(legacyArrayConstraints.ok, true);
+if (legacyArrayConstraints.ok) {
+  assert.equal(Array.isArray(legacyArrayConstraints.value.constraints), false);
+  assert.equal('preserve_f1' in legacyArrayConstraints.value.constraints, true);
+}
+
 const enabledEvaluationState = buildScenarioLabM8EvaluationState({
   exportState: buildScenarioLabExportState({
     canonicalInputReady: true,
