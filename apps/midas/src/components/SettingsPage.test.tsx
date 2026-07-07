@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
@@ -137,26 +138,32 @@ function renderSettings(props?: Partial<React.ComponentProps<typeof SettingsPage
   );
 }
 
-test('official universe source is visible and legacy normal flow is hidden', () => {
+test('official universe source is visible with simplified hierarchy and legacy flow hidden', () => {
   withWindow(() => {
     seedUniverse();
     const html = renderSettings();
-    assert.match(html, /Fuente activa de mix: Instrument Universe V1 cloud/);
-    assert.match(html, /Capital econ[oó]mico oficial/);
-    assert.match(html, /Mix derivado desde instruments: peso por instrumento × current_mix_used\./);
-    assert.match(html, /Resultado runtime MIDAS/);
-    assert.match(html, /Mix: Instrument Universe V1\. Capital: Aurum\. Resultado: Runtime MIDAS\./);
-    assert.match(html, /Rango alcanzable RV/);
-    assert.match(html, /Rebalanceo recomendado/);
+    assert.match(html, />Instrument Universe V1</);
+    assert.match(html, /Fuente oficial del mix estructural\./);
+    assert.match(html, />Válido</);
+    assert.match(html, />Cloud</);
+    assert.match(html, /Mix oficial/);
+    assert.match(html, /Rebalanceo/);
     assert.match(html, /No requerido/);
+    assert.match(html, /Instrumentos activos/);
+    assert.match(html, />1\/2</);
+    assert.match(html, /Rango alcanzable RV/);
+    assert.match(html, /Derivado de bandas por instrumento\./);
+    assert.match(html, /Mix: Instrument Universe V1 · Capital: Aurum · Resultado: MIDAS/);
+    assert.match(html, /Detalles técnicos/);
     assert.match(html, /Recuperación legacy avanzada/);
-    assert.doesNotMatch(html, /Pegar JSON/);
     assert.match(html, /Cargar guardado local/);
+    assert.doesNotMatch(html, /Pegar JSON/);
     assert.doesNotMatch(html, /Cambio estructural/);
+    assert.doesNotMatch(html, /Mix derivado desde instruments: peso por instrumento × current_mix_used\./);
   });
 });
 
-test('zero-weight instrument is shown as not usable without error semantics', () => {
+test('zero-weight instrument is shown as non-usable without error semantics', () => {
   withWindow(() => {
     seedUniverse();
     const html = renderSettings();
@@ -169,7 +176,7 @@ test('zero-weight instrument is shown as not usable without error semantics', ()
   });
 });
 
-test('bundled source is labeled explicitly and legacy stays as advanced tool only', () => {
+test('bundled source stays official while missing source gets a strong warning', () => {
   withWindow(() => {
     seedUniverse();
     const bundledHtml = renderSettings({
@@ -177,14 +184,17 @@ test('bundled source is labeled explicitly and legacy stays as advanced tool onl
       universeSourceOrigin: 'bundled',
       activeMixHash: 'fnv1a-bundled01',
     });
-    assert.match(bundledHtml, /Fuente activa de mix: Instrument Universe V1 backup\/bundled/);
+    assert.match(bundledHtml, />Bundled</);
+    assert.match(bundledHtml, /Backup: activo/);
     assert.match(bundledHtml, /Usando backup oficial de Instrument Universe V1 porque cloud no está disponible/);
+
     const missingHtml = renderSettings({
       weightsSourceMode: 'missing-instrument-universe',
       universeSourceOrigin: 'none',
       activeMixHash: null,
       activeMixSavedAt: null,
     });
+    assert.match(missingHtml, /MIDAS no está usando una fuente oficial de Instrument Universe V1/);
     assert.match(missingHtml, /Herramienta de recuperación\/migración/);
     assert.match(missingHtml, /No habilita simulación oficial/);
     assert.doesNotMatch(missingHtml, /Fuente activa de mix: Legacy recovery — deprecated/);
@@ -218,8 +228,17 @@ test('defaults do not become official active source', () => {
       activeMixSavedAt: null,
     });
     assert.match(html, /Fuente activa de mix: Missing \/ no valid universe/);
-    assert.match(html, /simulación oficial queda bloqueada/);
+    assert.match(html, /La simulación puede no ser confiable hasta cargar un universe válido/);
   });
+});
+
+test('mount hydration in settings does not broadcast a fake universe update event', () => {
+  const settingsSource = readFileSync(new URL('./SettingsPage.tsx', import.meta.url), 'utf8');
+  const mountHydrationBlock = settingsSource.match(
+    /useEffect\(\(\) => \{\s*let cancelled = false;[\s\S]*?return \(\) => \{\s*cancelled = true;\s*\};\s*\}, \[\]\);/,
+  );
+  assert.ok(mountHydrationBlock, 'mount hydration effect should exist');
+  assert.doesNotMatch(mountHydrationBlock[0], /window\.dispatchEvent\(new CustomEvent\('midas:instrument-universe-updated'\)\);/);
 });
 
 const failures: string[] = [];

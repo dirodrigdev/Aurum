@@ -247,6 +247,32 @@ const baseInput = (): M8InputFingerprintInput => {
 })();
 
 (() => {
+  const input = baseInput();
+  const original = buildM8InputFingerprint(input);
+  input.runtimeDiagnostics = {
+    activeTab: 'settings',
+    activeView: 'instrument-universe',
+  };
+  input.authDiagnostics = {
+    navigationSource: 'bottom-nav',
+  };
+  input.instrumentUniverseDiagnostics = {
+    openedFromSettings: true,
+  };
+  const changed = buildM8InputFingerprint(input);
+  assert.equal(
+    original.effectiveEngineInputHash,
+    changed.effectiveEngineInputHash,
+    'navigation/view diagnostics must not change the semantic simulation fingerprint',
+  );
+  assert.notEqual(
+    original.diagnosticHash,
+    changed.diagnosticHash,
+    'diagnostic hash should still capture trace-only navigation metadata',
+  );
+})();
+
+(() => {
   const canonical = buildM8InputFingerprint(baseInput());
   const input = baseInput();
   input.capitalDerivationDiagnostics = {

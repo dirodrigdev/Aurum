@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { parseEditableMoneyInput, parseHeroQuickEditReturnInput, parseHeroQuickEditYearsInput } from '../../components/SimulationPage';
 import { applyCandidateToM8Input } from '../optimization/applyCandidateToM8Input';
 import type { MidasCandidate } from '../optimization/candidateSet';
@@ -223,6 +224,19 @@ function buildFingerprintInput(params: ModelParameters, effectiveEngineInput: un
   if (!applied.ok) {
     assert.ok(applied.errors.some((error) => error.includes('4 montos positivos')));
   }
+})();
+
+(() => {
+  const settingsSource = readFileSync(new URL('../../components/SettingsPage.tsx', import.meta.url), 'utf8');
+  const mountHydrationBlock = settingsSource.match(
+    /useEffect\(\(\) => \{\s*let cancelled = false;[\s\S]*?return \(\) => \{\s*cancelled = true;\s*\};\s*\}, \[\]\);/,
+  );
+  assert.ok(mountHydrationBlock, 'Settings mount hydration effect should exist');
+  assert.doesNotMatch(
+    mountHydrationBlock[0],
+    /window\.dispatchEvent\(new CustomEvent\('midas:instrument-universe-updated'\)\);/,
+    'opening Settings must not broadcast a fake universe update that can mark simulation as pending without semantic changes',
+  );
 })();
 
 console.log('midasCriticalRegression tests passed');

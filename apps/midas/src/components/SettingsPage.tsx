@@ -194,6 +194,42 @@ function SummaryCard({
   );
 }
 
+function StatusChip({
+  label,
+  tone = 'neutral',
+}: {
+  label: string;
+  tone?: 'neutral' | 'positive' | 'warning' | 'negative';
+}) {
+  const palette =
+    tone === 'positive'
+      ? { border: 'rgba(63,191,127,0.35)', bg: 'rgba(63,191,127,0.10)', color: T.positive }
+      : tone === 'warning'
+        ? { border: 'rgba(212,166,90,0.35)', bg: 'rgba(212,166,90,0.10)', color: T.warning }
+        : tone === 'negative'
+          ? { border: 'rgba(212,90,90,0.35)', bg: 'rgba(212,90,90,0.10)', color: T.negative }
+          : { border: T.border, bg: T.surfaceEl, color: T.textSecondary };
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        border: `1px solid ${palette.border}`,
+        background: palette.bg,
+        color: palette.color,
+        borderRadius: 999,
+        padding: '6px 10px',
+        fontSize: 11,
+        fontWeight: 700,
+        lineHeight: 1.1,
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
 function ExposureSummary({ summary }: { summary: InstrumentBaseSummary | null }) {
   if (!summary?.weightedExposure) return null;
   return (
@@ -255,59 +291,60 @@ function UniverseSummaryPanel({ summary }: { summary: InstrumentUniverseSummary 
   const reachableRangeLabel = historical
     ? `${formatPct(historical.rv.min)}-${formatPct(historical.rv.max)}`
     : '—';
+  const zeroWeightCount = Math.max(0, summary.instrumentCount - summary.usableInstrumentCount);
   const rebalanceSubtitle = (() => {
     if (!historical || !currentMix) return 'Sin banda o mix estructural';
     if (summary.structuralChangeRequired === null) {
-      return `RV actual ${formatPct(currentMix.rv)} · Rango alcanzable ${reachableRangeLabel}`;
+      return `RV actual ${formatPct(currentMix.rv)} · rango alcanzable ${reachableRangeLabel}.`;
     }
     if (!summary.structuralChangeRequired) {
-      return `RV actual ${formatPct(currentMix.rv)} está dentro del rango alcanzable ${reachableRangeLabel}.`;
+      return 'RV actual está dentro del rango alcanzable.';
     }
     return targetRv !== null
-      ? `Target runtime ${formatPct(targetRv)} queda fuera del rango alcanzable ${reachableRangeLabel}. ${gapLabel}`
+      ? `Target runtime ${formatPct(targetRv)} queda fuera del rango alcanzable. ${gapLabel}`
       : `RV actual ${formatPct(currentMix.rv)} vs. rango alcanzable ${reachableRangeLabel}.`;
   })();
   return (
     <div style={{ display: 'grid', gap: 12 }}>
-      <div style={{ display: 'grid', gap: 10 }}>
-        <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em', color: T.textMuted }}>
-          Mix estructural derivado
-        </div>
-        <div style={{ color: T.textSecondary, fontSize: 13, lineHeight: 1.5 }}>
-          Mix derivado desde instruments: peso por instrumento × current_mix_used.
-        </div>
-      </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
         <SummaryCard
-          title="Instrumentos universo"
-          value={`${summary.usableInstrumentCount}/${summary.instrumentCount}`}
-          subtitle={`Peso útil: ${formatPct(summary.totalWeightPortfolio)}`}
-        />
-        <SummaryCard
-          title="Mix estructural"
+          title="Mix oficial"
           value={currentMix ? `RV ${formatPct(currentMix.rv)} / RF ${formatPct(currentMix.rf)}` : '—'}
           subtitle={currentMix ? `Cash ${formatPct(currentMix.cash)} · Other ${formatPct(currentMix.other)}` : 'Sin mix utilizable'}
         />
-      </div>
-      <div style={{ display: 'grid', gap: 10 }}>
-        <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em', color: T.textMuted }}>
-          Resultado runtime MIDAS
-        </div>
-        <div style={{ color: T.textSecondary, fontSize: 13, lineHeight: 1.5 }}>
-          Mix: Instrument Universe V1. Capital: Aurum. Resultado: Runtime MIDAS.
-        </div>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
         <SummaryCard
-          title="Rango alcanzable RV"
-          value={historical ? formatRvBand(historical.rv.min, historical.rv.max) : '—'}
-          subtitle={historical ? 'Derivado del Instrument Universe V1 usando bandas por instrumento; no es historia pura ni proyección M8.' : 'Sin rango alcanzable'}
-        />
-        <SummaryCard
-          title="Rebalanceo recomendado"
-          value={summary.structuralChangeRequired === null ? '—' : summary.structuralChangeRequired ? 'Requerido' : 'No requerido'}
+          title="Rebalanceo"
+          value={summary.structuralChangeRequired === null ? '—' : summary.structuralChangeRequired ? 'Revisar' : 'No requerido'}
           subtitle={rebalanceSubtitle}
         />
+        <SummaryCard
+          title="Instrumentos activos"
+          value={`${summary.usableInstrumentCount}/${summary.instrumentCount}`}
+          subtitle={zeroWeightCount === 1 ? '1 instrumento con peso cero.' : `${zeroWeightCount} instrumentos con peso cero.`}
+        />
+      </div>
+      <div style={{ color: T.textSecondary, fontSize: 13, lineHeight: 1.5 }}>
+        Mix: Instrument Universe V1 · Capital: Aurum · Resultado: MIDAS
+      </div>
+      <div
+        style={{
+          border: `1px solid ${T.border}`,
+          background: T.surfaceEl,
+          borderRadius: 16,
+          padding: '12px 14px',
+          display: 'grid',
+          gap: 4,
+        }}
+      >
+        <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em', color: T.textMuted }}>
+          Rango alcanzable RV
+        </div>
+        <div style={{ color: T.textPrimary, fontSize: 20, fontWeight: 700 }}>
+          {historical ? reachableRangeLabel : '—'}
+        </div>
+        <div style={{ color: T.textSecondary, fontSize: 12, lineHeight: 1.4 }}>
+          Derivado de bandas por instrumento.
+        </div>
       </div>
     </div>
   );
@@ -518,7 +555,6 @@ export function SettingsPage({
         if (!universeEditorValue.trim()) {
           setUniverseEditorValue(result.snapshot.rawJson);
         }
-        window.dispatchEvent(new CustomEvent('midas:instrument-universe-updated'));
       })
       .catch(() => {});
     return () => {
@@ -545,6 +581,26 @@ export function SettingsPage({
     Boolean(savedUniverseMetadata?.loadedAt && activeMixSavedAt)
     && new Date(savedUniverseMetadata!.loadedAt).getTime() < new Date(activeMixSavedAt!).getTime();
   const canPersistLegacy = true;
+  const backupStatusLabel =
+    universeSourceOrigin === 'bundled'
+      ? 'Backup: activo'
+      : savedUniverseMetadata
+        ? activeUniverseLocalStale
+          ? 'Backup: desactualizado'
+          : 'Backup: disponible'
+        : 'Backup: sin backup';
+  const sourceChipLabel =
+    universeSourceOrigin === 'firestore'
+      ? 'Cloud'
+      : universeSourceOrigin === 'bundled'
+        ? 'Bundled'
+        : 'Missing';
+  const sourceChipTone: 'positive' | 'warning' | 'negative' =
+    universeSourceOrigin === 'firestore'
+      ? 'positive'
+      : universeSourceOrigin === 'bundled'
+        ? 'warning'
+        : 'negative';
 
   const runValidation = () => {
     const next = validateInstrumentBaseJson(editorValue, optimizableBaseReference.amountClp);
@@ -687,17 +743,23 @@ export function SettingsPage({
           gap: 10,
         }}
       >
-        <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em', color: T.textMuted }}>
-          Ajustes · Fuente activa
+        <div style={{ display: 'grid', gap: 6 }}>
+          <div style={{ color: T.textPrimary, fontSize: 28, fontWeight: 800 }}>Instrument Universe V1</div>
+          <div style={{ color: T.textSecondary, fontSize: 14, lineHeight: 1.5 }}>
+            Fuente oficial del mix estructural.
+          </div>
         </div>
-        <div style={{ color: T.textPrimary, fontSize: 22, fontWeight: 800 }}>{activeMixSource.title}</div>
-        <div style={{ color: T.textSecondary, fontSize: 13, lineHeight: 1.5 }}>{activeMixSource.subtitle}</div>
-        <div style={{ color: T.textMuted, fontSize: 12 }}>
-          Origen runtime: {universeSourceOrigin} · guardado activo {formatDateTime(activeMixSavedAt)} · hash {shortHash(activeMixHash)}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <StatusChip label={hasOfficialUniverseSource ? 'Válido' : 'Missing'} tone={hasOfficialUniverseSource ? 'positive' : 'negative'} />
+          <StatusChip label={sourceChipLabel} tone={sourceChipTone} />
+          <StatusChip label={`Última carga: ${savedUniverseMetadata?.loadedAt ? formatDateTime(savedUniverseMetadata.loadedAt) : '—'}`} />
+          <StatusChip label={backupStatusLabel} tone={universeSourceOrigin === 'bundled' ? 'warning' : activeUniverseLocalStale ? 'warning' : 'neutral'} />
         </div>
         {activeMixSource.warning && (
           <div style={{ color: activeMixSource.tone === 'warning' ? T.warning : T.negative, fontSize: 13, fontWeight: 700 }}>
-            {activeMixSource.warning}
+            {hasOfficialUniverseSource
+              ? activeMixSource.warning
+              : 'MIDAS no está usando una fuente oficial de Instrument Universe V1. La simulación puede no ser confiable hasta cargar un universe válido.'}
           </div>
         )}
       </section>
@@ -712,42 +774,6 @@ export function SettingsPage({
           gap: 12,
         }}
       >
-        <div>
-          <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.16em', color: T.textMuted }}>
-            Capital económico oficial
-          </div>
-          <h2 style={{ margin: '10px 0 6px', fontSize: 28, lineHeight: 1.08 }}>Capital económico oficial</h2>
-          <div style={{ color: T.textSecondary, fontSize: 14, lineHeight: 1.5 }}>
-            Este monto viene desde Aurum y define el capital económico de simulación. El mix estructural se toma desde Instrument Universe V1.
-          </div>
-        </div>
-        <SummaryCard
-          title="Inversiones optimizables"
-          value={formatMoneyClp(optimizableBaseReference.amountClp)}
-          subtitle={normalizeVisibleText(aurumBaseSubtitle(aurumIntegrationStatus, optimizableBaseReference))}
-        />
-      </section>
-
-      <section
-        style={{
-          border: `1px solid ${T.border}`,
-          background: T.surface,
-          borderRadius: 24,
-          padding: 18,
-          display: 'grid',
-          gap: 12,
-        }}
-      >
-        <div>
-          <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.16em', color: T.textMuted }}>
-            Fuente oficial de mix
-          </div>
-          <h2 style={{ margin: '10px 0 6px', fontSize: 24, lineHeight: 1.08 }}>Instrument Universe V1</h2>
-          <div style={{ color: T.textSecondary, fontSize: 13, lineHeight: 1.5 }}>
-            Solo este flujo debe usarse normalmente para actualizar el mix estructural.
-          </div>
-        </div>
-
         <div
           style={{
             border: `1px solid ${T.border}`,
@@ -761,18 +787,13 @@ export function SettingsPage({
           {savedUniverseSnapshot && savedUniverseMetadata ? (
             <>
               <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 700 }}>
-                Última carga válida: {formatDateTime(savedUniverseMetadata.loadedAt)}
+                Fuente activa de mix: {activeMixSource.title.replace('Fuente activa de mix: ', '')}
               </div>
               <div style={{ color: T.textSecondary, fontSize: 13, lineHeight: 1.5 }}>
-                Fuente: {normalizeVisibleText(savedUniverseMetadata.source)} · archivo {normalizeVisibleText(savedUniverseMetadata.fileName || 'manual')} · hash {shortHash(savedUniverseMetadata.checksum)}
-              </div>
-              <div style={{ color: T.textSecondary, fontSize: 13, lineHeight: 1.5 }}>
-                Instrumentos {savedUniverseMetadata.validInstrumentsCount}/{savedUniverseMetadata.instrumentsCount} · peso útil {formatPct(savedUniverseMetadata.totalWeightPortfolio)} · monto total universe {formatMoneyClp(savedUniverseMetadata.totalAmountClp)} · estado válido
+                {activeMixSource.subtitle}
               </div>
               <div style={{ color: T.textMuted, fontSize: 12, lineHeight: 1.5 }}>
-                {hasOfficialUniverseSource
-                  ? 'Fuente oficial de mix: Instrument Universe V1. El capital económico viene desde Aurum; este universe define pesos y composición RV/RF.'
-                  : 'No hay Instrument Universe V1 activo como fuente oficial de mix. El capital económico sigue viniendo desde Aurum.'}
+                Capital Aurum: {formatMoneyClp(optimizableBaseReference.amountClp)} · {normalizeVisibleText(aurumBaseSubtitle(aurumIntegrationStatus, optimizableBaseReference))}
               </div>
               {savedUniverseMetadata.warnings.length > 0 && (
                 <div style={{ color: T.warning, fontSize: 12, display: 'grid', gap: 5 }}>
@@ -807,13 +828,31 @@ export function SettingsPage({
         {savedUniverseSummary && (
           <>
             <UniverseSummaryPanel summary={savedUniverseSummary} />
-            <div style={{ display: 'grid', gap: 10 }}>
-              <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em', color: T.textMuted }}>
-                Tabla de instrumentos
-              </div>
-              <div style={{ color: T.textSecondary, fontSize: 13, lineHeight: 1.5 }}>
-                Driver estructural indica relevancia diagnóstica u operativa. Un instrumento entra al mix si tiene peso útil mayor que cero y datos utilizables.
-              </div>
+            {savedUniverseMetadata ? (
+              <details
+                style={{
+                  border: `1px solid ${T.border}`,
+                  background: T.surfaceEl,
+                  borderRadius: 18,
+                  padding: '12px 14px',
+                }}
+              >
+                <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 700 }}>
+                  Detalles técnicos
+                </summary>
+                <div style={{ display: 'grid', gap: 8, marginTop: 12, color: T.textSecondary, fontSize: 12, lineHeight: 1.5 }}>
+                  <div>Origen local: {normalizeVisibleText(savedUniverseMetadata.source)} · archivo {normalizeVisibleText(savedUniverseMetadata.fileName || 'manual')}</div>
+                  <div>Hash activo: {savedUniverseMetadata.checksum || '—'} · Hash runtime: {activeMixHash || '—'}</div>
+                  <div>Última carga válida: {formatDateTime(savedUniverseMetadata.loadedAt)} · guardado activo {formatDateTime(activeMixSavedAt)}</div>
+                  <div>Fórmula agregada: peso por instrumento × current_mix_used.</div>
+                  <div>current_mix_used es la composición usada por instrumento para derivar el mix agregado.</div>
+                  <div>Driver estructural es diagnóstico; no define por sí solo si el instrumento entra al mix.</div>
+                  <div>Resultado runtime: MIDAS usa este universe para pesos y composición; Aurum sigue definiendo capital.</div>
+                </div>
+              </details>
+            ) : null}
+            <div style={{ color: T.textSecondary, fontSize: 13, lineHeight: 1.5 }}>
+              Participa en el mix si tiene peso útil mayor que cero y composición válida.
             </div>
             <InstrumentUniverseTable snapshot={savedUniverseSnapshot} />
             {savedUniverseSummary.warnings.length > 0 && (
