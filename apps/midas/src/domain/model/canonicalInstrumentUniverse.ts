@@ -37,8 +37,10 @@ const bundledValidationRaw = BUNDLED_INSTRUMENT_UNIVERSE_RAW
 const bundledSnapshot = bundledValidationRaw?.ok && bundledValidationRaw.snapshot
   ? { ...bundledValidationRaw.snapshot, savedAt: BUNDLED_INSTRUMENT_UNIVERSE_SAVED_AT ?? bundledValidationRaw.snapshot.savedAt }
   : null;
-const bundledValidation = bundledSnapshot
-  ? validateInstrumentUniverseSnapshot(bundledSnapshot)
+// Preserve the schema version declared in the official JSON instead of
+// collapsing it to the internal snapshot version during a second validation pass.
+const bundledValidation = bundledSnapshot && bundledValidationRaw?.ok
+  ? bundledValidationRaw
   : null;
 const bundledMetadata = bundledSnapshot && bundledValidation
   ? buildInstrumentUniverseSnapshotMetadata(bundledSnapshot, bundledValidation, {
