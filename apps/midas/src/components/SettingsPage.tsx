@@ -252,6 +252,21 @@ function UniverseSummaryPanel({ summary }: { summary: InstrumentUniverseSummary 
     if (gapPp > 0) return `Gap: ${formatPp(gapPp)} sobre techo`;
     return `Gap: ${formatPp(gapPp)} bajo piso`;
   })();
+  const reachableRangeLabel = historical
+    ? `${formatPct(historical.rv.min)}-${formatPct(historical.rv.max)}`
+    : '—';
+  const rebalanceSubtitle = (() => {
+    if (!historical || !currentMix) return 'Sin banda o mix estructural';
+    if (summary.structuralChangeRequired === null) {
+      return `RV actual ${formatPct(currentMix.rv)} · Rango alcanzable ${reachableRangeLabel}`;
+    }
+    if (!summary.structuralChangeRequired) {
+      return `RV actual ${formatPct(currentMix.rv)} está dentro del rango alcanzable ${reachableRangeLabel}.`;
+    }
+    return targetRv !== null
+      ? `Target runtime ${formatPct(targetRv)} queda fuera del rango alcanzable ${reachableRangeLabel}. ${gapLabel}`
+      : `RV actual ${formatPct(currentMix.rv)} vs. rango alcanzable ${reachableRangeLabel}.`;
+  })();
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <div style={{ display: 'grid', gap: 10 }}>
@@ -279,23 +294,19 @@ function UniverseSummaryPanel({ summary }: { summary: InstrumentUniverseSummary 
           Resultado runtime MIDAS
         </div>
         <div style={{ color: T.textSecondary, fontSize: 13, lineHeight: 1.5 }}>
-          Derivado runtime: Aurum + fuente activa de mix. El rango usa bandas operativas por instrumento; no representa historia pura.
+          Mix: Instrument Universe V1. Capital: Aurum. Resultado: Runtime MIDAS.
         </div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
         <SummaryCard
-          title="Rango operativo RV"
+          title="Rango alcanzable RV"
           value={historical ? formatRvBand(historical.rv.min, historical.rv.max) : '—'}
-          subtitle={historical ? `Target runtime: ${formatPct(targetRv)} · ${gapLabel}` : 'Sin rango operativo'}
+          subtitle={historical ? 'Derivado del Instrument Universe V1 usando bandas por instrumento; no es historia pura ni proyección M8.' : 'Sin rango alcanzable'}
         />
         <SummaryCard
-          title="Cambio estructural"
+          title="Rebalanceo recomendado"
           value={summary.structuralChangeRequired === null ? '—' : summary.structuralChangeRequired ? 'Requerido' : 'No requerido'}
-          subtitle={
-            historical
-              ? `Target RV ${formatPct(targetRv)} · Rango alcanzable ${formatPct(historical.rv.min)}-${formatPct(historical.rv.max)} · Gap ${formatPp(gapPp)}`
-              : 'Sin banda o target'
-          }
+          subtitle={rebalanceSubtitle}
         />
       </div>
     </div>
@@ -309,7 +320,7 @@ function InstrumentUniverseTable({ snapshot }: { snapshot: InstrumentUniverseSna
       <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1260 }}>
         <thead>
           <tr style={{ background: T.surfaceEl, color: T.textMuted, fontSize: 11, textAlign: 'left' }}>
-            {['Instrumento', 'instrument_id', 'Peso', 'Usable en mix', 'Mix usado', 'Exposición', 'Rango operativo RV', 'Conf.', 'Fuente', 'Driver estructural', 'Warnings'].map((label) => (
+            {['Instrumento', 'instrument_id', 'Peso', 'Usable en mix', 'Mix usado', 'Exposición', 'Rango alcanzable RV', 'Conf.', 'Fuente', 'Driver estructural', 'Warnings'].map((label) => (
               <th key={label} style={{ padding: '10px 12px', borderBottom: `1px solid ${T.border}` }}>{label}</th>
             ))}
           </tr>
@@ -326,6 +337,10 @@ function InstrumentUniverseTable({ snapshot }: { snapshot: InstrumentUniverseSna
                 <div>{toBoolLabel(item.usable)}</div>
                 {(item.weightPortfolio ?? 0) <= 0 ? (
                   <div style={{ color: T.warning, fontSize: 10 }}>Peso cero — no participa en mix</div>
+                ) : item.usable ? (
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    Participa en el mix si tiene peso útil mayor que cero y composición válida.
+                  </div>
                 ) : null}
               </td>
               <td style={{ padding: '10px 12px' }}>

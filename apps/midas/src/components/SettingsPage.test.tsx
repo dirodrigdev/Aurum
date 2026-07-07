@@ -145,9 +145,14 @@ test('official universe source is visible and legacy normal flow is hidden', () 
     assert.match(html, /Capital econ[oó]mico oficial/);
     assert.match(html, /Mix derivado desde instruments: peso por instrumento × current_mix_used\./);
     assert.match(html, /Resultado runtime MIDAS/);
+    assert.match(html, /Mix: Instrument Universe V1\. Capital: Aurum\. Resultado: Runtime MIDAS\./);
+    assert.match(html, /Rango alcanzable RV/);
+    assert.match(html, /Rebalanceo recomendado/);
+    assert.match(html, /No requerido/);
     assert.match(html, /Recuperación legacy avanzada/);
     assert.doesNotMatch(html, /Pegar JSON/);
     assert.match(html, /Cargar guardado local/);
+    assert.doesNotMatch(html, /Cambio estructural/);
   });
 });
 
@@ -158,6 +163,7 @@ test('zero-weight instrument is shown as not usable without error semantics', ()
     assert.match(html, /SURA Gestión Moderado/);
     assert.match(html, /Usable en mix/);
     assert.match(html, /Peso cero — no participa en mix/);
+    assert.match(html, /Participa en el mix si tiene peso útil mayor que cero y composición válida\./);
     assert.match(html, /Driver estructural/);
     assert.match(html, /Driver estructural no define si entra al mix\./);
   });
