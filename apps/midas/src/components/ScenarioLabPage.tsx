@@ -317,6 +317,9 @@ export function ScenarioLabPage(props: ScenarioLabPageProps) {
           La IA externa puede hacer pre-screening heurístico. Puede calcular scores proxy, pero no resultados M8.
           Pídele que te muestre una preselección antes del JSON final y que te deje depurar candidatos si hace falta.
         </div>
+        <div style={{ color: T.textSecondary, fontSize: 14, lineHeight: 1.6 }}>
+          La política de venta de casa está definida por el motor. El Laboratorio no propone vender/no vender casa como decisión libre: solo lee las métricas de casa que devuelve M8.
+        </div>
       </section>
 
       <section style={{ border: `1px solid ${T.border}`, borderRadius: 20, padding: 18, background: T.surface, display: 'grid', gap: 12 }}>

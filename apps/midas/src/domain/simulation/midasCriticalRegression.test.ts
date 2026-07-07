@@ -220,9 +220,12 @@ function buildFingerprintInput(params: ModelParameters, effectiveEngineInput: un
     },
   };
   const applied = applyCandidateToM8Input(baseM8Input, incompletePatch);
-  assert.equal(applied.ok, false, 'Scenario Lab must not evaluate partial spending phase patches as valid M8 input');
-  if (!applied.ok) {
-    assert.ok(applied.errors.some((error) => error.includes('4 montos positivos')));
+  assert.equal(applied.ok, true, 'Scenario Lab must complete partial spending phase patches from baseline before evaluating M8');
+  if (applied.ok) {
+    assert.equal(applied.input.phase1MonthlyClp, 6_500_000);
+    assert.equal(applied.input.phase2MonthlyClp, baseM8Input.phase2MonthlyClp);
+    assert.equal(applied.input.phase3MonthlyClp, baseM8Input.phase3MonthlyClp);
+    assert.equal(applied.input.phase4MonthlyClp, baseM8Input.phase4MonthlyClp);
   }
 })();
 

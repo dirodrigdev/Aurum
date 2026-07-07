@@ -7,6 +7,12 @@ import {
 import type { ResultConfidence } from '../model/resultConfidence';
 import type { SimulationResultDiagnostics } from '../model/simulationResultDigest';
 import type { SimulationResults } from '../model/types';
+import {
+  SCENARIO_LAB_BLOCKED_VARIABLE_REASONS,
+  SCENARIO_LAB_EDITABLE_VARIABLES,
+  SCENARIO_LAB_ENGINE_INVARIANTS,
+  SCENARIO_LAB_ENGINE_READONLY_METRICS,
+} from './scenarioLabEngineContract';
 
 export const OPTIMIZATION_PACK_TYPE = 'midas_optimization_pack';
 export const OPTIMIZATION_PACK_VERSION = '1.0';
@@ -49,18 +55,7 @@ export const OPTIMIZATION_MENU = [
   },
 ] as const;
 
-export const OPTIMIZATION_ALLOWED_VARIABLES = [
-  'spendingPhases',
-  'phaseDurations',
-  'bucketMonths',
-  'portfolioMix',
-  'cutRules',
-  'houseSaleTrigger',
-  'returnScenario',
-  'horizonYears',
-  'nSim',
-  'seed',
-] as const;
+export const OPTIMIZATION_ALLOWED_VARIABLES = SCENARIO_LAB_EDITABLE_VARIABLES;
 
 export const OPTIMIZATION_FORBIDDEN_VARIABLES = [
   'realAurumSnapshot',
@@ -72,6 +67,7 @@ export const OPTIMIZATION_FORBIDDEN_VARIABLES = [
   'authUser',
   'email',
   'uid',
+  ...Object.keys(SCENARIO_LAB_BLOCKED_VARIABLE_REASONS),
 ] as const;
 
 export const CANDIDATE_FORBIDDEN_FINAL_METRICS = [
@@ -209,6 +205,8 @@ function buildExternalAiInstructions() {
     context: 'El usuario copiará este pack en una IA externa para conversación guiada y pre-screening heurístico.',
     interactionRules: [
       'Guía la conversación usando solo variables permitidas.',
+      'La política de venta de casa está definida por el motor. No propongas vender/no vender casa como decisión independiente.',
+      'Si necesitas hablar de casa, evalúa las métricas de venta de casa que devuelve M8 o usa solo supuestos explícitamente editables por contrato.',
       'Después de cada objetivo o restricción, pregunta: ¿Quieres seguir agregando objetivos/restricciones o terminaste? Responde seguir o terminé.',
       'Cuando el usuario diga terminé, NO generes JSON inmediatamente.',
       'Primero genera candidatos internamente, aplica heurística o proxy scoring, agrupa por familias y descarta candidatos redundantes o débiles.',
@@ -265,6 +263,8 @@ function buildCandidateSetSchema() {
     optionalRootFields: ['generationSummary', 'discardedIdeas'],
     allowedVariables: OPTIMIZATION_ALLOWED_VARIABLES,
     forbiddenVariables: OPTIMIZATION_FORBIDDEN_VARIABLES,
+    engineInvariants: SCENARIO_LAB_ENGINE_INVARIANTS,
+    readonlyMetrics: SCENARIO_LAB_ENGINE_READONLY_METRICS,
     forbiddenFinalMetrics: CANDIDATE_FORBIDDEN_FINAL_METRICS,
     maxCandidates: MAX_CANDIDATES_PER_SET,
     targetCandidates: TARGET_CANDIDATES_PER_SET,
@@ -301,6 +301,7 @@ function buildCandidateSetSchema() {
 function buildEngineGuidance() {
   return {
     summary: [
+      'La política de venta de casa está definida por el motor y no se modela como decisión libre vender/no vender.',
       'El horizonte cambia la duración total del plan y la exposición acumulada al riesgo.',
       'El gasto por fases cambia presión de liquidez, recortes y probabilidad de venta de casa.',
       'Bucket y liquidez afectan resiliencia temprana frente a secuencia de retornos.',
@@ -310,6 +311,7 @@ function buildEngineGuidance() {
       'La secuencia de retornos importa especialmente en los primeros años.',
       'QoL y patrimonio terminal deben leerse juntos para evitar subuso o fragilidad.',
     ],
+    invariants: SCENARIO_LAB_ENGINE_INVARIANTS,
     doNotCalculateFinalMetrics: true,
     finalEvaluationMustBeRunByMidasM8: true,
   };

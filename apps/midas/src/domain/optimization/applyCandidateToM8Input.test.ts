@@ -98,10 +98,6 @@ const candidate: MidasCandidate = {
       phase3Years: 16,
       phase4Years: 5,
     },
-    houseSaleTrigger: {
-      yearsOfSpend: 2.5,
-      lagMonths: 9,
-    },
     cutRules: {
       cut1: 0.93,
       cut2: 0.86,
@@ -127,8 +123,6 @@ if (applied.ok) {
   assert.equal(applied.input.phase1EndYear, 5);
   assert.equal(applied.input.phase2EndYear, 19);
   assert.equal(applied.input.phase3EndYear, 35);
-  assert.equal(applied.input.house?.house_sale_trigger_years_of_spend, 2.5);
-  assert.equal(applied.input.house?.house_sale_lag_months, 9);
   assert.equal(applied.input.cuts.cut1_floor, 0.93);
   assert.equal(applied.input.portfolio_mix.eq_global, 0.28);
   assert.equal(applied.input.n_paths, 240);
@@ -168,12 +162,71 @@ const invalidDurations = applyCandidateToM8Input(buildBaseInput(), {
 });
 assert.equal(invalidDurations.ok, false);
 
+const partialSpendingPhases = applyCandidateToM8Input(buildBaseInput(), {
+  candidateId: 'partial_spend',
+  changes: {
+    spendingPhases: {
+      phase1MonthlyClp: 6_300_000,
+      F3: 4_100_000,
+    },
+  },
+});
+assert.equal(partialSpendingPhases.ok, true);
+if (partialSpendingPhases.ok) {
+  assert.equal(partialSpendingPhases.input.phase1MonthlyClp, 6_300_000);
+  assert.equal(partialSpendingPhases.input.phase2MonthlyClp, 6_000_000);
+  assert.equal(partialSpendingPhases.input.phase3MonthlyClp, 4_100_000);
+  assert.equal(partialSpendingPhases.input.phase4MonthlyClp, 5_400_000);
+}
+
+const partialCutRules = applyCandidateToM8Input(buildBaseInput(), {
+  candidateId: 'partial_cut_rules',
+  changes: {
+    cutRules: {
+      cut1: 0.95,
+    },
+  },
+});
+assert.equal(partialCutRules.ok, true);
+if (partialCutRules.ok) {
+  assert.equal(partialCutRules.input.cuts.cut1_floor, 0.95);
+  assert.equal(partialCutRules.input.cuts.cut2_floor, 0.84);
+}
+
+const futureCapitalEvents = applyCandidateToM8Input(buildBaseInput(), {
+  candidateId: 'future_events',
+  changes: {
+    futureCapitalEvents: [
+      { id: 'bonus-2030', type: 'inflow', amount: 200_000_000, currency: 'CLP', effectiveMonth: 24 },
+      { id: 'gift-2032', type: 'inflow', amount: 50_000, currency: 'USD', effectiveMonth: 48 },
+    ],
+  },
+});
+assert.equal(futureCapitalEvents.ok, true);
+if (futureCapitalEvents.ok) {
+  assert.equal(futureCapitalEvents.input.capital_initial_clp, 1_500_000_000);
+  assert.equal(futureCapitalEvents.input.future_events?.length, 2);
+  assert.equal(futureCapitalEvents.input.future_events?.[0]?.effective_month, 24);
+  assert.equal(futureCapitalEvents.input.future_events?.[1]?.currency, 'USD');
+}
+
+const blockedHousePolicy = applyCandidateToM8Input(buildBaseInput(), {
+  candidateId: 'blocked_house',
+  changes: {
+    houseSaleTrigger: {
+      yearsOfSpend: 2.5,
+      lagMonths: 9,
+    },
+  },
+} as unknown as MidasCandidate);
+assert.equal(blockedHousePolicy.ok, false);
+
 const unsupportedReturnScenario = applyCandidateToM8Input(buildBaseInput(), {
   candidateId: 'unsupported_return',
   changes: {
     returnScenario: 'optimistic',
   },
-});
+} as unknown as MidasCandidate);
 assert.equal(unsupportedReturnScenario.ok, false);
 
 console.log('applyCandidateToM8Input tests passed');

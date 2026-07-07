@@ -145,6 +145,7 @@ assert(readyMarkup.includes('Exploratorio · no decisional'));
 assert(readyMarkup.includes('La IA genera candidatos. MIDAS calcula resultados. Tú decides.'));
 assert(readyMarkup.includes('La IA externa puede hacer pre-screening heurístico.'));
 assert(readyMarkup.includes('Puede calcular scores proxy, pero no resultados M8.'));
+assert(readyMarkup.includes('La política de venta de casa está definida por el motor.'));
 assert(readyMarkup.includes('Evaluar candidatos con M8'));
 assert(readyMarkup.includes('Baseline M8 sellado'));
 

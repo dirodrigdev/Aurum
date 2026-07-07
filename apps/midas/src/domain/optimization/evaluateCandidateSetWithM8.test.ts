@@ -202,16 +202,22 @@ const evaluation = evaluateCandidateSetWithM8({
         preM8ScoreExplanation: 'Proxy heurístico, no resultado oficial.',
         changes: {
           bucketMonths: 30,
-          cutRules: { cut1: 0.94, cut2: 0.87 },
+          cutRules: { cut1: 0.94 },
+          spendingPhases: { phase1MonthlyClp: 5_800_000 },
+          futureCapitalEvents: [
+            { id: 'bonus-2030', type: 'inflow', amount: 180_000_000, currency: 'CLP', effectiveMonth: 24 },
+          ],
           seed: 99,
           nSim: 40,
         },
       },
       {
         candidateId: 'invalid_return',
-        changes: {
-          returnScenario: 'optimistic',
-        },
+        changes: ({
+          houseSaleTrigger: {
+            yearsOfSpend: 2.5,
+          },
+        } as any),
       },
     ],
   },
@@ -226,10 +232,12 @@ assert.equal(validCandidate.status, 'evaluated');
 assert.equal(validCandidate.metrics?.success40 !== null, true);
 assert.equal(Array.isArray(validCandidate.appliedChanges), true);
 assert.equal(typeof validCandidate.deltaVsBaseline?.qolScore === 'number' || validCandidate.deltaVsBaseline?.qolScore === null, true);
+assert(validCandidate.appliedChanges.some((change) => change.field === 'future_events'));
+assert(validCandidate.appliedChanges.some((change) => change.field === 'phase1MonthlyClp'));
 
 const invalidCandidate = evaluation.candidates[1];
 assert.equal(invalidCandidate.status, 'invalid');
 assert.equal(invalidCandidate.metrics, null);
-assert.equal(invalidCandidate.errors.some((error) => error.includes('returnScenario')), true);
+assert.equal(invalidCandidate.errors.some((error) => error.includes('venta de casa está definida por el motor')), true);
 
 console.log('evaluateCandidateSetWithM8 tests passed');

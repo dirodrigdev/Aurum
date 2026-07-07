@@ -44,6 +44,15 @@ const validCandidateSet = {
           cut2: 0.84,
         },
         bucketMonths: 30,
+        futureCapitalEvents: [
+          {
+            id: 'bonus-2030',
+            type: 'inflow',
+            amount: 200000000,
+            currency: 'CLP',
+            effectiveMonth: 24,
+          },
+        ],
       },
       hypothesis: 'Podría mejorar calidad de vida reduciendo profundidad de recortes.',
       riskNotes: ['Puede aumentar consumo terminal.'],
@@ -144,5 +153,20 @@ const customGoalsAccepted = validateCandidateSet({
   customGoals: ['objetivo libre'],
 }, { expectedPackFingerprint });
 assert.equal(customGoalsAccepted.ok, true);
+
+const blockedHouseChange = validateCandidateSet({
+  ...validCandidateSet,
+  candidates: [
+    {
+      ...validCandidateSet.candidates[0],
+      changes: {
+        houseSaleTrigger: {
+          yearsOfSpend: 2.5,
+        },
+      },
+    },
+  ],
+}, { expectedPackFingerprint });
+assert.equal(blockedHouseChange.ok, false);
 
 console.log('candidateSet tests passed');

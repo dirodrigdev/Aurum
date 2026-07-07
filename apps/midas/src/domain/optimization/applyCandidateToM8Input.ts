@@ -1,5 +1,6 @@
 import type { MidasCandidate } from './candidateSet';
 import type { M8CutsInput, M8HouseInput, M8Input, M8PortfolioMix } from '../simulation/m8.types';
+import { getScenarioLabBlockedVariableReason } from './scenarioLabEngineContract';
 
 export type AppliedCandidateChange = {
   field: string;
@@ -82,17 +83,24 @@ function applySpendingPhases(
     input.phase3MonthlyClp = rawValue[2];
     input.phase4MonthlyClp = rawValue[3];
   } else if (isRecord(rawValue)) {
-    const values = [
+    const currentValues = [
+      input.phase1MonthlyClp,
+      input.phase2MonthlyClp,
+      input.phase3MonthlyClp,
+      input.phase4MonthlyClp,
+    ];
+    const requestedValues = [
       readSpendingPhaseValue(rawValue, 1),
       readSpendingPhaseValue(rawValue, 2),
       readSpendingPhaseValue(rawValue, 3),
       readSpendingPhaseValue(rawValue, 4),
     ];
-    if (values.some((entry) => entry === null)) {
-      errors.push('changes.spendingPhases debe incluir 4 montos positivos (phase1MonthlyClp..phase4MonthlyClp o F1..F4).');
+    if (requestedValues.every((entry) => entry === null)) {
+      errors.push('changes.spendingPhases debe incluir al menos un monto positivo editable.');
       return;
     }
-    [input.phase1MonthlyClp, input.phase2MonthlyClp, input.phase3MonthlyClp, input.phase4MonthlyClp] = values as number[];
+    [input.phase1MonthlyClp, input.phase2MonthlyClp, input.phase3MonthlyClp, input.phase4MonthlyClp] =
+      requestedValues.map((entry, index) => entry ?? currentValues[index]) as number[];
   } else {
     errors.push('changes.spendingPhases debe ser un objeto o arreglo compatible.');
     return;
@@ -160,44 +168,6 @@ function applyPhaseDurations(
   pushApplied(appliedChanges, 'phase3EndYear', input.phase3EndYear);
 }
 
-function applyHouseSaleTrigger(
-  input: M8Input,
-  rawValue: unknown,
-  appliedChanges: AppliedCandidateChange[],
-  errors: string[],
-) {
-  if (!input.house?.include_house) {
-    errors.push('changes.houseSaleTrigger requiere un baseline con house activa.');
-    return;
-  }
-  if (!isRecord(rawValue)) {
-    errors.push('changes.houseSaleTrigger debe ser un objeto.');
-    return;
-  }
-
-  const yearsOfSpend = rawValue.yearsOfSpend ?? rawValue.house_sale_trigger_years_of_spend;
-  const lagMonths = rawValue.lagMonths ?? rawValue.house_sale_lag_months;
-  if (!isFiniteNumber(yearsOfSpend) || yearsOfSpend <= 0) {
-    errors.push('changes.houseSaleTrigger.yearsOfSpend debe ser positivo.');
-    return;
-  }
-  if (typeof lagMonths !== 'undefined' && !isNonNegativeInteger(lagMonths)) {
-    errors.push('changes.houseSaleTrigger.lagMonths debe ser entero >= 0.');
-    return;
-  }
-
-  input.house = {
-    ...(input.house as M8HouseInput),
-    house_sale_trigger_years_of_spend: yearsOfSpend,
-    ...(typeof lagMonths !== 'undefined' ? { house_sale_lag_months: Number(lagMonths) } : {}),
-  };
-
-  pushApplied(appliedChanges, 'house.house_sale_trigger_years_of_spend', input.house.house_sale_trigger_years_of_spend);
-  if (typeof lagMonths !== 'undefined') {
-    pushApplied(appliedChanges, 'house.house_sale_lag_months', input.house.house_sale_lag_months);
-  }
-}
-
 function applyCutRules(
   input: M8Input,
   rawValue: unknown,
@@ -252,6 +222,63 @@ function applyCutRules(
   for (const [key, value] of Object.entries(nextCuts)) {
     pushApplied(appliedChanges, `cuts.${key}`, value);
   }
+}
+
+function applyFutureCapitalEvents(
+  input: M8Input,
+  rawValue: unknown,
+  appliedChanges: AppliedCandidateChange[],
+  errors: string[],
+) {
+  if (!Array.isArray(rawValue)) {
+    errors.push('changes.futureCapitalEvents debe ser un arreglo.');
+    return;
+  }
+
+  const nextEvents = rawValue.map((event, index) => {
+    if (!isRecord(event)) {
+      errors.push(`changes.futureCapitalEvents[${index}] debe ser un objeto.`);
+      return null;
+    }
+    const id = typeof event.id === 'string' ? event.id.trim() : '';
+    const type = event.type;
+    const amount = event.amount;
+    const currency = event.currency;
+    const effectiveMonth = event.effectiveMonth ?? event.effective_month;
+    if (!id) {
+      errors.push(`changes.futureCapitalEvents[${index}].id es obligatorio.`);
+      return null;
+    }
+    if (type !== 'inflow' && type !== 'outflow') {
+      errors.push(`changes.futureCapitalEvents[${index}].type debe ser inflow u outflow.`);
+      return null;
+    }
+    if (!isFiniteNumber(amount) || amount <= 0) {
+      errors.push(`changes.futureCapitalEvents[${index}].amount debe ser > 0.`);
+      return null;
+    }
+    if (currency !== 'CLP' && currency !== 'USD' && currency !== 'UF') {
+      errors.push(`changes.futureCapitalEvents[${index}].currency debe ser CLP, USD o UF.`);
+      return null;
+    }
+    if (!isPositiveInteger(effectiveMonth) || effectiveMonth > input.years * 12) {
+      errors.push(`changes.futureCapitalEvents[${index}].effectiveMonth debe estar dentro del horizonte.`);
+      return null;
+    }
+    return {
+      id,
+      type,
+      amount,
+      currency,
+      effective_month: Number(effectiveMonth),
+      ...(typeof event.description === 'string' && event.description.trim() ? { description: event.description.trim() } : {}),
+    };
+  }).filter(Boolean);
+
+  if (errors.length > 0) return;
+
+  input.future_events = nextEvents as NonNullable<M8Input['future_events']>;
+  pushApplied(appliedChanges, 'future_events', input.future_events);
 }
 
 function applyPortfolioMix(
@@ -312,11 +339,11 @@ export function applyCandidateToM8Input(
       case 'phaseDurations':
         applyPhaseDurations(input, rawValue, appliedChanges, errors);
         break;
-      case 'houseSaleTrigger':
-        applyHouseSaleTrigger(input, rawValue, appliedChanges, errors);
-        break;
       case 'cutRules':
         applyCutRules(input, rawValue, appliedChanges, errors);
+        break;
+      case 'futureCapitalEvents':
+        applyFutureCapitalEvents(input, rawValue, appliedChanges, errors);
         break;
       case 'portfolioMix':
         applyPortfolioMix(input, rawValue, appliedChanges, errors);
@@ -337,12 +364,13 @@ export function applyCandidateToM8Input(
         input.seed = Number(rawValue);
         pushApplied(appliedChanges, 'seed', input.seed);
         break;
+      case 'houseSaleTrigger':
       case 'returnScenario':
-        errors.push('changes.returnScenario todavía no tiene un mapping canónico suficientemente claro en Scenario Lab.');
+      case 'horizonYears': {
+        const blockedReason = getScenarioLabBlockedVariableReason(key);
+        errors.push(blockedReason ? `changes.${key} está bloqueado. ${blockedReason}` : `changes.${key} no es un campo soportado por el evaluador M8.`);
         break;
-      case 'horizonYears':
-        errors.push('changes.horizonYears no se soporta en este slice porque exige remap completo de horizonte y eventos futuros.');
-        break;
+      }
       default:
         errors.push(`changes.${key} no es un campo soportado por el evaluador M8.`);
         break;

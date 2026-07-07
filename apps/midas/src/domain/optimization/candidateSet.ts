@@ -9,6 +9,7 @@ import {
   type AllowedOptimizationVariable,
   type OptimizationGoalId,
 } from './optimizationPack';
+import { getScenarioLabBlockedVariableReason } from './scenarioLabEngineContract';
 
 export const CANDIDATE_SET_TYPE = 'midas_candidate_set';
 export const CANDIDATE_SET_VERSION = '1.0';
@@ -90,7 +91,12 @@ function validateCandidate(candidate: unknown, index: number): string[] {
   } else {
     for (const key of Object.keys(candidate.changes)) {
       if (!ALLOWED_CHANGE_KEYS.has(key)) {
-        errors.push(`candidates[${index}].changes.${key} no es una variable permitida.`);
+        const blockedReason = getScenarioLabBlockedVariableReason(key);
+        errors.push(
+          blockedReason
+            ? `candidates[${index}].changes.${key} está bloqueado por contrato. ${blockedReason}`
+            : `candidates[${index}].changes.${key} no es una variable permitida.`,
+        );
       }
     }
   }
