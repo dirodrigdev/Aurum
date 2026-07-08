@@ -49,6 +49,11 @@ export const OPTIMIZATION_MENU = [
     description: 'Detectar patrimonio terminal alto con recortes innecesarios.',
   },
   {
+    id: 'minimize_terminal_residual',
+    label: 'Minimizar patrimonio residual al horizonte',
+    description: 'Aproximar el patrimonio terminal a cero sin romper guardrails de seguridad y calidad de vida.',
+  },
+  {
     id: 'custom',
     label: 'Objetivo personalizado',
     description: 'Permite que el usuario formule un objetivo libre traducible a variables permitidas.',
@@ -232,6 +237,10 @@ function buildExternalAiInstructions() {
       'constraints debe salir como objeto JSON en la raíz. No uses un arreglo raíz para constraints.',
       'Si necesitas listar restricciones, usa un objeto por id o un contenedor tipo constraints.items.',
       'Si emites preM8Score, agrega siempre esta advertencia textual al inicio de preM8ScoreExplanation: "Score pre-M8 heurístico/no oficial; M8 es la fuente oficial de evaluación."',
+      'customGoals debe salir siempre como arreglo de textos. Si no hay objetivos personalizados, usa [].',
+      'No asumas maximizar éxito como objetivo por defecto.',
+      'Si el usuario prioriza desacumulación o calidad de vida, trata success como guardrail mínimo a consultar, no como objetivo automático.',
+      'Pregunta piso mínimo de éxito aceptable cuando corresponda, por ejemplo 85%, 88%, 90% u otro.',
     ],
     aiCanDo: [
       'Calcular scores heurísticos o proxy.',
@@ -321,6 +330,13 @@ function buildCandidateSetSchema() {
       ],
       changes: 'Record<allowedVariable, unknown>',
     },
+    customGoalsShape: {
+      rootType: 'array',
+      itemType: 'string',
+      emptyWhenNoCustomGoals: true,
+      forbiddenForms: ['string', 'object'],
+    },
+    postM8GuidanceTodo: 'Después de evaluar con M8, comparar candidatos por trade-off: éxito, QoL, terminalWealthRatio, houseSalePct.',
   };
 }
 

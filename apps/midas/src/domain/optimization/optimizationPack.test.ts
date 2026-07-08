@@ -296,6 +296,11 @@ assert.equal(
   pack.optimizationMenu.some((item) => item.label === 'Reducir estrés de liquidez'),
   true,
 );
+assert.equal(pack.optimizationMenu.some((item) => item.id === 'minimize_terminal_residual'), true);
+assert.equal(
+  pack.optimizationMenu.some((item) => item.label === 'Minimizar patrimonio residual al horizonte'),
+  true,
+);
 assert.ok(pack.conversationProtocol);
 assert.ok(pack.externalAiInstructions);
 assert.ok(pack.candidatePreScreeningPolicy);
@@ -349,6 +354,22 @@ assert.equal(
   true,
 );
 assert.equal(
+  interactionRules.some((item) => item.includes('customGoals debe salir siempre como arreglo de textos')),
+  true,
+);
+assert.equal(
+  interactionRules.some((item) => item.includes('No asumas maximizar éxito como objetivo por defecto.')),
+  true,
+);
+assert.equal(
+  interactionRules.some((item) => item.includes('success como guardrail mínimo')),
+  true,
+);
+assert.equal(
+  interactionRules.some((item) => item.includes('Pregunta piso mínimo de éxito aceptable')),
+  true,
+);
+assert.equal(
   interactionRules.some((item) => item.includes('preselección de candidatos')),
   true,
 );
@@ -363,10 +384,16 @@ assert.equal(
 const candidateSetSchema = pack.candidateSetSchema as {
   heuristicFields?: { preM8ScoreExplanationPrefix?: string };
   constraintsShape?: { rootType?: string; legacyArrayRootForbidden?: boolean };
+  customGoalsShape?: { rootType?: string; itemType?: string; emptyWhenNoCustomGoals?: boolean };
+  postM8GuidanceTodo?: string;
 };
 assert.equal(candidateSetSchema.heuristicFields?.preM8ScoreExplanationPrefix, 'Score pre-M8 heurístico/no oficial; M8 es la fuente oficial de evaluación.');
 assert.equal(candidateSetSchema.constraintsShape?.rootType, 'object');
 assert.equal(candidateSetSchema.constraintsShape?.legacyArrayRootForbidden, true);
+assert.equal(candidateSetSchema.customGoalsShape?.rootType, 'array');
+assert.equal(candidateSetSchema.customGoalsShape?.itemType, 'string');
+assert.equal(candidateSetSchema.customGoalsShape?.emptyWhenNoCustomGoals, true);
+assert.match(candidateSetSchema.postM8GuidanceTodo ?? '', /trade-off: éxito, QoL, terminalWealthRatio, houseSalePct/);
 const serializedLineage = JSON.stringify(pack.sourceLineage);
 assert.equal(serializedLineage.includes('authDiagnostics'), false);
 assert.equal(serializedLineage.includes('authEmail'), false);

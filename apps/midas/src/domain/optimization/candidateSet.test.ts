@@ -160,6 +160,45 @@ const customGoalsAccepted = validateCandidateSet({
 }, { expectedPackFingerprint });
 assert.equal(customGoalsAccepted.ok, true);
 
+const customGoalsStringNormalized = validateCandidateSet({
+  ...validCandidateSet,
+  selectedGoals: ['custom'],
+  customGoals: 'objetivo legacy directo',
+}, { expectedPackFingerprint });
+assert.equal(customGoalsStringNormalized.ok, true);
+if (customGoalsStringNormalized.ok) {
+  assert.deepEqual(customGoalsStringNormalized.value.customGoals, ['objetivo legacy directo']);
+}
+
+const customGoalsObjectNormalized = validateCandidateSet({
+  ...validCandidateSet,
+  selectedGoals: ['custom'],
+  customGoals: { label: 'desacumular sin romper guardrail' },
+}, { expectedPackFingerprint });
+assert.equal(customGoalsObjectNormalized.ok, true);
+if (customGoalsObjectNormalized.ok) {
+  assert.deepEqual(customGoalsObjectNormalized.value.customGoals, ['desacumular sin romper guardrail']);
+}
+
+const invalidCustomGoalsObject = validateCandidateSet({
+  ...validCandidateSet,
+  selectedGoals: ['custom'],
+  customGoals: { weight: 1 },
+}, { expectedPackFingerprint });
+assert.equal(invalidCustomGoalsObject.ok, false);
+if (!invalidCustomGoalsObject.ok) {
+  assert.equal(invalidCustomGoalsObject.errors.includes('customGoals debe ser un arreglo de textos.'), true);
+}
+
+const legacyHouseGoalAlias = validateCandidateSet({
+  ...validCandidateSet,
+  selectedGoals: ['reduce_house_sale'],
+}, { expectedPackFingerprint });
+assert.equal(legacyHouseGoalAlias.ok, true);
+if (legacyHouseGoalAlias.ok) {
+  assert.deepEqual(legacyHouseGoalAlias.value.selectedGoals, ['reduce_liquidity_stress']);
+}
+
 const blockedHouseChange = validateCandidateSet({
   ...validCandidateSet,
   candidates: [

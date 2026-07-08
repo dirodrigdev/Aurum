@@ -97,9 +97,42 @@ function normalizeCandidate(candidate: unknown): unknown {
   };
 }
 
+function normalizeCustomGoal(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length ? trimmed : null;
+  }
+  if (!isRecord(value)) return null;
+  for (const key of ['text', 'label', 'detail', 'description']) {
+    const raw = value[key];
+    if (typeof raw === 'string' && raw.trim().length > 0) return raw.trim();
+  }
+  return null;
+}
+
+function normalizeCustomGoals(value: unknown): unknown {
+  if (typeof value === 'undefined') return value;
+  if (typeof value === 'string') {
+    const normalized = normalizeCustomGoal(value);
+    return normalized ? [normalized] : [];
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeCustomGoal(entry) ?? entry);
+  }
+  const normalized = normalizeCustomGoal(value);
+  return normalized ? [normalized] : value;
+}
+
+function normalizeSelectedGoals(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((goal) => goal === 'reduce_house_sale' ? 'reduce_liquidity_stress' : goal);
+}
+
 function normalizeCandidateSetPayload(payload: Record<string, unknown>): Record<string, unknown> {
   return {
     ...payload,
+    selectedGoals: normalizeSelectedGoals(payload.selectedGoals),
+    customGoals: normalizeCustomGoals(payload.customGoals),
     constraints: normalizeLegacyConstraints(payload.constraints),
     candidates: Array.isArray(payload.candidates) ? payload.candidates.map((candidate) => normalizeCandidate(candidate)) : payload.candidates,
   };
