@@ -51,7 +51,7 @@ test('simulation home loads in local read-only mode', async ({ page }) => {
   await expect(page.getByText(/Fuente de datos/i).last()).toBeVisible();
   await expect(technicalDetailLine).toBeHidden();
   await expect(page.getByRole('button', { name: 'Asistida', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Palancas', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sensibilidad', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Lab técnico', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Optimización', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Ajustes', exact: true })).toBeVisible();
@@ -65,9 +65,9 @@ test.skip('assisted tab loads from the bottom nav', async ({ page }) => {
   await openTab(page, 'Asistida', 'No sincronizado con Simulación principal');
 });
 
-test.skip('palancas tab loads from the bottom nav', async ({ page }) => {
+test.skip('sensitivity tab loads from the bottom nav', async ({ page }) => {
   await openApp(page);
-  await openTab(page, 'Palancas', 'Palancas de sensibilidad');
+  await openTab(page, 'Sensibilidad', 'Análisis de sensibilidad');
 });
 
 test.skip('lab tab loads from the bottom nav', async ({ page }) => {

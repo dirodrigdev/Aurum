@@ -25,7 +25,7 @@ assert.match(
 for (const lazyPage of [
   'AssistedSimulationPageLazy',
   'ScenarioLabPageLazy',
-  'PalancasPageLazy',
+  'SensitivityPageLazy',
   'BucketLabPageLazy',
   'SettingsPageLazy',
   'OptimizationLightPageLazy',

@@ -111,8 +111,8 @@ import {
 const AssistedSimulationPageLazy = React.lazy(() =>
   import('./components/AssistedSimulationPage').then((module) => ({ default: module.AssistedSimulationPage })),
 );
-const PalancasPageLazy = React.lazy(() =>
-  import('./components/PalancasPage').then((module) => ({ default: module.PalancasPage })),
+const SensitivityPageLazy = React.lazy(() =>
+  import('./components/SensitivityPage').then((module) => ({ default: module.SensitivityPage })),
 );
 const BucketLabPageLazy = React.lazy(() =>
   import('./components/BucketLabPage').then((module) => ({ default: module.BucketLabPage })),
@@ -5008,11 +5008,10 @@ export default function App() {
           simResult={simResult}
         />
       ) : productActiveTab === 'sens' ? (
-        <PalancasPageLazy
-          baseParams={baseParams}
-          simulationParams={optimizerSimulationParams}
-          simulationActive={simulationActive}
-          simulationLabel={stateLabel}
+        <SensitivityPageLazy
+          canonicalInputReady={canonicalInputReadiness.ready}
+          m8InputFingerprint={m8InputFingerprint}
+          simResult={simResult}
         />
       ) : productActiveTab === 'bucketlab' ? (
         <BucketLabPageLazy params={simParams} />
