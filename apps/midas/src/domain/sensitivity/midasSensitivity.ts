@@ -85,18 +85,26 @@ export type SensitivityTargetResult = {
   testedValue: number | string;
   testedValueLabel: string;
   success: number | null;
+  targetSuccess: number | null;
+  errorVsTarget: number | null;
   deltaSuccess: number | null;
   deltaQolScore: number | null;
   deltaTerminalWealthRatio: number | null;
   deltaHouseSalePct: number | null;
   reachedTarget: boolean;
   estimated: boolean;
+  estimationMethod: 'interpolated' | 'closest-simulated';
   observation: string;
 };
 
 export type SensitivityRunResult = {
   generatedAt: string;
+  /** Internal baseline used for all rapid sensitivity deltas. */
   baseline: SensitivityMetrics;
+  /** Current official M8 result, when the caller has one. */
+  officialBaseline: SensitivityMetrics | null;
+  sensitivityNPaths: number;
+  fastMode: boolean;
   targetDeltaPp: number;
   targetSuccess: number | null;
   rows: SensitivityRow[];
@@ -388,12 +396,12 @@ export function addSensitivityMarginals(rows: SensitivityRow[]): SensitivityRow[
 
 export function runOneVariableSensitivity(
   baseInput: M8Input,
-  baselineMetrics?: SensitivityMetrics | null,
+  officialBaseline?: SensitivityMetrics | null,
   options: { nPathsOverride?: number; targetDeltaPp?: number } = {},
 ): SensitivityRunResult {
   const stableBase = cloneJson(baseInput);
   if (options.nPathsOverride && options.nPathsOverride > 0) stableBase.n_paths = options.nPathsOverride;
-  const baseline = baselineMetrics ?? buildMetricsFromInput(stableBase).metrics;
+  const baseline = buildMetricsFromInput(stableBase).metrics;
   const grid = buildSensitivityGrid(stableBase);
   const unscoredRows = grid.map<SensitivityRow>((variant) => {
     const input = variant.apply(stableBase);
@@ -419,6 +427,9 @@ export function runOneVariableSensitivity(
   return {
     generatedAt: new Date().toISOString(),
     baseline,
+    officialBaseline: officialBaseline ?? null,
+    sensitivityNPaths: stableBase.n_paths,
+    fastMode: stableBase.n_paths !== baseInput.n_paths,
     targetDeltaPp,
     targetSuccess: baseline.success === null ? null : baseline.success + targetDeltaPp / 100,
     rows,
@@ -441,6 +452,8 @@ type TargetSearchDefinition = {
   searchMode: 'monotonic-up' | 'monotonic-down' | 'closest';
   noTargetObservation: string;
 };
+
+export type SensitivityTargetEstimateDefinition = Pick<TargetSearchDefinition, 'variable' | 'searchMode' | 'comparableSuccess'>;
 
 function phaseSearchValues(baseline: number): number[] {
   const minimum = Math.max(500_000, baseline * 0.2);
@@ -505,15 +518,17 @@ function buildTargetSearchDefinitions(baseInput: M8Input): TargetSearchDefinitio
   ];
 }
 
-type TargetPoint = { value: number; metrics: SensitivityMetrics };
+export type SensitivityTargetPoint = { value: number; metrics: SensitivityMetrics };
 
 function targetResultFromPoint(
   definition: TargetSearchDefinition,
   baseline: SensitivityMetrics,
-  point: TargetPoint,
+  point: SensitivityTargetPoint,
+  targetSuccess: number,
   reachedTarget: boolean,
   observation: string,
   estimated: boolean,
+  estimationMethod: SensitivityTargetResult['estimationMethod'],
 ): SensitivityTargetResult {
   return {
     variable: definition.variable,
@@ -523,45 +538,88 @@ function targetResultFromPoint(
     testedValue: point.value,
     testedValueLabel: definition.valueLabel(point.value),
     success: point.metrics.success,
+    targetSuccess,
+    errorVsTarget: metricDelta(point.metrics.success, targetSuccess),
     deltaSuccess: metricDelta(point.metrics.success, baseline.success),
     deltaQolScore: metricDelta(point.metrics.qolScore, baseline.qolScore),
     deltaTerminalWealthRatio: metricDelta(point.metrics.terminalWealthRatio, baseline.terminalWealthRatio),
     deltaHouseSalePct: metricDelta(point.metrics.houseSalePct, baseline.houseSalePct),
     reachedTarget,
     estimated,
+    estimationMethod,
     observation,
   };
 }
 
-function evaluateTargetPoint(baseInput: M8Input, definition: TargetSearchDefinition, value: number): TargetPoint {
+function evaluateTargetPoint(baseInput: M8Input, definition: TargetSearchDefinition, value: number): SensitivityTargetPoint {
   return { value, metrics: buildMetricsFromInput(definition.apply(baseInput, value)).metrics };
 }
 
-function solveMonotonicTarget(
-  baseInput: M8Input,
-  definition: TargetSearchDefinition,
-  baseline: SensitivityMetrics,
+function interpolateNumber(left: number | null, right: number | null, ratio: number): number | null {
+  return left === null || right === null ? null : left + (right - left) * ratio;
+}
+
+function interpolateMetrics(left: SensitivityMetrics, right: SensitivityMetrics, ratio: number): SensitivityMetrics {
+  const useRightLabel = ratio >= 0.5;
+  return {
+    horizonYears: Math.round(interpolateNumber(left.horizonYears, right.horizonYears, ratio) ?? left.horizonYears),
+    success: interpolateNumber(left.success, right.success, ratio),
+    successAtHorizon: interpolateNumber(left.successAtHorizon, right.successAtHorizon, ratio),
+    ruin: interpolateNumber(left.ruin, right.ruin, ratio),
+    nRuin: interpolateNumber(left.nRuin, right.nRuin, ratio),
+    houseSalePct: interpolateNumber(left.houseSalePct, right.houseSalePct, ratio),
+    houseSaleYearMedian: interpolateNumber(left.houseSaleYearMedian, right.houseSaleYearMedian, ratio),
+    terminalWealthRatio: interpolateNumber(left.terminalWealthRatio, right.terminalWealthRatio, ratio),
+    qolScore: interpolateNumber(left.qolScore, right.qolScore, ratio),
+    qolLabel: useRightLabel ? right.qolLabel : left.qolLabel,
+    csr85_4: interpolateNumber(left.csr85_4, right.csr85_4, ratio),
+    qualitySurvivalRate: interpolateNumber(left.qualitySurvivalRate, right.qualitySurvivalRate, ratio),
+    averageEffectiveSpendingRatio: interpolateNumber(left.averageEffectiveSpendingRatio, right.averageEffectiveSpendingRatio, ratio),
+    severeCutYearsMean: interpolateNumber(left.severeCutYearsMean, right.severeCutYearsMean, ratio),
+  };
+}
+
+function closestPoint(points: SensitivityTargetPoint[], targetSuccess: number): SensitivityTargetPoint {
+  return points.slice().sort((a, b) => {
+    const aError = Math.abs((a.metrics.success ?? -Infinity) - targetSuccess);
+    const bError = Math.abs((b.metrics.success ?? -Infinity) - targetSuccess);
+    return aError - bError;
+  })[0];
+}
+
+export function estimateTargetFromPoints(
+  definition: SensitivityTargetEstimateDefinition,
+  points: SensitivityTargetPoint[],
   targetSuccess: number,
-): SensitivityTargetResult {
-  const points = definition.values.map((value) => evaluateTargetPoint(baseInput, definition, value));
-  const firstHitIndex = points.findIndex((point) => (point.metrics.success ?? -Infinity) >= targetSuccess);
-  if (firstHitIndex < 0) {
-    const best = points.slice().sort((a, b) => (b.metrics.success ?? -Infinity) - (a.metrics.success ?? -Infinity))[0];
-    return targetResultFromPoint(definition, baseline, best, false, definition.noTargetObservation, false);
+): { point: SensitivityTargetPoint; interpolated: boolean; observation: string } {
+  const numericPoints = points
+    .filter((point) => point.metrics.success !== null)
+    .slice()
+    .sort((a, b) => a.value - b.value);
+  const canInterpolate = definition.searchMode !== 'closest' && definition.comparableSuccess;
+  if (canInterpolate) {
+    for (let index = 1; index < numericPoints.length; index += 1) {
+      const left = numericPoints[index - 1];
+      const right = numericPoints[index];
+      const leftSuccess = left.metrics.success ?? 0;
+      const rightSuccess = right.metrics.success ?? 0;
+      if ((targetSuccess - leftSuccess) * (targetSuccess - rightSuccess) > 0 || leftSuccess === rightSuccess) continue;
+      const ratio = (targetSuccess - leftSuccess) / (rightSuccess - leftSuccess);
+      return {
+        point: {
+          value: left.value + (right.value - left.value) * ratio,
+          metrics: interpolateMetrics(left.metrics, right.metrics, ratio),
+        },
+        interpolated: true,
+        observation: 'Interpolado entre dos puntos simulados; no es corrida M8 exacta.',
+      };
+    }
   }
-  let hit = points[firstHitIndex];
-  const previous = points[firstHitIndex - 1];
-  if (!previous || hit.value === previous.value) {
-    return targetResultFromPoint(definition, baseline, hit, true, 'Valor requerido estimado.', false);
-  }
-  let miss = previous;
-  for (let iteration = 0; iteration < 8; iteration += 1) {
-    const midpoint = (miss.value + hit.value) / 2;
-    const candidate = evaluateTargetPoint(baseInput, definition, midpoint);
-    if ((candidate.metrics.success ?? -Infinity) >= targetSuccess) hit = candidate;
-    else miss = candidate;
-  }
-  return targetResultFromPoint(definition, baseline, hit, true, 'Valor requerido estimado; refinado entre dos puntos simulados.', true);
+  return {
+    point: closestPoint(numericPoints, targetSuccess),
+    interpolated: false,
+    observation: 'Punto simulado más cercano al objetivo dentro del rango evaluado.',
+  };
 }
 
 export function findChangeForSuccessTarget(
@@ -573,22 +631,25 @@ export function findChangeForSuccessTarget(
   const targetSuccess = baselineMetrics.success === null ? null : baselineMetrics.success + targetDeltaPp / 100;
   if (targetSuccess === null) return [];
   return buildTargetSearchDefinitions(baseInput).map((definition) => {
-    if (definition.searchMode === 'monotonic-up' || definition.searchMode === 'monotonic-down') {
-      return solveMonotonicTarget(baseInput, definition, baselineMetrics, targetSuccess);
-    }
     const points = definition.values.map((value) => evaluateTargetPoint(baseInput, definition, value));
-    const reached = points.filter((point) => (point.metrics.success ?? -Infinity) >= targetSuccess);
-    const picked = (reached.length > 0 ? reached : points)
-      .slice()
-      .sort((a, b) => {
-        if (reached.length > 0) return Math.abs(a.value - definition.baselineValue) - Math.abs(b.value - definition.baselineValue);
-        return (b.metrics.success ?? -Infinity) - (a.metrics.success ?? -Infinity);
-      })[0];
-    const horizonNote = definition.variable === 'horizonYears'
+    const estimate = estimateTargetFromPoints(definition, points, targetSuccess);
+    const simulatedSuccess = estimate.point.metrics.success;
+    const reachedTarget = estimate.interpolated || (simulatedSuccess !== null && Math.abs(simulatedSuccess - targetSuccess) < 0.000001);
+    const hasReachablePoint = points.some((point) => (point.metrics.success ?? -Infinity) >= targetSuccess);
+    const observation = definition.variable === 'horizonYears'
       ? 'No comparable directo: cambia el horizonte del plan.'
-      : reached.length > 0
-        ? 'Valor requerido estimado dentro del rango evaluado.'
+      : hasReachablePoint
+        ? estimate.observation
         : definition.noTargetObservation;
-    return targetResultFromPoint(definition, baselineMetrics, picked, reached.length > 0, horizonNote, false);
+    return targetResultFromPoint(
+      definition,
+      baselineMetrics,
+      estimate.point,
+      targetSuccess,
+      reachedTarget,
+      observation,
+      estimate.interpolated,
+      estimate.interpolated ? 'interpolated' : 'closest-simulated',
+    );
   });
 }

@@ -115,7 +115,7 @@ const tdStyle: React.CSSProperties = {
   verticalAlign: 'top',
 };
 
-function RowsTable({ rows }: { rows: SensitivityRow[] }) {
+function RowsTable({ rows, fastMode, sensitivityNPaths }: { rows: SensitivityRow[]; fastMode: boolean; sensitivityNPaths: number }) {
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', minWidth: 1160, borderCollapse: 'collapse' }}>
@@ -123,7 +123,7 @@ function RowsTable({ rows }: { rows: SensitivityRow[] }) {
           <tr>
             <th style={thStyle}>Valor probado</th>
             <th style={thStyle}>Success</th>
-            <th style={thStyle}>Delta success</th>
+            <th style={thStyle}>{fastMode ? 'Delta vs base sensibilidad' : 'Delta success'}</th>
             <th style={thStyle}>Sensibilidad marginal</th>
             <th style={thStyle}>Ruin</th>
             <th style={thStyle}>QoL</th>
@@ -138,7 +138,7 @@ function RowsTable({ rows }: { rows: SensitivityRow[] }) {
           {rows.map((row) => (
             <tr key={row.id} style={{ background: row.baseline ? 'rgba(208,168,92,0.08)' : 'transparent' }}>
               <td style={{ ...tdStyle, color: row.baseline ? T.primary : T.textPrimary, fontWeight: 800 }}>
-                {row.valueLabel}{row.baseline ? ' · baseline' : ''}
+                {row.valueLabel}{row.baseline ? fastMode ? ` · base sensibilidad · n=${sensitivityNPaths}` : ' · baseline' : ''}
               </td>
               <td style={tdStyle}>{row.comparableSuccess ? formatPercent(row.metrics.success) : `${formatPercent(row.metrics.successAtHorizon)} al horizonte`}</td>
               <td style={tdStyle}>{row.comparableSuccess ? formatDeltaPercent(row.deltaVsBaseline.success) : 'No comparable 40a'}</td>
@@ -166,7 +166,7 @@ export function SensitivityPage({ canonicalInputReady, m8InputFingerprint, simRe
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fastMode, setFastMode] = useState(true);
-  const baselineMetrics = useMemo(() => buildBaselineMetrics(simResult), [simResult]);
+  const officialBaseline = useMemo(() => buildBaselineMetrics(simResult), [simResult]);
   const baseInput = m8InputFingerprint.normalizedInput as unknown as M8Input;
   const canRun = canonicalInputReady && Boolean(m8InputFingerprint.effectiveEngineInputHash) && Boolean(simResult);
 
@@ -177,7 +177,7 @@ export function SensitivityPage({ canonicalInputReady, m8InputFingerprint, simRe
     setResult(null);
     await new Promise((resolve) => window.setTimeout(resolve, 0));
     try {
-      setResult(runOneVariableSensitivity(baseInput, null, {
+      setResult(runOneVariableSensitivity(baseInput, officialBaseline, {
         nPathsOverride: fastMode ? Math.min(baseInput.n_paths, 500) : undefined,
         targetDeltaPp: 2,
       }));
@@ -188,7 +188,7 @@ export function SensitivityPage({ canonicalInputReady, m8InputFingerprint, simRe
     }
   };
 
-  const displayedBaseline = result?.baseline ?? baselineMetrics;
+  const sensitivityBaseline = result?.baseline ?? null;
 
   return (
     <div style={{ display: 'grid', gap: 18 }}>
@@ -225,9 +225,10 @@ export function SensitivityPage({ canonicalInputReady, m8InputFingerprint, simRe
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
           <Stat label="Fingerprint" value={m8InputFingerprint.effectiveEngineInputHash ?? '—'} />
-          <Stat label="Success" value={formatPercent(displayedBaseline?.success ?? null)} />
-          <Stat label="QoL" value={displayedBaseline?.qolLabel ?? '—'} />
-          <Stat label="Terminal wealth" value={`${formatNumber(displayedBaseline?.terminalWealthRatio ?? null, 2)}x`} />
+          <Stat label="Baseline oficial" value={formatPercent(officialBaseline?.success ?? null)} />
+          <Stat label="QoL oficial" value={officialBaseline?.qolLabel ?? '—'} />
+          <Stat label="Terminal wealth oficial" value={`${formatNumber(officialBaseline?.terminalWealthRatio ?? null, 2)}x`} />
+          {sensitivityBaseline && result?.fastMode ? <Stat label={`Base sensibilidad rápida · n=${result.sensitivityNPaths}`} value={formatPercent(sensitivityBaseline.success)} /> : null}
         </div>
 
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: T.textSecondary, fontSize: 13 }}>
@@ -244,18 +245,24 @@ export function SensitivityPage({ canonicalInputReady, m8InputFingerprint, simRe
       <section style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: 18, background: T.surface, display: 'grid', gap: 12 }}>
         <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 900 }}>Valor requerido para subir +2 pp de éxito</div>
         <div style={{ color: T.textSecondary, fontSize: 13 }}>
-          Estimación inversa manteniendo el resto constante. No es recomendación de cambio.
+          Estimación inversa manteniendo el resto constante. En modo rápido usa n reducido; los valores pueden diferir del baseline oficial. Cuando se interpola, el valor requerido es estimado y no una corrida M8 exacta.
         </div>
+        {result?.fastMode ? (
+          <div style={{ color: T.textMuted, fontSize: 12 }}>
+            Baseline oficial: {formatPercent(officialBaseline?.success ?? null)} · Base sensibilidad rápida: {formatPercent(result.baseline.success)} con n={result.sensitivityNPaths}
+          </div>
+        ) : null}
         {result ? (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', minWidth: 980, borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
                   <th style={thStyle}>Variable</th>
-                  <th style={thStyle}>Baseline</th>
+                  <th style={thStyle}>Valor baseline</th>
                   <th style={thStyle}>Valor requerido estimado</th>
-                  <th style={thStyle}>Success resultante</th>
-                  <th style={thStyle}>Delta success</th>
+                  <th style={thStyle}>Success objetivo</th>
+                  <th style={thStyle}>Success estimado/simulado</th>
+                  <th style={thStyle}>Error vs target</th>
                   <th style={thStyle}>Delta QoL</th>
                   <th style={thStyle}>Delta terminal</th>
                   <th style={thStyle}>Delta house sale</th>
@@ -268,8 +275,9 @@ export function SensitivityPage({ canonicalInputReady, m8InputFingerprint, simRe
                     <td style={{ ...tdStyle, color: T.textPrimary, fontWeight: 800 }}>{row.label}</td>
                     <td style={tdStyle}>{row.baselineValueLabel}</td>
                     <td style={tdStyle}>{row.testedValueLabel}</td>
+                    <td style={tdStyle}>{formatPercent(row.targetSuccess)}</td>
                     <td style={tdStyle}>{formatPercent(row.success)}</td>
-                    <td style={tdStyle}>{formatDeltaPercent(row.deltaSuccess)}</td>
+                    <td style={tdStyle}>{formatDeltaPercent(row.errorVsTarget)}</td>
                     <td style={tdStyle}>{formatDeltaNumber(row.deltaQolScore, 1)}</td>
                     <td style={tdStyle}>{formatDeltaNumber(row.deltaTerminalWealthRatio, 2)}</td>
                     <td style={tdStyle}>{formatDeltaPercent(row.deltaHouseSalePct)}</td>
@@ -296,7 +304,7 @@ export function SensitivityPage({ canonicalInputReady, m8InputFingerprint, simRe
           <details key={groupId} open={groupId === 'horizon' || groupId === 'return'} style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 12, background: T.surfaceEl }}>
             <summary style={{ color: T.textPrimary, fontSize: 15, fontWeight: 900, cursor: 'pointer' }}>{groupLabels[groupId]}</summary>
             <div style={{ marginTop: 10 }}>
-              <RowsTable rows={result.rows.filter((row) => row.groupId === groupId)} />
+              <RowsTable rows={result.rows.filter((row) => row.groupId === groupId)} fastMode={result.fastMode} sensitivityNPaths={result.sensitivityNPaths} />
             </div>
           </details>
         )) : (

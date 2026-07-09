@@ -3,6 +3,7 @@ import type { M8Input } from '../simulation/m8.types';
 import {
   buildSensitivityGrid,
   computeExpectedPortfolioReturn,
+  estimateTargetFromPoints,
   findChangeForSuccessTarget,
   runOneVariableSensitivity,
   addSensitivityMarginals,
@@ -140,6 +141,9 @@ assert.equal(result.rows.some((row) => row.groupId === 'return'), true);
 assert.equal(result.rows.some((row) => row.groupId === 'cutRules'), true);
 assert.equal(result.rows.every((row) => row.metrics.houseSalePct === null || row.metrics.houseSalePct >= 0), true);
 assert.equal(result.warnings.some((warning) => warning.includes('Modo rápido')), true);
+assert.equal(result.sensitivityNPaths, 8);
+assert.equal(result.fastMode, true);
+assert.equal(result.officialBaseline, null);
 assert.equal(JSON.stringify(baseInput), baseSnapshot);
 
 const baselineMetrics: SensitivityMetrics = {
@@ -209,6 +213,31 @@ const marginalRows = addSensitivityMarginals(syntheticRows);
 assert.equal(marginalRows.find((row) => row.id === 'f1-hit')?.marginal.classification, 'Alta');
 assert.match(marginalRows.find((row) => row.id === 'f1-hit')?.marginal.stepLabel ?? '', /\$500k/);
 
+const interpolation = estimateTargetFromPoints(
+  { variable: 'phase1MonthlyClp', searchMode: 'monotonic-down', comparableSuccess: true },
+  [
+    { value: 5_000_000, metrics: { ...baselineMetrics, success: 0.946 } },
+    { value: 5_200_000, metrics: { ...baselineMetrics, success: 0.941 } },
+  ],
+  0.944,
+);
+assert.equal(interpolation.interpolated, true);
+assert.equal(Math.abs(interpolation.point.value - 5_080_000) < 0.001, true);
+assert.equal(Math.abs((interpolation.point.metrics.success ?? 0) - 0.944) < 0.000001, true);
+assert.match(interpolation.observation, /Interpolado/);
+
+const closest = estimateTargetFromPoints(
+  { variable: 'bucketMonths', searchMode: 'closest', comparableSuccess: true },
+  [
+    { value: 18, metrics: { ...baselineMetrics, success: 0.941 } },
+    { value: 24, metrics: { ...baselineMetrics, success: 0.946 } },
+  ],
+  0.944,
+);
+assert.equal(closest.interpolated, false);
+assert.equal(closest.point.value, 24);
+assert.match(closest.observation, /Punto simulado más cercano/);
+
 const inverseTargets = findChangeForSuccessTarget(baseInput, result.baseline, 2);
 const f4Target = inverseTargets.find((row) => row.variable === 'phase4MonthlyClp');
 const returnTarget = inverseTargets.find((row) => row.variable === 'expectedRealReturn');
@@ -217,6 +246,8 @@ const horizonTarget = inverseTargets.find((row) => row.variable === 'horizonYear
 assert(f4Target);
 assert.equal(f4Target.observation.includes('grilla'), false);
 assert.equal(Number(f4Target.testedValue) >= Math.max(500_000, baseInput.phase4MonthlyClp * 0.2), true);
+assert.equal(f4Target.targetSuccess, result.baseline.success === null ? null : result.baseline.success + 0.02);
+assert.equal(f4Target.errorVsTarget === null || Number.isFinite(f4Target.errorVsTarget), true);
 assert(returnTarget);
 assert.equal(Number(returnTarget.testedValue) <= 0.08, true);
 assert(bucketTarget);
