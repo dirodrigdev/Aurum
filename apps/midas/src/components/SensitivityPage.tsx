@@ -57,6 +57,11 @@ function formatDeltaNumber(value: number | null, digits = 2): string {
   return `${sign}${value.toFixed(digits)}`;
 }
 
+function formatMarginal(row: SensitivityRow): string {
+  if (row.marginal.deltaSuccess === null || row.marginal.stepLabel === null) return '—';
+  return `${formatDeltaPercent(row.marginal.deltaSuccess)} / ${row.marginal.stepLabel}`;
+}
+
 function buildBaselineMetrics(simResult: SimulationResults | null): SensitivityMetrics | null {
   if (!simResult) return null;
   const quality = simResult.qualityOfLifeMetrics ?? null;
@@ -113,12 +118,13 @@ const tdStyle: React.CSSProperties = {
 function RowsTable({ rows }: { rows: SensitivityRow[] }) {
   return (
     <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', minWidth: 1040, borderCollapse: 'collapse' }}>
+      <table style={{ width: '100%', minWidth: 1160, borderCollapse: 'collapse' }}>
         <thead>
           <tr>
             <th style={thStyle}>Valor probado</th>
             <th style={thStyle}>Success</th>
             <th style={thStyle}>Delta success</th>
+            <th style={thStyle}>Sensibilidad marginal</th>
             <th style={thStyle}>Ruin</th>
             <th style={thStyle}>QoL</th>
             <th style={thStyle}>Quality survival</th>
@@ -136,6 +142,10 @@ function RowsTable({ rows }: { rows: SensitivityRow[] }) {
               </td>
               <td style={tdStyle}>{row.comparableSuccess ? formatPercent(row.metrics.success) : `${formatPercent(row.metrics.successAtHorizon)} al horizonte`}</td>
               <td style={tdStyle}>{row.comparableSuccess ? formatDeltaPercent(row.deltaVsBaseline.success) : 'No comparable 40a'}</td>
+              <td style={tdStyle}>
+                {formatMarginal(row)}
+                {row.marginal.classification ? ` · ${row.marginal.classification}` : ''}
+              </td>
               <td style={tdStyle}>{formatPercent(row.metrics.ruin)}</td>
               <td style={tdStyle}>{formatNumber(row.metrics.qolScore, 1)}</td>
               <td style={tdStyle}>{formatPercent(row.metrics.qualitySurvivalRate)}</td>
@@ -232,9 +242,9 @@ export function SensitivityPage({ canonicalInputReady, m8InputFingerprint, simRe
       </section>
 
       <section style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: 18, background: T.surface, display: 'grid', gap: 12 }}>
-        <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 900 }}>Para subir +2 pp de éxito</div>
+        <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 900 }}>Valor requerido para subir +2 pp de éxito</div>
         <div style={{ color: T.textSecondary, fontSize: 13 }}>
-          Resultado mecánico manteniendo el resto constante. No es recomendación de cambio.
+          Estimación inversa manteniendo el resto constante. No es recomendación de cambio.
         </div>
         {result ? (
           <div style={{ overflowX: 'auto' }}>
@@ -242,9 +252,8 @@ export function SensitivityPage({ canonicalInputReady, m8InputFingerprint, simRe
               <thead>
                 <tr>
                   <th style={thStyle}>Variable</th>
-                  <th style={thStyle}>Cambio requerido</th>
                   <th style={thStyle}>Baseline</th>
-                  <th style={thStyle}>Valor probado</th>
+                  <th style={thStyle}>Valor requerido estimado</th>
                   <th style={thStyle}>Success resultante</th>
                   <th style={thStyle}>Delta success</th>
                   <th style={thStyle}>Delta QoL</th>
@@ -257,7 +266,6 @@ export function SensitivityPage({ canonicalInputReady, m8InputFingerprint, simRe
                 {result.targetResults.map((row) => (
                   <tr key={row.variable}>
                     <td style={{ ...tdStyle, color: T.textPrimary, fontWeight: 800 }}>{row.label}</td>
-                    <td style={tdStyle}>{row.reachedTarget ? 'Alcanza objetivo' : 'No alcanza'}</td>
                     <td style={tdStyle}>{row.baselineValueLabel}</td>
                     <td style={tdStyle}>{row.testedValueLabel}</td>
                     <td style={tdStyle}>{formatPercent(row.success)}</td>
@@ -272,7 +280,7 @@ export function SensitivityPage({ canonicalInputReady, m8InputFingerprint, simRe
             </table>
           </div>
         ) : (
-          <div style={{ color: T.textMuted, fontSize: 13 }}>Ejecuta el cálculo para ver la grilla de objetivo +2 pp.</div>
+          <div style={{ color: T.textMuted, fontSize: 13 }}>Ejecuta el cálculo para estimar el valor requerido para +2 pp de éxito.</div>
         )}
       </section>
 

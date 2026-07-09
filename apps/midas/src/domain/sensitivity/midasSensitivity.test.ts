@@ -5,6 +5,7 @@ import {
   computeExpectedPortfolioReturn,
   findChangeForSuccessTarget,
   runOneVariableSensitivity,
+  addSensitivityMarginals,
   type SensitivityMetrics,
   type SensitivityRow,
 } from './midasSensitivity';
@@ -102,8 +103,16 @@ assert.deepEqual(
 );
 assert.deepEqual(
   grid.filter((variant) => variant.groupId === 'bucket').map((variant) => variant.value),
-  [12, 18, 24, 30, 36],
+  [6, 12, 18, 24, 30, 36, 42, 48],
 );
+assert.equal(grid.filter((variant) => variant.groupId === 'return').some((variant) => variant.value === computeExpectedPortfolioReturn(baseInput)), true);
+const returnBaselineInput = structuredClone(baseInput);
+Object.values((returnBaselineInput.generator_params as { sleeves: Record<string, { mean_annual: number }> }).sleeves)
+  .forEach((sleeve) => { sleeve.mean_annual += 0.01075; });
+const returnBaselineGrid = buildSensitivityGrid(returnBaselineInput)
+  .filter((variant) => variant.groupId === 'return')
+  .map((variant) => Number(variant.value));
+assert.deepEqual(returnBaselineGrid.map((value) => Number(value.toFixed(3))), [0.03, 0.035, 0.04, 0.045, 0.05, 0.051, 0.055, 0.06, 0.065, 0.07, 0.075, 0.08]);
 assert.equal(grid.some((variant) => String(variant.variable).includes('house')), false);
 assert.equal(grid.some((variant) => variant.id.includes('houseSaleTrigger')), false);
 
@@ -162,6 +171,7 @@ const syntheticRows: SensitivityRow[] = [
     note: null,
     metrics: baselineMetrics,
     deltaVsBaseline: { success: 0, ruin: 0, qolScore: 0, terminalWealthRatio: 0, houseSalePct: 0, qualitySurvivalRate: 0, severeCutYearsMean: 0 },
+    marginal: { deltaSuccess: null, stepLabel: null, classification: null },
     warnings: [],
   },
   {
@@ -176,6 +186,7 @@ const syntheticRows: SensitivityRow[] = [
     note: null,
     metrics: { ...baselineMetrics, success: 0.925, terminalWealthRatio: 2.2, houseSalePct: 0.18 },
     deltaVsBaseline: { success: 0.025, ruin: -0.025, qolScore: 0, terminalWealthRatio: 0.2, houseSalePct: -0.02, qualitySurvivalRate: 0, severeCutYearsMean: 0 },
+    marginal: { deltaSuccess: null, stepLabel: null, classification: null },
     warnings: [],
   },
   {
@@ -190,11 +201,26 @@ const syntheticRows: SensitivityRow[] = [
     note: null,
     metrics: { ...baselineMetrics, success: 0.91 },
     deltaVsBaseline: { success: 0.01, ruin: -0.01, qolScore: 0, terminalWealthRatio: 0, houseSalePct: 0, qualitySurvivalRate: 0, severeCutYearsMean: 0 },
+    marginal: { deltaSuccess: null, stepLabel: null, classification: null },
     warnings: [],
   },
 ];
-const targets = findChangeForSuccessTarget(baseInput, baselineMetrics, 2, syntheticRows);
-assert.equal(targets.find((row) => row.variable === 'phase1MonthlyClp')?.reachedTarget, true);
-assert.equal(targets.find((row) => row.variable === 'bucketMonths')?.observation, 'No alcanza en rango evaluado.');
+const marginalRows = addSensitivityMarginals(syntheticRows);
+assert.equal(marginalRows.find((row) => row.id === 'f1-hit')?.marginal.classification, 'Alta');
+assert.match(marginalRows.find((row) => row.id === 'f1-hit')?.marginal.stepLabel ?? '', /\$500k/);
+
+const inverseTargets = findChangeForSuccessTarget(baseInput, result.baseline, 2);
+const f4Target = inverseTargets.find((row) => row.variable === 'phase4MonthlyClp');
+const returnTarget = inverseTargets.find((row) => row.variable === 'expectedRealReturn');
+const bucketTarget = inverseTargets.find((row) => row.variable === 'bucketMonths');
+const horizonTarget = inverseTargets.find((row) => row.variable === 'horizonYears');
+assert(f4Target);
+assert.equal(f4Target.observation.includes('grilla'), false);
+assert.equal(Number(f4Target.testedValue) >= Math.max(500_000, baseInput.phase4MonthlyClp * 0.2), true);
+assert(returnTarget);
+assert.equal(Number(returnTarget.testedValue) <= 0.08, true);
+assert(bucketTarget);
+assert.equal(Number(bucketTarget.testedValue) >= 6 && Number(bucketTarget.testedValue) <= 48, true);
+assert.match(horizonTarget?.observation ?? '', /No comparable directo/);
 
 console.log('midasSensitivity tests passed');

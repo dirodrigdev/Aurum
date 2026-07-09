@@ -55,6 +55,12 @@ export type SensitivityMetricDeltas = {
   severeCutYearsMean: number | null;
 };
 
+export type SensitivityMarginal = {
+  deltaSuccess: number | null;
+  stepLabel: string | null;
+  classification: 'Baja' | 'Media' | 'Alta' | null;
+};
+
 export type SensitivityRow = {
   id: string;
   groupId: SensitivityGroupId;
@@ -67,6 +73,7 @@ export type SensitivityRow = {
   note: string | null;
   metrics: SensitivityMetrics;
   deltaVsBaseline: SensitivityMetricDeltas;
+  marginal: SensitivityMarginal;
   warnings: string[];
 };
 
@@ -83,6 +90,7 @@ export type SensitivityTargetResult = {
   deltaTerminalWealthRatio: number | null;
   deltaHouseSalePct: number | null;
   reachedTarget: boolean;
+  estimated: boolean;
   observation: string;
 };
 
@@ -98,11 +106,13 @@ export type SensitivityRunResult = {
 
 const RETURN_TARGETS = [0.03, 0.035, 0.04, 0.045, 0.05, 0.055, 0.06, 0.065, 0.07, 0.075, 0.08];
 const HORIZON_YEARS = [10, 15, 20, 25, 30, 35, 40, 45, 50];
-const BUCKET_MONTHS = [12, 18, 24, 30, 36];
+const BUCKET_MONTHS = [6, 12, 18, 24, 30, 36, 42, 48];
 const PHASE_KEYS = ['phase1MonthlyClp', 'phase2MonthlyClp', 'phase3MonthlyClp', 'phase4MonthlyClp'] as const;
 const ASSET_KEYS: Array<keyof M8PortfolioMix> = ['eq_global', 'eq_chile', 'fi_global', 'fi_chile', 'usd_liquidity', 'clp_cash'];
 
 const cloneJson = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+const uniqueSortedNumbers = (values: number[]): number[] => Array.from(new Set(values)).sort((a, b) => a - b);
 
 const finiteOrNull = (value: unknown): number | null => {
   const numeric = Number(value);
@@ -156,9 +166,9 @@ export function computeExpectedPortfolioReturn(input: M8Input): number {
 }
 
 function buildPhaseValues(baseValue: number): number[] {
-  return [-1_000_000, -500_000, -250_000, 0, 250_000, 500_000, 1_000_000]
+  return uniqueSortedNumbers([-1_000_000, -500_000, -250_000, 0, 250_000, 500_000, 1_000_000]
     .map((delta) => baseValue + delta)
-    .filter((value, index, values) => value > 0 && values.indexOf(value) === index);
+    .filter((value) => value > 0));
 }
 
 function applyHorizon(input: M8Input, years: number): M8Input {
@@ -180,7 +190,7 @@ export function buildSensitivityGrid(baseInput: M8Input): SensitivityVariant[] {
   const baselineReturn = computeExpectedPortfolioReturn(baseInput);
   const variants: SensitivityVariant[] = [];
 
-  for (const years of HORIZON_YEARS) {
+  for (const years of uniqueSortedNumbers([...HORIZON_YEARS, baseInput.years])) {
     variants.push({
       id: `horizon-${years}`,
       groupId: 'horizon',
@@ -195,7 +205,7 @@ export function buildSensitivityGrid(baseInput: M8Input): SensitivityVariant[] {
     });
   }
 
-  for (const target of RETURN_TARGETS) {
+  for (const target of uniqueSortedNumbers([...RETURN_TARGETS, baselineReturn])) {
     variants.push({
       id: `return-${Math.round(target * 1000)}`,
       groupId: 'return',
@@ -228,7 +238,7 @@ export function buildSensitivityGrid(baseInput: M8Input): SensitivityVariant[] {
     }
   });
 
-  for (const months of BUCKET_MONTHS) {
+  for (const months of uniqueSortedNumbers([...BUCKET_MONTHS, baseInput.bucket.bucket_months])) {
     variants.push({
       id: `bucket-${months}`,
       groupId: 'bucket',
@@ -316,6 +326,66 @@ function buildMetricDeltas(baseline: SensitivityMetrics, metrics: SensitivityMet
   };
 }
 
+function emptyMarginal(): SensitivityMarginal {
+  return { deltaSuccess: null, stepLabel: null, classification: null };
+}
+
+function marginalUnit(variable: SensitivityVariableId): { size: number; label: string } | null {
+  switch (variable) {
+    case 'phase1MonthlyClp':
+    case 'phase2MonthlyClp':
+    case 'phase3MonthlyClp':
+    case 'phase4MonthlyClp':
+      return { size: 500_000, label: '$500k' };
+    case 'expectedRealReturn':
+      return { size: 0.005, label: '0,5 pp retorno' };
+    case 'bucketMonths':
+      return { size: 6, label: '6 meses' };
+    case 'horizonYears':
+      return { size: 5, label: '5 años' };
+    default:
+      return null;
+  }
+}
+
+function classifyMarginal(deltaSuccess: number | null): SensitivityMarginal['classification'] {
+  if (deltaSuccess === null) return null;
+  const magnitudePp = Math.abs(deltaSuccess * 100);
+  if (magnitudePp < 0.5) return 'Baja';
+  if (magnitudePp <= 1.5) return 'Media';
+  return 'Alta';
+}
+
+export function addSensitivityMarginals(rows: SensitivityRow[]): SensitivityRow[] {
+  const byGroup = new Map<SensitivityGroupId, SensitivityRow[]>();
+  rows.forEach((row) => byGroup.set(row.groupId, [...(byGroup.get(row.groupId) ?? []), row]));
+  return rows.map((row) => {
+    const unit = marginalUnit(row.variable);
+    if (!unit || typeof row.value !== 'number') return { ...row, marginal: emptyMarginal() };
+    const ordered = (byGroup.get(row.groupId) ?? [])
+      .filter((candidate) => typeof candidate.value === 'number')
+      .slice()
+      .sort((a, b) => Number(a.value) - Number(b.value));
+    const index = ordered.findIndex((candidate) => candidate.id === row.id);
+    const adjacent = index > 0 ? ordered[index - 1] : ordered[index + 1] ?? null;
+    const valueDistance = adjacent === null ? 0 : Number(row.value) - Number(adjacent.value);
+    const successDistance = adjacent === null || row.metrics.success === null || adjacent.metrics.success === null
+      ? null
+      : row.metrics.success - adjacent.metrics.success;
+    const deltaSuccess = successDistance === null || valueDistance === 0
+      ? null
+      : successDistance / (valueDistance / unit.size);
+    return {
+      ...row,
+      marginal: {
+        deltaSuccess,
+        stepLabel: deltaSuccess === null ? null : unit.label,
+        classification: classifyMarginal(deltaSuccess),
+      },
+    };
+  });
+}
+
 export function runOneVariableSensitivity(
   baseInput: M8Input,
   baselineMetrics?: SensitivityMetrics | null,
@@ -325,7 +395,7 @@ export function runOneVariableSensitivity(
   if (options.nPathsOverride && options.nPathsOverride > 0) stableBase.n_paths = options.nPathsOverride;
   const baseline = baselineMetrics ?? buildMetricsFromInput(stableBase).metrics;
   const grid = buildSensitivityGrid(stableBase);
-  const rows = grid.map<SensitivityRow>((variant) => {
+  const unscoredRows = grid.map<SensitivityRow>((variant) => {
     const input = variant.apply(stableBase);
     const evaluated = buildMetricsFromInput(input);
     return {
@@ -340,9 +410,11 @@ export function runOneVariableSensitivity(
       note: variant.note,
       metrics: evaluated.metrics,
       deltaVsBaseline: buildMetricDeltas(baseline, evaluated.metrics),
+      marginal: emptyMarginal(),
       warnings: evaluated.warnings,
     };
   });
+  const rows = addSensitivityMarginals(unscoredRows);
   const targetDeltaPp = options.targetDeltaPp ?? 2;
   return {
     generatedAt: new Date().toISOString(),
@@ -357,85 +429,166 @@ export function runOneVariableSensitivity(
   };
 }
 
-const targetVariables: SensitivityVariableId[] = [
-  'phase1MonthlyClp',
-  'phase2MonthlyClp',
-  'phase3MonthlyClp',
-  'phase4MonthlyClp',
-  'bucketMonths',
-  'expectedRealReturn',
-  'horizonYears',
-];
+type TargetSearchDefinition = {
+  variable: SensitivityVariableId;
+  label: string;
+  baselineValue: number;
+  baselineValueLabel: string;
+  values: number[];
+  comparableSuccess: boolean;
+  apply: (input: M8Input, value: number) => M8Input;
+  valueLabel: (value: number) => string;
+  searchMode: 'monotonic-up' | 'monotonic-down' | 'closest';
+  noTargetObservation: string;
+};
+
+function phaseSearchValues(baseline: number): number[] {
+  const minimum = Math.max(500_000, baseline * 0.2);
+  const values = [baseline];
+  for (let value = baseline - 500_000; value > minimum; value -= 500_000) values.push(value);
+  values.push(minimum);
+  return uniqueSortedNumbers(values).sort((a, b) => b - a);
+}
+
+function buildTargetSearchDefinitions(baseInput: M8Input): TargetSearchDefinition[] {
+  const baselineReturn = computeExpectedPortfolioReturn(baseInput);
+  const phaseDefinitions = PHASE_KEYS.map((phaseKey, index): TargetSearchDefinition => ({
+    variable: phaseKey,
+    label: `F${index + 1}`,
+    baselineValue: Number(baseInput[phaseKey]),
+    baselineValueLabel: formatMillions(Number(baseInput[phaseKey])),
+    values: phaseSearchValues(Number(baseInput[phaseKey])),
+    comparableSuccess: true,
+    apply: (input, value) => ({ ...cloneJson(input), [phaseKey]: value }),
+    valueLabel: formatMillions,
+    searchMode: 'monotonic-down',
+    noTargetObservation: 'No alcanza dentro del mínimo evaluado.',
+  }));
+  return [
+    ...phaseDefinitions,
+    {
+      variable: 'bucketMonths',
+      label: 'Bucket',
+      baselineValue: baseInput.bucket.bucket_months,
+      baselineValueLabel: `${baseInput.bucket.bucket_months} meses`,
+      values: uniqueSortedNumbers([...BUCKET_MONTHS, baseInput.bucket.bucket_months]),
+      comparableSuccess: true,
+      apply: (input, value) => ({ ...cloneJson(input), bucket: { ...input.bucket, bucket_months: value } }),
+      valueLabel: (value) => `${value} meses`,
+      searchMode: 'closest',
+      noTargetObservation: 'No alcanza dentro del rango 6–48 meses.',
+    },
+    {
+      variable: 'expectedRealReturn',
+      label: 'Retorno real esperado',
+      baselineValue: baselineReturn,
+      baselineValueLabel: `${(baselineReturn * 100).toFixed(1)}%`,
+      values: uniqueSortedNumbers([baselineReturn, ...RETURN_TARGETS.filter((value) => value >= baselineReturn)]),
+      comparableSuccess: true,
+      apply: (input, value) => applySleeveMeanShift(input, value - baselineReturn),
+      valueLabel: (value) => `${(value * 100).toFixed(1)}%`,
+      searchMode: 'monotonic-up',
+      noTargetObservation: 'No alcanza dentro del máximo evaluado de 8,0%.',
+    },
+    {
+      variable: 'horizonYears',
+      label: 'Horizonte',
+      baselineValue: baseInput.years,
+      baselineValueLabel: `${baseInput.years} años`,
+      values: uniqueSortedNumbers([...HORIZON_YEARS, baseInput.years]),
+      comparableSuccess: false,
+      apply: (input, value) => applyHorizon(input, value),
+      valueLabel: (value) => `${value} años`,
+      searchMode: 'closest',
+      noTargetObservation: 'No alcanza dentro del rango 10–50 años.',
+    },
+  ];
+}
+
+type TargetPoint = { value: number; metrics: SensitivityMetrics };
+
+function targetResultFromPoint(
+  definition: TargetSearchDefinition,
+  baseline: SensitivityMetrics,
+  point: TargetPoint,
+  reachedTarget: boolean,
+  observation: string,
+  estimated: boolean,
+): SensitivityTargetResult {
+  return {
+    variable: definition.variable,
+    label: definition.label,
+    baselineValue: definition.baselineValue,
+    baselineValueLabel: definition.baselineValueLabel,
+    testedValue: point.value,
+    testedValueLabel: definition.valueLabel(point.value),
+    success: point.metrics.success,
+    deltaSuccess: metricDelta(point.metrics.success, baseline.success),
+    deltaQolScore: metricDelta(point.metrics.qolScore, baseline.qolScore),
+    deltaTerminalWealthRatio: metricDelta(point.metrics.terminalWealthRatio, baseline.terminalWealthRatio),
+    deltaHouseSalePct: metricDelta(point.metrics.houseSalePct, baseline.houseSalePct),
+    reachedTarget,
+    estimated,
+    observation,
+  };
+}
+
+function evaluateTargetPoint(baseInput: M8Input, definition: TargetSearchDefinition, value: number): TargetPoint {
+  return { value, metrics: buildMetricsFromInput(definition.apply(baseInput, value)).metrics };
+}
+
+function solveMonotonicTarget(
+  baseInput: M8Input,
+  definition: TargetSearchDefinition,
+  baseline: SensitivityMetrics,
+  targetSuccess: number,
+): SensitivityTargetResult {
+  const points = definition.values.map((value) => evaluateTargetPoint(baseInput, definition, value));
+  const firstHitIndex = points.findIndex((point) => (point.metrics.success ?? -Infinity) >= targetSuccess);
+  if (firstHitIndex < 0) {
+    const best = points.slice().sort((a, b) => (b.metrics.success ?? -Infinity) - (a.metrics.success ?? -Infinity))[0];
+    return targetResultFromPoint(definition, baseline, best, false, definition.noTargetObservation, false);
+  }
+  let hit = points[firstHitIndex];
+  const previous = points[firstHitIndex - 1];
+  if (!previous || hit.value === previous.value) {
+    return targetResultFromPoint(definition, baseline, hit, true, 'Valor requerido estimado.', false);
+  }
+  let miss = previous;
+  for (let iteration = 0; iteration < 8; iteration += 1) {
+    const midpoint = (miss.value + hit.value) / 2;
+    const candidate = evaluateTargetPoint(baseInput, definition, midpoint);
+    if ((candidate.metrics.success ?? -Infinity) >= targetSuccess) hit = candidate;
+    else miss = candidate;
+  }
+  return targetResultFromPoint(definition, baseline, hit, true, 'Valor requerido estimado; refinado entre dos puntos simulados.', true);
+}
 
 export function findChangeForSuccessTarget(
   baseInput: M8Input,
   baselineMetrics: SensitivityMetrics,
   targetDeltaPp = 2,
-  existingRows?: SensitivityRow[],
+  _existingRows?: SensitivityRow[],
 ): SensitivityTargetResult[] {
-  const rows = existingRows ?? buildSensitivityGrid(baseInput).map<SensitivityRow>((variant) => {
-    const input = variant.apply(baseInput);
-    const evaluated = buildMetricsFromInput(input);
-    return {
-      id: variant.id,
-      groupId: variant.groupId,
-      variable: variant.variable,
-      label: variant.label,
-      value: variant.value,
-      valueLabel: variant.valueLabel,
-      baseline: variant.baseline,
-      comparableSuccess: variant.comparableSuccess,
-      note: variant.note,
-      metrics: evaluated.metrics,
-      deltaVsBaseline: buildMetricDeltas(baselineMetrics, evaluated.metrics),
-      warnings: evaluated.warnings,
-    };
-  });
   const targetSuccess = baselineMetrics.success === null ? null : baselineMetrics.success + targetDeltaPp / 100;
-  return targetVariables.map((variable) => {
-    const candidates = rows.filter((row) => row.variable === variable && row.metrics.success !== null);
-    const baselineRow = candidates.find((row) => row.baseline) ?? candidates[0];
-    if (!baselineRow) {
-      return {
-        variable,
-        label: variable,
-        baselineValue: '—',
-        baselineValueLabel: '—',
-        testedValue: '—',
-        testedValueLabel: '—',
-        success: null,
-        deltaSuccess: null,
-        deltaQolScore: null,
-        deltaTerminalWealthRatio: null,
-        deltaHouseSalePct: null,
-        reachedTarget: false,
-        observation: 'No alcanza en rango evaluado.',
-      };
+  if (targetSuccess === null) return [];
+  return buildTargetSearchDefinitions(baseInput).map((definition) => {
+    if (definition.searchMode === 'monotonic-up' || definition.searchMode === 'monotonic-down') {
+      return solveMonotonicTarget(baseInput, definition, baselineMetrics, targetSuccess);
     }
-    const reached = targetSuccess === null ? [] : candidates.filter((row) => (row.metrics.success ?? -Infinity) >= targetSuccess);
-    const picked = (reached.length ? reached : candidates).slice().sort((a, b) => {
-      if (reached.length) {
-        const aDistance = Math.abs(Number(a.value) - Number(baselineRow?.value ?? 0));
-        const bDistance = Math.abs(Number(b.value) - Number(baselineRow?.value ?? 0));
-        return aDistance - bDistance;
-      }
-      return (b.metrics.success ?? -Infinity) - (a.metrics.success ?? -Infinity);
-    })[0] ?? baselineRow;
-    const reachedTarget = Boolean(targetSuccess !== null && picked?.metrics.success !== null && picked.metrics.success >= targetSuccess);
-    return {
-      variable,
-      label: picked?.label ?? variable,
-      baselineValue: baselineRow?.value ?? '—',
-      baselineValueLabel: baselineRow?.valueLabel ?? '—',
-      testedValue: picked?.value ?? '—',
-      testedValueLabel: picked?.valueLabel ?? '—',
-      success: picked?.metrics.success ?? null,
-      deltaSuccess: picked?.deltaVsBaseline.success ?? null,
-      deltaQolScore: picked?.deltaVsBaseline.qolScore ?? null,
-      deltaTerminalWealthRatio: picked?.deltaVsBaseline.terminalWealthRatio ?? null,
-      deltaHouseSalePct: picked?.deltaVsBaseline.houseSalePct ?? null,
-      reachedTarget,
-      observation: reachedTarget ? `Alcanza +${targetDeltaPp.toFixed(1)} pp en la grilla.` : 'No alcanza en rango evaluado.',
-    };
+    const points = definition.values.map((value) => evaluateTargetPoint(baseInput, definition, value));
+    const reached = points.filter((point) => (point.metrics.success ?? -Infinity) >= targetSuccess);
+    const picked = (reached.length > 0 ? reached : points)
+      .slice()
+      .sort((a, b) => {
+        if (reached.length > 0) return Math.abs(a.value - definition.baselineValue) - Math.abs(b.value - definition.baselineValue);
+        return (b.metrics.success ?? -Infinity) - (a.metrics.success ?? -Infinity);
+      })[0];
+    const horizonNote = definition.variable === 'horizonYears'
+      ? 'No comparable directo: cambia el horizonte del plan.'
+      : reached.length > 0
+        ? 'Valor requerido estimado dentro del rango evaluado.'
+        : definition.noTargetObservation;
+    return targetResultFromPoint(definition, baselineMetrics, picked, reached.length > 0, horizonNote, false);
   });
 }

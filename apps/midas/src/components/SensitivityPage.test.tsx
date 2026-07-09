@@ -104,13 +104,16 @@ const markup = renderToStaticMarkup(React.createElement(SensitivityPage, {
 assert(markup.includes('Análisis de sensibilidad'));
 assert(markup.includes('Calcular sensibilidad'));
 assert(markup.includes('Sensibilidad one-variable-at-a-time'));
-assert(markup.includes('Para subir +2 pp de éxito'));
+assert(markup.includes('Valor requerido para subir +2 pp de éxito'));
+assert(markup.includes('Estimación inversa manteniendo el resto constante'));
 assert(markup.includes('Tablas one-variable-at-a-time'));
 assert(markup.includes('No guarda cambios'));
 assert(markup.includes('House sale aparece solo como métrica resultado'));
 assert.equal(markup.includes('houseSaleTrigger'), false);
 assert.equal(markup.includes('Capital inicial'), false);
 assert.equal(source.includes('runOneVariableSensitivity('), true);
+assert.equal(source.includes('Sensibilidad marginal'), true);
+assert.equal(source.includes('Valor requerido estimado'), true);
 assert.equal(source.includes('persistActiveSimulationConfig'), false);
 
 console.log('SensitivityPage tests passed');
