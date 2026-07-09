@@ -4,8 +4,10 @@ import type { M8InputFingerprint } from '../domain/model/m8InputFingerprint';
 import type { SimulationResults } from '../domain/model/types';
 import type { M8Input } from '../domain/simulation/m8.types';
 import {
+  buildSensitivityLeverSummary,
   runOneVariableSensitivity,
   type SensitivityGroupId,
+  type SensitivityLever,
   type SensitivityMetricDeltas,
   type SensitivityMetrics,
   type SensitivityRow,
@@ -161,6 +163,23 @@ function RowsTable({ rows, fastMode, sensitivityNPaths }: { rows: SensitivityRow
   );
 }
 
+const leverStatusColor: Record<SensitivityLever['status'], string> = {
+  verde: T.positive,
+  amarillo: T.warning,
+  rojo: T.negative,
+  gris: T.textMuted,
+};
+
+function LeverCard({ title, lever }: { title: string; lever: SensitivityLever | null }) {
+  return (
+    <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: '10px 12px', background: T.surfaceEl, display: 'grid', gap: 3 }}>
+      <div style={{ color: T.textMuted, fontSize: 11, fontWeight: 800, textTransform: 'uppercase' }}>{title}</div>
+      <div style={{ color: lever ? leverStatusColor[lever.status] : T.textMuted, fontSize: 15, fontWeight: 900 }}>{lever?.label ?? '—'}</div>
+      <div style={{ color: T.textSecondary, fontSize: 12 }}>{lever?.suggestedUse ?? 'Sin datos calculados.'}</div>
+    </div>
+  );
+}
+
 export function SensitivityPage({ canonicalInputReady, m8InputFingerprint, simResult }: SensitivityPageProps) {
   const [result, setResult] = useState<SensitivityRunResult | null>(null);
   const [running, setRunning] = useState(false);
@@ -189,6 +208,7 @@ export function SensitivityPage({ canonicalInputReady, m8InputFingerprint, simRe
   };
 
   const sensitivityBaseline = result?.baseline ?? null;
+  const leverSummary = useMemo(() => result ? buildSensitivityLeverSummary(result) : null, [result]);
 
   return (
     <div style={{ display: 'grid', gap: 18 }}>
@@ -291,6 +311,49 @@ export function SensitivityPage({ canonicalInputReady, m8InputFingerprint, simRe
           <div style={{ color: T.textMuted, fontSize: 13 }}>Ejecuta el cálculo para estimar el valor requerido para +2 pp de éxito.</div>
         )}
       </section>
+
+      {leverSummary ? (
+        <section style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: 18, background: T.surface, display: 'grid', gap: 12 }}>
+          <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 900 }}>Resumen de palancas</div>
+          <div style={{ color: T.textSecondary, fontSize: 13, lineHeight: 1.5 }}>
+            Este resumen interpreta la sensibilidad calculada. No es recomendación automática. Ayuda a detectar palancas con mayor impacto, control y sacrificio relativo.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+            <LeverCard title="Más impacto" lever={leverSummary.highestImpact} />
+            <LeverCard title="Más accionable" lever={leverSummary.mostActionable} />
+            <LeverCard title="Mejor para calibrar" lever={leverSummary.bestForCalibration} />
+            <LeverCard title="Solo informativa / exógena" lever={leverSummary.informative} />
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', minWidth: 820, borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>Palanca</th>
+                  <th style={thStyle}>Impacto éxito</th>
+                  <th style={thStyle}>Control</th>
+                  <th style={thStyle}>Sacrificio</th>
+                  <th style={thStyle}>Trade-off</th>
+                  <th style={thStyle}>Lectura</th>
+                </tr>
+              </thead>
+              <tbody>
+                {leverSummary.levers.map((lever) => (
+                  <tr key={lever.variableId}>
+                    <td style={{ ...tdStyle, color: leverStatusColor[lever.status], fontWeight: 850 }}>{lever.label}</td>
+                    <td style={tdStyle}>{lever.impactLevel} · {lever.impactOnSuccess.toFixed(1)} pp</td>
+                    <td style={tdStyle}>{lever.controllability}</td>
+                    <td style={tdStyle}>{lever.effortOrSacrifice}</td>
+                    <td style={tdStyle}>{lever.tradeoffLevel}</td>
+                    <td style={tdStyle}>{lever.suggestedUse}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ color: T.textMuted, fontSize: 12 }}>Retorno esperado puede ser una variable muy sensible, pero no es directamente controlable por el usuario.</div>
+          <div style={{ color: T.textMuted, fontSize: 12 }}>Fases de gasto tempranas y largas suelen tener mayor pendiente porque afectan más años y más secuencia de retornos.</div>
+        </section>
+      ) : null}
 
       <section style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: 18, background: T.surface, display: 'grid', gap: 12 }}>
         <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 900 }}>Tablas one-variable-at-a-time</div>

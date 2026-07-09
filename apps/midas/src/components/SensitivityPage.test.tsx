@@ -119,6 +119,12 @@ assert.equal(source.includes('Base sensibilidad rápida'), true);
 assert.equal(source.includes('Delta vs base sensibilidad'), true);
 assert.equal(source.includes('Success objetivo'), true);
 assert.equal(source.includes('Error vs target'), true);
+assert.equal(source.includes('Resumen de palancas'), true);
+assert.equal(source.includes('Más impacto'), true);
+assert.equal(source.includes('Más accionable'), true);
+assert.equal(source.includes('Mejor para calibrar'), true);
+assert.equal(source.includes('Retorno esperado puede ser una variable muy sensible'), true);
+assert.equal(source.includes('buildSensitivityLeverSummary(result)'), true);
 assert.equal(source.includes('persistActiveSimulationConfig'), false);
 
 console.log('SensitivityPage tests passed');

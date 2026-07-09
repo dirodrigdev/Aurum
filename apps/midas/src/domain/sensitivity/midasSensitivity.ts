@@ -112,6 +112,34 @@ export type SensitivityRunResult = {
   warnings: string[];
 };
 
+export type SensitivityLeverLevel = 'alto' | 'medio' | 'bajo';
+export type SensitivityLeverControllability = 'alta' | 'media' | 'baja' | 'exógena';
+export type SensitivityLeverStatus = 'verde' | 'amarillo' | 'rojo' | 'gris';
+
+export type SensitivityLever = {
+  variableId: SensitivityVariableId;
+  label: string;
+  impactOnSuccess: number;
+  rangeImpactPp: number;
+  nearBaselineSlopePp: number;
+  impactLevel: SensitivityLeverLevel;
+  controllability: SensitivityLeverControllability;
+  effortOrSacrifice: SensitivityLeverLevel;
+  tradeoffLevel: SensitivityLeverLevel;
+  primaryTradeoff: string;
+  usefulLeverScore: number;
+  suggestedUse: string;
+  status: SensitivityLeverStatus;
+};
+
+export type SensitivityLeverSummary = {
+  levers: SensitivityLever[];
+  highestImpact: SensitivityLever | null;
+  mostActionable: SensitivityLever | null;
+  bestForCalibration: SensitivityLever | null;
+  informative: SensitivityLever | null;
+};
+
 const RETURN_TARGETS = [0.03, 0.035, 0.04, 0.045, 0.05, 0.055, 0.06, 0.065, 0.07, 0.075, 0.08];
 const HORIZON_YEARS = [10, 15, 20, 25, 30, 35, 40, 45, 50];
 const BUCKET_MONTHS = [6, 12, 18, 24, 30, 36, 42, 48];
@@ -392,6 +420,105 @@ export function addSensitivityMarginals(rows: SensitivityRow[]): SensitivityRow[
       },
     };
   });
+}
+
+type LeverProfile = Omit<SensitivityLever, 'impactOnSuccess' | 'rangeImpactPp' | 'nearBaselineSlopePp' | 'impactLevel' | 'usefulLeverScore'>;
+
+const leverProfiles: Record<SensitivityVariableId, LeverProfile> = {
+  phase1MonthlyClp: {
+    variableId: 'phase1MonthlyClp', label: 'F1', controllability: 'alta', effortOrSacrifice: 'alto', tradeoffLevel: 'alto',
+    primaryTradeoff: 'Reducir gasto temprano afecta más años del plan y la calidad de vida actual.',
+    suggestedUse: 'Potente pero dolorosa; tocar con cuidado.', status: 'rojo',
+  },
+  phase2MonthlyClp: {
+    variableId: 'phase2MonthlyClp', label: 'F2', controllability: 'alta', effortOrSacrifice: 'alto', tradeoffLevel: 'alto',
+    primaryTradeoff: 'Mejora resiliencia a costa de gasto sostenido durante una fase larga.',
+    suggestedUse: 'Palanca fuerte y accionable, con costo de vida importante.', status: 'rojo',
+  },
+  phase3MonthlyClp: {
+    variableId: 'phase3MonthlyClp', label: 'F3', controllability: 'alta', effortOrSacrifice: 'medio', tradeoffLevel: 'medio',
+    primaryTradeoff: 'Ajusta gasto futuro con menor presión temporal que las fases iniciales.',
+    suggestedUse: 'Zona interesante para calibrar.', status: 'verde',
+  },
+  phase4MonthlyClp: {
+    variableId: 'phase4MonthlyClp', label: 'F4', controllability: 'alta', effortOrSacrifice: 'bajo', tradeoffLevel: 'medio',
+    primaryTradeoff: 'Tiene menor efecto temprano y puede desplazar patrimonio terminal.',
+    suggestedUse: 'Ajuste secundario para afinar patrimonio terminal.', status: 'amarillo',
+  },
+  expectedRealReturn: {
+    variableId: 'expectedRealReturn', label: 'Retorno real esperado', controllability: 'exógena', effortOrSacrifice: 'bajo', tradeoffLevel: 'alto',
+    primaryTradeoff: 'Puede mover mucho el resultado, pero no es una decisión directa del usuario.',
+    suggestedUse: 'Informativa: mide dependencia del mercado, no una acción directa.', status: 'gris',
+  },
+  bucketMonths: {
+    variableId: 'bucketMonths', label: 'Bucket', controllability: 'alta', effortOrSacrifice: 'medio', tradeoffLevel: 'medio',
+    primaryTradeoff: 'Aumentar liquidez puede reducir exposición de retorno del portafolio.',
+    suggestedUse: 'Palanca de liquidez; no sobreoptimizar si el impacto es bajo.', status: 'amarillo',
+  },
+  horizonYears: {
+    variableId: 'horizonYears', label: 'Horizonte', controllability: 'media', effortOrSacrifice: 'alto', tradeoffLevel: 'alto',
+    primaryTradeoff: 'Cambia la definición temporal del éxito y no es comparable de forma directa.',
+    suggestedUse: 'Usar como marco de planificación, no como ajuste simple.', status: 'gris',
+  },
+  cutRulesProfile: {
+    variableId: 'cutRulesProfile', label: 'Reglas de recorte', controllability: 'alta', effortOrSacrifice: 'medio', tradeoffLevel: 'alto',
+    primaryTradeoff: 'Puede proteger éxito a costa de calidad de vida durante caídas.',
+    suggestedUse: 'Palanca de calidad de vida, no solo de éxito.', status: 'amarillo',
+  },
+};
+
+const levelWeight: Record<SensitivityLeverLevel, number> = { bajo: 1, medio: 2, alto: 3 };
+const controlWeight: Record<SensitivityLeverControllability, number> = { baja: 1, media: 2, alta: 3, exógena: 0 };
+
+function impactLevel(scorePp: number): SensitivityLeverLevel {
+  if (scorePp > 1.5) return 'alto';
+  if (scorePp >= 0.5) return 'medio';
+  return 'bajo';
+}
+
+function average(values: number[]): number {
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+}
+
+/** Builds a didactic summary from existing rows only; it never invokes M8. */
+export function buildSensitivityLeverSummary(result: Pick<SensitivityRunResult, 'rows'>): SensitivityLeverSummary {
+  const levers = (Object.keys(leverProfiles) as SensitivityVariableId[]).map((variableId) => {
+    const profile = leverProfiles[variableId];
+    const rows = result.rows.filter((row) => row.variable === variableId);
+    const comparableRows = rows.filter((row) => row.comparableSuccess && row.metrics.success !== null);
+    const successValues = comparableRows.map((row) => row.metrics.success as number);
+    const rangeImpactPp = successValues.length > 1 ? (Math.max(...successValues) - Math.min(...successValues)) * 100 : 0;
+    const nearBaselineSlopePp = average(rows
+      .filter((row) => row.marginal.deltaSuccess !== null)
+      .sort((a, b) => Number(Boolean(b.baseline)) - Number(Boolean(a.baseline)))
+      .slice(0, 2)
+      .map((row) => Math.abs((row.marginal.deltaSuccess ?? 0) * 100)));
+    const impactOnSuccess = Math.max(rangeImpactPp, nearBaselineSlopePp);
+    const usefulLeverScore = profile.controllability === 'exógena'
+      ? 0
+      : impactOnSuccess * controlWeight[profile.controllability]
+        - levelWeight[profile.effortOrSacrifice] * 0.35
+        - levelWeight[profile.tradeoffLevel] * 0.2;
+    return {
+      ...profile,
+      impactOnSuccess,
+      rangeImpactPp,
+      nearBaselineSlopePp,
+      impactLevel: impactLevel(impactOnSuccess),
+      usefulLeverScore,
+    };
+  });
+  const byImpact = levers.slice().sort((a, b) => b.impactOnSuccess - a.impactOnSuccess);
+  const actionable = levers.filter((lever) => lever.controllability !== 'exógena');
+  const byActionability = actionable.slice().sort((a, b) => b.usefulLeverScore - a.usefulLeverScore);
+  const calibratable = actionable.filter((lever) => lever.effortOrSacrifice !== 'alto');
+  return {
+    levers,
+    highestImpact: byImpact[0] ?? null,
+    mostActionable: byActionability[0] ?? null,
+    bestForCalibration: calibratable.slice().sort((a, b) => b.usefulLeverScore - a.usefulLeverScore)[0] ?? null,
+    informative: levers.find((lever) => lever.controllability === 'exógena') ?? null,
+  };
 }
 
 export function runOneVariableSensitivity(

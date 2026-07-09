@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import type { M8Input } from '../simulation/m8.types';
 import {
   buildSensitivityGrid,
+  buildSensitivityLeverSummary,
   computeExpectedPortfolioReturn,
   estimateTargetFromPoints,
   findChangeForSuccessTarget,
@@ -212,6 +213,16 @@ const syntheticRows: SensitivityRow[] = [
 const marginalRows = addSensitivityMarginals(syntheticRows);
 assert.equal(marginalRows.find((row) => row.id === 'f1-hit')?.marginal.classification, 'Alta');
 assert.match(marginalRows.find((row) => row.id === 'f1-hit')?.marginal.stepLabel ?? '', /\$500k/);
+
+const leverSummary = buildSensitivityLeverSummary({ rows: marginalRows });
+assert.equal(leverSummary.levers.length, 8);
+assert.equal(leverSummary.levers.some((lever) => String(lever.variableId).includes('house')), false);
+assert.equal(leverSummary.levers.find((lever) => lever.variableId === 'expectedRealReturn')?.controllability, 'exógena');
+assert.equal(leverSummary.levers.find((lever) => lever.variableId === 'phase2MonthlyClp')?.controllability, 'alta');
+assert.equal(leverSummary.levers.find((lever) => lever.variableId === 'phase2MonthlyClp')?.effortOrSacrifice, 'alto');
+assert.equal(leverSummary.levers.find((lever) => lever.variableId === 'phase3MonthlyClp')?.effortOrSacrifice, 'medio');
+assert.equal(leverSummary.highestImpact?.variableId, 'phase1MonthlyClp');
+assert.notEqual(leverSummary.mostActionable?.controllability, 'exógena');
 
 const interpolation = estimateTargetFromPoints(
   { variable: 'phase1MonthlyClp', searchMode: 'monotonic-down', comparableSuccess: true },
