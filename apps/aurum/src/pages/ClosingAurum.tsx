@@ -2,6 +2,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Zap } from 'lucide-react';
 import { Button, Card, Input } from '../components/Components';
 import { BreakdownCard, type BreakdownSummaryInvestmentRow } from '../components/closing/BreakdownCard';
+import {
+  MonthlyConversionAttributionLine,
+  MonthlyConversionAttributionModal,
+} from '../components/patrimonio/MonthlyConversionAttribution';
 import { ConfirmActionModal } from '../components/settings/ConfirmActionModal';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
 import { parseStrictNumber } from '../utils/numberUtils';
@@ -73,6 +77,10 @@ import {
 } from '../services/wealthStorage';
 import { hydrateWealthFromCloudShared } from '../services/wealthHydration';
 import { buildClosureBlockIntegrityAudit as buildClosureBlockIntegrityAuditReadOnly } from '../services/wealthIntegrityAudit';
+import {
+  calculateMonthlyConversionAttribution,
+  type ConversionAttributionResult,
+} from '../services/monthlyConversionAttribution';
 
 type UndoCloseMessageTone = 'success' | 'error' | 'info';
 
@@ -188,6 +196,64 @@ const nextMonthKey = (monthKey: string) => {
   const month = monthRaw === 12 ? 1 : monthRaw + 1;
   const year = monthRaw === 12 ? yearRaw + 1 : yearRaw;
   return `${year}-${String(month).padStart(2, '0')}`;
+};
+
+const previousMonthKey = (monthKey: string) => {
+  const [yearRaw, monthRaw] = monthKey.split('-').map(Number);
+  if (!Number.isFinite(yearRaw) || !Number.isFinite(monthRaw)) return null;
+  const month = monthRaw === 1 ? 12 : monthRaw - 1;
+  const year = monthRaw === 1 ? yearRaw - 1 : yearRaw;
+  return `${year}-${String(month).padStart(2, '0')}`;
+};
+
+export const buildClosureConversionAttribution = (input: {
+  selectedClosure: WealthMonthlyClosure | null;
+  previousClosure: WealthMonthlyClosure | null;
+  currency: WealthCurrency;
+  includeRiskCapitalInTotals: boolean;
+}): ConversionAttributionResult | null => {
+  const { selectedClosure, previousClosure, currency, includeRiskCapitalInTotals } = input;
+  if (
+    !selectedClosure ||
+    !previousClosure ||
+    previousClosure.monthKey !== previousMonthKey(selectedClosure.monthKey) ||
+    !selectedClosure.records?.length ||
+    !previousClosure.records?.length ||
+    !selectedClosure.fxRates ||
+    !previousClosure.fxRates
+  ) {
+    return null;
+  }
+  const selectedRecords = resolveRiskCapitalRecordsForTotals(
+    selectedClosure.records,
+    includeRiskCapitalInTotals,
+  ).recordsForTotals;
+  const previousRecords = resolveRiskCapitalRecordsForTotals(
+    previousClosure.records,
+    includeRiskCapitalInTotals,
+  ).recordsForTotals;
+  const selectedValue = fromClp(
+    buildWealthNetBreakdown(selectedRecords, selectedClosure.fxRates).netClp,
+    currency,
+    selectedClosure.fxRates,
+  );
+  const previousValue = fromClp(
+    buildWealthNetBreakdown(previousRecords, previousClosure.fxRates).netClp,
+    currency,
+    previousClosure.fxRates,
+  );
+  return calculateMonthlyConversionAttribution({
+    reportingCurrency: currency,
+    previousMonthKey: previousClosure.monthKey,
+    currentMonthKey: selectedClosure.monthKey,
+    previousRecords: previousClosure.records,
+    currentRecords: selectedClosure.records,
+    previousFx: previousClosure.fxRates,
+    currentFx: selectedClosure.fxRates,
+    includeRiskCapitalInTotals,
+    expectedPreviousReportedValue: previousValue,
+    expectedCurrentReportedValue: selectedValue,
+  });
 };
 
 const formatDelta = (value: number | null, currency: WealthCurrency) => {
@@ -1355,6 +1421,7 @@ export const ClosingAurum: React.FC = () => {
   const [monthKey, setMonthKey] = useState(currentMonthKey());
   const [revision, setRevision] = useState(0);
   const [selectedClosureMonthKey, setSelectedClosureMonthKey] = useState('');
+  const [conversionAttributionOpen, setConversionAttributionOpen] = useState(false);
   const [closureEditOpen, setClosureEditOpen] = useState(false);
   const [closureEditConfirmOpen, setClosureEditConfirmOpen] = useState(false);
   const [closureEditError, setClosureEditError] = useState('');
@@ -1664,6 +1731,19 @@ export const ClosingAurum: React.FC = () => {
         .sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0] || null
       );
   }, [closures, selectedClosure]);
+  const selectedClosureConversionAttribution = useMemo(
+    () =>
+      buildClosureConversionAttribution({
+        selectedClosure,
+        previousClosure: compareClosureForSelected,
+        currency,
+        includeRiskCapitalInTotals,
+      }),
+    [selectedClosure, compareClosureForSelected, currency, includeRiskCapitalInTotals],
+  );
+  useEffect(() => {
+    if (selectedClosureConversionAttribution?.status !== 'available') setConversionAttributionOpen(false);
+  }, [selectedClosureConversionAttribution?.status]);
 
   const rawAuditClosures = useMemo(() => loadRawClosuresReadOnly(), [revision]);
   const rawSelectedClosure = useMemo(
@@ -2867,6 +2947,14 @@ export const ClosingAurum: React.FC = () => {
                   compareRecords={compareClosureForSelectedRecordsRaw}
                   summaryInvestmentRows={selectedClosureSummaryInvestmentRows}
                   compareSummaryInvestmentRows={compareClosureForSelectedSummaryInvestmentRows}
+                  afterDelta={
+                    selectedClosureConversionAttribution ? (
+                      <MonthlyConversionAttributionLine
+                        result={selectedClosureConversionAttribution}
+                        onOpen={() => setConversionAttributionOpen(true)}
+                      />
+                    ) : null
+                  }
                   showClosureRates
                   showRiskCapitalBadge={includeRiskCapitalInTotals && selectedClosureHasRiskCapital}
                   riskModeOn={includeRiskCapitalInTotals}
@@ -2879,6 +2967,13 @@ export const ClosingAurum: React.FC = () => {
                       Editar
                     </Button>
                   }
+                />
+              )}
+
+              {conversionAttributionOpen && selectedClosureConversionAttribution && (
+                <MonthlyConversionAttributionModal
+                  result={selectedClosureConversionAttribution}
+                  onClose={() => setConversionAttributionOpen(false)}
                 />
               )}
 

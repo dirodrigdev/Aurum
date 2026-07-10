@@ -30,7 +30,7 @@ export const MonthlyConversionAttributionLine: React.FC<{
       className="mt-2 block w-full text-left text-xs text-[#e7dcc9] underline decoration-[#e7dcc9]/35 underline-offset-4 hover:text-white"
       data-testid="monthly-conversion-attribution-line"
     >
-      {pct(result.reportedChangePct)} reportado · {pct(result.constantConversionChangePct)} sin efecto conversión
+      {pct(result.reportedChangePct)} reportado · {pct(result.constantConversionChangePct)} a conversiones constantes
     </button>
   );
 };
@@ -42,7 +42,7 @@ export const MonthlyConversionAttributionModal: React.FC<{
   if (result.status !== 'available') return null;
   const rows = [
     ['Variación reportada', result.reportedChangeAmount, result.reportedChangePct],
-    ['Variación sin efecto de conversión', result.constantConversionChangeAmount, result.constantConversionChangePct],
+    ['Variación a conversiones constantes', result.constantConversionChangeAmount, result.constantConversionChangePct],
     ['Efecto de conversión', result.conversionEffectAmount, result.conversionEffectPctPoints],
   ] as const;
   return (
@@ -97,7 +97,7 @@ export const MonthlyConversionAttributionModal: React.FC<{
         )}
 
         <div className="mt-5 space-y-2 text-xs leading-relaxed text-slate-600">
-          <p>La variación sin efecto de conversión valoriza las posiciones actuales con las tasas del período anterior. El efecto de conversión muestra cuánto de la variación reportada se explica por cambios en USD, EUR o UF.</p>
+          <p>La variación a conversiones constantes valoriza las posiciones actuales con las tasas del período anterior. El efecto de conversión muestra cuánto de la variación reportada se explica por cambios en las tasas consideradas.</p>
           <p>Esta explicación no separa rentabilidad, aportes, retiros ni otros cambios de saldo.</p>
         </div>
       </section>

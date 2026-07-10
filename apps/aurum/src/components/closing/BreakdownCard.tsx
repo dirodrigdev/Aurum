@@ -143,6 +143,7 @@ interface BreakdownCardProps {
   riskModeOn?: boolean;
   summaryInvestmentRows?: BreakdownSummaryInvestmentRow[] | null;
   compareSummaryInvestmentRows?: BreakdownSummaryInvestmentRow[] | null;
+  afterDelta?: React.ReactNode;
 }
 
 export const BreakdownCard: React.FC<BreakdownCardProps> = ({
@@ -162,6 +163,7 @@ export const BreakdownCard: React.FC<BreakdownCardProps> = ({
   riskModeOn = false,
   summaryInvestmentRows = null,
   compareSummaryInvestmentRows = null,
+  afterDelta,
 }) => {
   const rows = [
     {
@@ -300,6 +302,7 @@ export const BreakdownCard: React.FC<BreakdownCardProps> = ({
           {deltaPct !== null ? ` (${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(2)}%)` : ''}
         </div>
       )}
+      {afterDelta}
 
       <div className="space-y-1.5 text-xs">
         {rows.map((row) => {

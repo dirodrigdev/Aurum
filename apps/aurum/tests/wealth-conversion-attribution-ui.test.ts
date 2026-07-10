@@ -56,7 +56,7 @@ describe('wealth conversion attribution UI', () => {
           onOpen: () => undefined,
         }),
       );
-      expect(container?.textContent).toContain('-2,0% reportado · +3,0% sin efecto conversión');
+      expect(container?.textContent).toContain('-2,0% reportado · +3,0% a conversiones constantes');
       await act(async () => root?.unmount());
       root = null;
       container?.remove();
@@ -88,7 +88,7 @@ describe('wealth conversion attribution UI', () => {
     expect(container?.querySelectorAll('[role="dialog"]')).toHaveLength(1);
     expect(container?.textContent).toContain('Explicación de la variación mensual');
     expect(container?.textContent).toContain('Variación reportada');
-    expect(container?.textContent).toContain('Variación sin efecto de conversión');
+    expect(container?.textContent).toContain('Variación a conversiones constantes');
     expect(container?.textContent).toContain('Efecto de conversión');
     expect(container?.textContent).toContain('Tasas consideradas');
     expect(container?.textContent).toContain('USD/CLP');
