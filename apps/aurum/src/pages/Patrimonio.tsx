@@ -17,6 +17,10 @@ import {
 import { Button, Card, cn, Input, Select } from '../components/Components';
 import { CloseConfirmModal } from '../components/patrimonio/CloseConfirmModal';
 import { NextMonthStartReminder, type NextMonthStartReminderViewModel } from '../components/patrimonio/NextMonthStartReminder';
+import {
+  MonthlyConversionAttributionLine,
+  MonthlyConversionAttributionModal,
+} from '../components/patrimonio/MonthlyConversionAttribution';
 import { ConfirmActionModal } from '../components/settings/ConfirmActionModal';
 import { runOcrFromFile } from '../services/ocr';
 import { parseWealthFromOcrText, ParsedWealthSuggestion } from '../services/wealthParsers';
@@ -142,6 +146,7 @@ import {
   formatMonthLabel as monthLabel,
 } from '../utils/wealthFormat';
 import { buildDisplayDeltaFromClp, fromClpUsingFx } from '../services/currencyDisplay';
+import { calculateMonthlyConversionAttribution } from '../services/monthlyConversionAttribution';
 
 type MainSection = 'investment' | 'real_estate' | 'bank';
 const PREFERRED_DISPLAY_CURRENCY_KEY = 'aurum.preferred.display.currency';
@@ -4715,6 +4720,7 @@ export const Patrimonio: React.FC = () => {
     loadIncludeRiskCapitalInTotals(),
   );
   const [displayCurrency, setDisplayCurrency] = useState<WealthCurrency>(() => readPreferredDisplayCurrency());
+  const [conversionAttributionOpen, setConversionAttributionOpen] = useState(false);
   const suppressCloseDraftResetRef = useRef(false);
 
   useEffect(() => {
@@ -5134,6 +5140,57 @@ export const Patrimonio: React.FC = () => {
     displayCurrency,
     activeDisplayFx,
   ]);
+
+  const conversionAttribution = useMemo(() => {
+    const previousClosure = previousClosureForAutoCarry;
+    if (
+      !previousClosure ||
+      previousClosure.monthKey !== monthBeforeKey(monthKey) ||
+      !previousClosure.records?.length ||
+      !previousClosure.fxRates
+    ) {
+      return null;
+    }
+    const currentRecords = activeClosure?.records || monthRecordsForTotals;
+    const currentFx = activeClosure?.fxRates || fx;
+    if (!currentRecords?.length || !currentFx) return null;
+
+    const expectedPrevious = fromClpUsingFx(
+      closureSummaryNetForMode(previousClosure),
+      displayCurrency,
+      previousClosure.fxRates,
+    );
+    const expectedCurrent = fromClpUsingFx(
+      activeClosure ? closureSummaryNetForMode(activeClosure) : sectionAmounts.totalNetClp,
+      displayCurrency,
+      currentFx,
+    );
+    return calculateMonthlyConversionAttribution({
+      reportingCurrency: displayCurrency,
+      previousMonthKey: previousClosure.monthKey,
+      currentMonthKey: monthKey,
+      previousRecords: previousClosure.records,
+      currentRecords,
+      previousFx: previousClosure.fxRates,
+      currentFx,
+      includeRiskCapitalInTotals,
+      expectedPreviousReportedValue: expectedPrevious,
+      expectedCurrentReportedValue: expectedCurrent,
+    });
+  }, [
+    activeClosure,
+    displayCurrency,
+    fx,
+    includeRiskCapitalInTotals,
+    monthKey,
+    monthRecordsForTotals,
+    previousClosureForAutoCarry,
+    sectionAmounts.totalNetClp,
+  ]);
+
+  useEffect(() => {
+    if (conversionAttribution?.status !== 'available') setConversionAttributionOpen(false);
+  }, [conversionAttribution?.status]);
 
   const latestClosure = closures[0] || null;
 
@@ -7370,7 +7427,20 @@ export const Patrimonio: React.FC = () => {
                     <div className="rounded-xl border border-[#c59a6c]/30 bg-[#f6efe3]/12 p-2.5">
                       <div className="text-[#e7dcc9] text-[11px] uppercase tracking-wide">Incremento mensual</div>
                       <div className="mt-1 text-xl font-semibold">{metricsDisplay.monthIncrease}</div>
+                      {conversionAttribution && (
+                        <MonthlyConversionAttributionLine
+                          result={conversionAttribution}
+                          onOpen={() => setConversionAttributionOpen(true)}
+                        />
+                      )}
                     </div>
+
+                    {conversionAttributionOpen && conversionAttribution && (
+                      <MonthlyConversionAttributionModal
+                        result={conversionAttribution}
+                        onClose={() => setConversionAttributionOpen(false)}
+                      />
+                    )}
 
                     <div className="grid grid-cols-2 gap-2">
                       <div className="rounded-xl bg-[#f6efe3]/10 p-2.5">
