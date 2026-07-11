@@ -1,4 +1,5 @@
 import { doc, getDocFromServer } from 'firebase/firestore';
+import type { User } from 'firebase/auth';
 import { auth, db } from './firebase';
 import {
   buildWealthNetBreakdown,
@@ -13,6 +14,13 @@ import {
 
 const WEALTH_COLLECTION = 'aurum_wealth';
 const CURRENCIES: WealthCurrency[] = ['CLP', 'USD', 'EUR', 'UF'];
+export const CLOSURE_AUDIT_AUTHORIZED_EMAIL = 'diegorp.1978@gmail.com';
+
+export const normalizeClosureAuditEmail = (email: string | null | undefined) =>
+  String(email || '').trim().toLowerCase();
+
+export const isClosureAuditAuthorizedUser = (user: Pick<User, 'email'> | null | undefined) =>
+  normalizeClosureAuditEmail(user?.email) === CLOSURE_AUDIT_AUTHORIZED_EMAIL;
 
 type Classification =
   | 'EXACT_POSITION_SNAPSHOT'
@@ -302,12 +310,14 @@ const sanitizeReadError = (error: unknown) => {
 export const readAuthenticatedClosureAudit = async (): Promise<
   | { status: 'ok'; audit: SanitizedClosureAudit }
   | { status: 'unauthenticated' }
+  | { status: 'unauthorized' }
   | { status: 'error'; message: string }
 > => {
-  const uid = auth.currentUser?.uid;
-  if (!uid) return { status: 'unauthenticated' };
+  const user = auth.currentUser;
+  if (!user?.uid) return { status: 'unauthenticated' };
+  if (!isClosureAuditAuthorizedUser(user)) return { status: 'unauthorized' };
   try {
-    const snapshot = await getDocFromServer(doc(db, WEALTH_COLLECTION, uid));
+    const snapshot = await getDocFromServer(doc(db, WEALTH_COLLECTION, user.uid));
     if (!snapshot.exists()) return { status: 'ok', audit: buildSanitizedClosureAudit([]) };
     const rawClosures = snapshot.data()?.closures;
     const closures = loadClosuresFromRaw(Array.isArray(rawClosures) ? rawClosures : []);

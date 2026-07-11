@@ -2,7 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { ChevronDown } from 'lucide-react';
 import { auth } from '../../services/firebase';
-import { readAuthenticatedClosureAudit } from '../../services/closureAuditDiagnostic';
+import {
+  isClosureAuditAuthorizedUser,
+  readAuthenticatedClosureAudit,
+} from '../../services/closureAuditDiagnostic';
 import { Button, Card } from '../Components';
 
 const downloadAudit = (content: string, filename: string) => {
@@ -24,13 +27,21 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 const DevClosureAuditSection: React.FC = () => {
   const [open, setOpen] = useState(false);
-  const [authenticated, setAuthenticated] = useState(() => Boolean(auth.currentUser?.uid));
+  const [authResolved, setAuthResolved] = useState(false);
+  const [authorized, setAuthorized] = useState(() => false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
-  useEffect(() => onAuthStateChanged(auth, (user) => setAuthenticated(Boolean(user?.uid))), []);
+  useEffect(
+    () =>
+      onAuthStateChanged(auth, (user) => {
+        setAuthorized(isClosureAuditAuthorizedUser(user));
+        setAuthResolved(true);
+      }),
+    [],
+  );
 
-  if (!import.meta.env.DEV) return null;
+  if (!authResolved || !authorized) return null;
 
   const exportAudit = async () => {
     setBusy(true);
@@ -38,8 +49,11 @@ const DevClosureAuditSection: React.FC = () => {
     try {
       const result = await readAuthenticatedClosureAudit();
       if (result.status === 'unauthenticated') {
-        setAuthenticated(false);
         setMessage('Inicia sesión en Aurum para ejecutar el diagnóstico.');
+        return;
+      }
+      if (result.status === 'unauthorized') {
+        setMessage('No autorizado para ejecutar este diagnóstico.');
         return;
       }
       if (result.status === 'error') {
@@ -59,20 +73,17 @@ const DevClosureAuditSection: React.FC = () => {
     <Card className="border border-violet-200 bg-violet-50/50 p-3">
       <button type="button" className="flex w-full items-center justify-between text-left" onClick={() => setOpen((value) => !value)}>
         <div>
-          <div className="text-sm font-semibold text-slate-900">Diagnóstico local de cierres</div>
-          <div className="text-[11px] text-slate-500">Solo desarrollo · lectura sanitizada</div>
+          <div className="text-sm font-semibold text-slate-900">Diagnóstico temporal de cierres</div>
+          <div className="text-[11px] text-slate-500">Lectura sanitizada sin modificaciones</div>
         </div>
         <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
         <div className="mt-3 space-y-2 text-xs text-slate-600">
-          {!authenticated ? (
-            <div>Inicia sesión en Aurum para ejecutar el diagnóstico.</div>
-          ) : (
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => void exportAudit()}>
-              {busy ? 'Leyendo cierres...' : 'Exportar auditoría read-only'}
-            </Button>
-          )}
+          <div>Genera una auditoría sanitizada y de solo lectura de los cierres asociados a esta cuenta.</div>
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => void exportAudit()}>
+            {busy ? 'Leyendo cierres...' : 'Exportar auditoría read-only'}
+          </Button>
           {!!message && <div className="text-violet-900">{message}</div>}
         </div>
       )}

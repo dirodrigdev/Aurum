@@ -6,7 +6,12 @@ vi.mock('../src/services/firebase', () => ({
 }));
 
 import { buildCanonicalClosureSummary, type WealthMonthlyClosure, type WealthRecord } from '../src/services/wealthStorage';
-import { buildSanitizedClosureAudit } from '../src/services/closureAuditDiagnostic';
+import {
+  buildSanitizedClosureAudit,
+  isClosureAuditAuthorizedUser,
+  normalizeClosureAuditEmail,
+  readAuthenticatedClosureAudit,
+} from '../src/services/closureAuditDiagnostic';
 
 const fx = { usdClp: 900, eurClp: 1000, ufClp: 40000 };
 
@@ -54,6 +59,22 @@ const closure = (monthKey: string): WealthMonthlyClosure => ({
 });
 
 describe('closure audit diagnostic sanitization', () => {
+  it('authorizes only the normalized temporary email', () => {
+    expect(normalizeClosureAuditEmail('  DIEGORP.1978@GMAIL.COM ')).toBe('diegorp.1978@gmail.com');
+    expect(isClosureAuditAuthorizedUser({ email: '  DIEGORP.1978@GMAIL.COM ' } as never)).toBe(true);
+    expect(isClosureAuditAuthorizedUser({ email: 'other@example.com' } as never)).toBe(false);
+  });
+
+  it('blocks the read before Firestore when the current user is not authorized', async () => {
+    const firebase = await import('../src/services/firebase');
+    (firebase.auth as { currentUser: unknown }).currentUser = {
+      uid: 'not-exported',
+      email: 'other@example.com',
+    };
+
+    await expect(readAuthenticatedClosureAudit()).resolves.toEqual({ status: 'unauthorized' });
+  });
+
   it('exports aggregate metadata only and reconciles detailed closures in memory', () => {
     const audit = buildSanitizedClosureAudit([closure('2026-04'), closure('2026-05')]);
     const entry = audit.closures[0];
