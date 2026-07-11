@@ -212,4 +212,70 @@ describe('CloseConfirmModal close preview', () => {
 
     expect(html).toContain('Error real distinto');
   });
+
+  it('renders economic rates, origins and independent confirmations', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(CloseConfirmModal, {
+        open: true,
+        closeMonthDraft: '2026-06',
+        monthKey: '2026-07',
+        realCurrentMonthKey: '2026-07',
+        selectedClosureMonthKey: null,
+        latestClosureSummary: 'Último cierre registrado: mayo de 2026.',
+        latestClosureTechnicalUpdate: null,
+        closeSequenceWarning: '',
+        closeBlockingIssues: [],
+        closeWarningIssues: [],
+        closeInfo: '',
+        closeError: '',
+        closeFxReady: true,
+        closePreview: {
+          banks: 20_000_000,
+          investments: 200_000_000,
+          riskClp: 0,
+          hasRisk: false,
+          propertyNet: 100_000_000,
+          hasProperty: true,
+          nonMortgageDebt: 10_000_000,
+          usdClp: 920,
+          eurClp: 1050.38,
+          ufClp: 40820.31,
+          totalNetClp: 310_000_000,
+        },
+        closeFxDraft: { usdClp: '920', eurClp: '1050.38', ufClp: '40820.31' },
+        fxGuidance: {
+          loading: false,
+          status: 'available',
+          economicDate: '2026-06-30',
+          suggestedFxRates: { usdClp: 922.34, eurClp: 1050.38, ufClp: 40820.31 },
+          previousClosureFxRates: { usdClp: 892.89, eurClp: 1040.06, ufClp: 40610.69 },
+          rateOrigin: { usd: 'manual', eur: 'automatic', uf: 'automatic' },
+          warnings: ['Estás utilizando una tasa manual distinta de la referencia sugerida.'],
+          manualReason: '',
+          confirmations: { economic: false, manual: false, fallback: false },
+          requiresManualConfirmation: true,
+          requiresFallbackConfirmation: false,
+        },
+        monthLabel: () => 'Junio 2026',
+        onCloseMonthDraftChange: noop,
+        onCloseFxDraftChange: noop,
+        onManualReasonChange: noop,
+        onFxConfirmationChange: noop,
+        onResolveWithPrevious: noop,
+        onResolveExclude: noop,
+        onReview: noop,
+        onCancel: noop,
+        onAttemptClose: noop,
+      }),
+    );
+
+    expect(html).toContain('Tasas del cierre');
+    expect(html).toContain('2026-06-30');
+    expect(html).toContain('Sugerida: 922,34');
+    expect(html).toContain('Anterior: 892,89');
+    expect(html).toContain('Motivo de tasas manuales');
+    expect(html).toContain('Confirmo que las tasas utilizadas corresponden');
+    expect(html).toContain('Confirmo que deseo utilizar tasas particulares');
+    expect(html).toContain('disabled=""');
+  });
 });

@@ -147,6 +147,15 @@ import {
 } from '../utils/wealthFormat';
 import { buildDisplayDeltaFromClp, fromClpUsingFx } from '../services/currencyDisplay';
 import { calculateMonthlyConversionAttribution } from '../services/monthlyConversionAttribution';
+import {
+  buildClosureFxSelection,
+  deriveClosureEconomicDate,
+  loadSuggestedClosureRates,
+  type ClosureFxConfirmations,
+  type ClosureFxRateKey,
+  type ClosureFxSelection,
+  type SuggestedClosureRates,
+} from '../services/closureFxRates';
 
 type MainSection = 'investment' | 'real_estate' | 'bank';
 const PREFERRED_DISPLAY_CURRENCY_KEY = 'aurum.preferred.display.currency';
@@ -1078,11 +1087,6 @@ const emptyBankLiquiditySnapshot = () => ({
   hasCardUsdData: false,
 });
 
-const toCloseDateFromMonthKey = (monthKey: string) => {
-  const [year, month] = monthKey.split('-').map(Number);
-  return new Date(year, (month || 1) - 1, 1, 12, 0, 0, 0);
-};
-
 const monthAfterKey = (monthKey: string) => {
   const [year, month] = monthKey.split('-').map(Number);
   if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
@@ -1153,9 +1157,20 @@ const buildDraft = (section: MainSection, monthKey: string): DraftRecord => ({
 });
 
 const buildCloseFxDraft = (rates: { usdClp: number; eurClp: number; ufClp: number }) => ({
-  usdClp: String(Math.round(Number(rates.usdClp) || 0)),
-  eurClp: String(Math.round(Number(rates.eurClp) || 0)),
-  ufClp: String(Math.round(Number(rates.ufClp) || 0)),
+  usdClp: String(Number(rates.usdClp) || 0),
+  eurClp: String(Number(rates.eurClp) || 0),
+  ufClp: String(Number(rates.ufClp) || 0),
+});
+
+const emptySuggestedClosureRates = (monthKey: string): SuggestedClosureRates => ({
+  monthKey,
+  economicDate: deriveClosureEconomicDate(monthKey) || '',
+  suggestedFxRates: {},
+  source: {},
+  effectiveDate: {},
+  retrievedAt: '',
+  status: 'unavailable',
+  warnings: [],
 });
 
 const formatDeltaClp = (current: number, previous: number | null) => {
@@ -1233,6 +1248,14 @@ const PostCloseSummaryModal: React.FC<{
   if (!summary) return null;
 
   const { closure, previousClosure, amounts, previousAmounts, fxRates, alerts } = summary;
+  const fxMetadata = closure.fxMetadata;
+  const previousFxRates = fxMetadata?.previousClosureFxRates || previousClosure?.fxRates || null;
+  const formatRate = (value: number | undefined) =>
+    Number.isFinite(value)
+      ? Number(value).toLocaleString('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
+      : '—';
+  const originLabel = (origin: string | undefined) =>
+    origin === 'automatic' ? 'Automático' : origin === 'manual' ? 'Manual' : origin === 'fallback' ? 'Fallback revisado' : 'Legacy';
   const hasUsd = Number.isFinite(fxRates.usdClp) && fxRates.usdClp > 0;
   const hasEur = Number.isFinite(fxRates.eurClp) && fxRates.eurClp > 0;
   const variationRows = [
@@ -1258,6 +1281,11 @@ const PostCloseSummaryModal: React.FC<{
     hasUsd ? `Equivalente USD: ${formatCurrency(fromClpUsingFx(amounts.totalNetClp, 'USD', fxRates), 'USD')}` : '',
     hasEur ? `Equivalente EUR: ${formatCurrency(fromClpUsingFx(amounts.totalNetClp, 'EUR', fxRates), 'EUR')}` : '',
     `FX: USD/CLP ${Math.round(fxRates.usdClp).toLocaleString('es-CL')} · EUR/CLP ${Math.round(fxRates.eurClp).toLocaleString('es-CL')} · UF/CLP ${Math.round(fxRates.ufClp).toLocaleString('es-CL')}`,
+    fxMetadata ? `Fecha económica: ${fxMetadata.economicDate}` : '',
+    fxMetadata ? `Fecha operativa: ${new Date(closure.closedAt).toLocaleString('es-CL')}` : '',
+    fxMetadata ? `Origen FX: USD ${originLabel(fxMetadata.rateOrigin.usd)} · EUR ${originLabel(fxMetadata.rateOrigin.eur)} · UF ${originLabel(fxMetadata.rateOrigin.uf)}` : '',
+    fxMetadata?.manualOverrideReason ? `Motivo manual: ${fxMetadata.manualOverrideReason}` : '',
+    fxMetadata?.reconciliation ? `Reconciliación: ${fxMetadata.reconciliation.status}` : '',
     previousClosure ? `Comparado con: ${monthLabel(previousClosure.monthKey)}` : 'Sin comparación previa',
     ...variationRows.map((row) => `${row.label}: ${formatDeltaClp(row.current, row.previous)}`),
     ...breakdownRows.map((row) => `${row.label}: ${formatCurrency(row.value, 'CLP')}`),
@@ -1276,7 +1304,7 @@ const PostCloseSummaryModal: React.FC<{
 
   return (
     <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/40 p-4 sm:items-center">
-      <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
+      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
@@ -1330,6 +1358,37 @@ const PostCloseSummaryModal: React.FC<{
             </div>
           </div>
         </div>
+
+        {fxMetadata && (
+          <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-semibold uppercase tracking-wide text-sky-900">Tasas utilizadas</div>
+              <div className="text-[11px] text-sky-800">Fecha económica: {fxMetadata.economicDate}</div>
+            </div>
+            <div className="mt-2 grid gap-2 text-xs sm:grid-cols-3">
+              {([
+                ['usd', 'USD/CLP', 'usdClp'],
+                ['eur', 'EUR/CLP', 'eurClp'],
+                ['uf', 'UF/CLP', 'ufClp'],
+              ] as const).map(([key, label, field]) => (
+                <div key={key} className="rounded-lg border border-sky-100 bg-white p-2">
+                  <div className="font-semibold text-slate-800">{label} {formatRate(fxRates[field])}</div>
+                  <div className="mt-1 text-slate-500">Anterior: {formatRate(previousFxRates?.[field])}</div>
+                  <div className="text-slate-500">Origen: {originLabel(fxMetadata.rateOrigin[key])}</div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 text-[11px] text-sky-900">
+              Ejecutado: {new Date(closure.closedAt).toLocaleString('es-CL')} · Reconciliación: {fxMetadata.reconciliation?.status || 'sin metadata'}
+              {fxMetadata.manualOverrideReason ? ` · Override: ${fxMetadata.manualOverrideReason}` : ''}
+            </div>
+            {Number.isFinite(closure.summary?.netClpWithRisk) && (
+              <div className="mt-1 text-[11px] text-sky-900">
+                Patrimonio con CapRiesgo: {formatCurrency(Number(closure.summary.netClpWithRisk), 'CLP')}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="mt-3 rounded-xl border border-slate-200 p-3">
           <div className="text-xs uppercase tracking-wide text-slate-500">Desglose del cierre</div>
@@ -4681,9 +4740,25 @@ export const Patrimonio: React.FC = () => {
     deriveOperationalMonthKeyFromClosures(loadClosures(), currentMonthKey()),
   );
   const [closeFxDraft, setCloseFxDraft] = useState(() => buildCloseFxDraft(loadFxRates()));
+  const [closeFxSuggestion, setCloseFxSuggestion] = useState<SuggestedClosureRates>(() =>
+    emptySuggestedClosureRates(deriveOperationalMonthKeyFromClosures(loadClosures(), currentMonthKey())),
+  );
+  const [closeFxSuggestionLoading, setCloseFxSuggestionLoading] = useState(false);
+  const [closeFxTouched, setCloseFxTouched] = useState<Record<ClosureFxRateKey, boolean>>({
+    usd: false,
+    eur: false,
+    uf: false,
+  });
+  const [closeFxManualReason, setCloseFxManualReason] = useState('');
+  const [closeFxConfirmations, setCloseFxConfirmations] = useState<ClosureFxConfirmations>({
+    economic: false,
+    manual: false,
+    fallback: false,
+  });
   const [pendingCloseOverwrite, setPendingCloseOverwrite] = useState<{
     targetMonthKey: string;
     fxForClose: { usdClp: number; eurClp: number; ufClp: number };
+    fxSelection: ClosureFxSelection;
     carriedCount: number;
   } | null>(null);
   const [postCloseSummary, setPostCloseSummary] = useState<PostCloseSummaryState | null>(null);
@@ -4738,16 +4813,39 @@ export const Patrimonio: React.FC = () => {
   }, [closeMonthDraft]);
 
   useEffect(() => {
-    if (!closeConfirmOpen) return;
+    if (!closeConfirmOpen && !closePreflightVisible) return;
     setCloseConfigSnapshot(readClosingConfig());
   }, [closeConfirmOpen]);
 
   useEffect(() => {
     if (!closeConfirmOpen) return;
+    let cancelled = false;
     const closureForDraft = closures.find((closure) => closure.monthKey === closeMonthDraft) || null;
     const sourceFx = closureForDraft?.fxRates || fx;
     setCloseFxDraft(buildCloseFxDraft(sourceFx));
-  }, [closeConfirmOpen, closeMonthDraft, closures, fx]);
+    setCloseFxSuggestion(emptySuggestedClosureRates(closeMonthDraft));
+    setCloseFxTouched({ usd: false, eur: false, uf: false });
+    setCloseFxManualReason('');
+    setCloseFxConfirmations({ economic: false, manual: false, fallback: false });
+    setCloseFxSuggestionLoading(true);
+    void loadSuggestedClosureRates(closeMonthDraft).then((suggestion) => {
+      if (cancelled) return;
+      setCloseFxSuggestion(suggestion);
+      if (!closureForDraft) {
+        setCloseFxDraft(
+          buildCloseFxDraft({
+            usdClp: suggestion.suggestedFxRates.usdClp || sourceFx.usdClp,
+            eurClp: suggestion.suggestedFxRates.eurClp || sourceFx.eurClp,
+            ufClp: suggestion.suggestedFxRates.ufClp || sourceFx.ufClp,
+          }),
+        );
+      }
+      setCloseFxSuggestionLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [closeConfirmOpen, closePreflightVisible, closeMonthDraft, closures, fx]);
 
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_DISPLAY_CURRENCY_KEY, displayCurrency);
@@ -6141,6 +6239,7 @@ export const Patrimonio: React.FC = () => {
   const completeMonthlyClose = async (
     targetMonthKey: string,
     fxForClose: { usdClp: number; eurClp: number; ufClp: number },
+    fxSelection: ClosureFxSelection,
   ): Promise<{ ok: true } | { ok: false; errorMessage: string }> => {
     if (isMonthlyCloseDebtGuardError(closeError)) {
       setCloseError('');
@@ -6280,7 +6379,12 @@ export const Patrimonio: React.FC = () => {
         monthKey: targetMonthKey,
         records: targetRecords,
         fxRates: fxForClose,
-        closedAt: new Date(toCloseDateFromMonthKey(targetMonthKey)).toISOString(),
+        fxMetadata: {
+          ...fxSelection.metadata,
+          usedFxRates: { ...fxForClose },
+          reconciliation: { status: 'reconciled', checkedAt: new Date().toISOString() },
+        },
+        closedAt: new Date().toISOString(),
       });
     } catch (error: any) {
       const message = String(error?.message || 'No se pudo guardar el checkpoint de cierre en la nube.');
@@ -6352,11 +6456,12 @@ export const Patrimonio: React.FC = () => {
   const finalizeMonthlyClose = async (
     targetMonthKey: string,
     fxForClose: { usdClp: number; eurClp: number; ufClp: number },
+    fxSelection: ClosureFxSelection,
     carriedCount: number,
   ) => {
     setPendingCloseOverwrite(null);
     setCloseOverwriteConfirmOpen(false);
-    const result = await completeMonthlyClose(targetMonthKey, fxForClose);
+    const result = await completeMonthlyClose(targetMonthKey, fxForClose, fxSelection);
     if (result.ok === false) {
       setCarryMessage('');
       setCloseError(result.errorMessage);
@@ -6737,6 +6842,42 @@ export const Patrimonio: React.FC = () => {
       ufClp: Number.isFinite(parsedUf) && parsedUf > 0 ? parsedUf : 0,
     };
   }, [closeFxDraft]);
+  const previousClosureForFx = useMemo(
+    () =>
+      closures
+        .filter((closure) => closure.monthKey < closeMonthDraft)
+        .sort((left, right) => right.monthKey.localeCompare(left.monthKey))[0] || null,
+    [closures, closeMonthDraft],
+  );
+  const closeFxSelection = useMemo<ClosureFxSelection>(
+    () =>
+      buildClosureFxSelection({
+        monthKey: closeMonthDraft,
+        usedFxRates: closeFxValues,
+        suggestion: closeFxSuggestion,
+        touched: closeFxTouched,
+        previousClosureFxRates: previousClosureForFx?.fxRates || null,
+        manualOverrideReason: closeFxManualReason,
+        checkedAt: closeFxSuggestion.retrievedAt || undefined,
+      }),
+    [
+      closeMonthDraft,
+      closeFxValues,
+      closeFxSuggestion,
+      closeFxTouched,
+      previousClosureForFx,
+      closeFxManualReason,
+    ],
+  );
+  const closeFxContext = useMemo(
+    () => ({
+      suggestion: closeFxSuggestion,
+      selection: closeFxSelection,
+      previousClosureFxRates: previousClosureForFx?.fxRates || null,
+      confirmations: closeFxConfirmations,
+    }),
+    [closeFxSuggestion, closeFxSelection, previousClosureForFx, closeFxConfirmations],
+  );
   const closeFxReady = closeFxValues.usdClp > 0 && closeFxValues.eurClp > 0 && closeFxValues.ufClp > 0;
   const closePreview = useMemo(() => {
     const previewingCurrentWorkingMonth = closeMonthDraft === monthKey && !selectedClosureForDraft;
@@ -6827,6 +6968,7 @@ export const Patrimonio: React.FC = () => {
       records,
       closures,
       fxForClose: closeFxValues,
+      fxContext: closeFxContext,
       includeRiskCapitalInTotals,
       uiMonthKey: monthKey,
       targetMonthKey: closeMonthDraft,
@@ -6838,6 +6980,7 @@ export const Patrimonio: React.FC = () => {
     records,
     closures,
     closeFxValues,
+    closeFxContext,
     includeRiskCapitalInTotals,
     monthKey,
     closeMonthDraft,
@@ -7034,6 +7177,31 @@ export const Patrimonio: React.FC = () => {
       );
       return;
     }
+    if (closeFxSuggestionLoading) {
+      setCloseInfo('');
+      setCloseError('Espera a que termine la consulta de tasas del mes económico.');
+      return;
+    }
+    if (!closeFxConfirmations.economic) {
+      setCloseInfo('');
+      setCloseError(`Confirma que las tasas utilizadas corresponden al cierre económico de ${monthLabel(targetMonthKey).toLowerCase()}.`);
+      return;
+    }
+    if (closeFxSelection.requiresManualReason) {
+      setCloseInfo('');
+      setCloseError('Indica el motivo de las tasas manuales antes de cerrar.');
+      return;
+    }
+    if (closeFxSelection.requiresManualConfirmation && !closeFxConfirmations.manual) {
+      setCloseInfo('');
+      setCloseError('Confirma que deseas utilizar tasas particulares distintas de las sugeridas.');
+      return;
+    }
+    if (closeFxSelection.requiresFallbackConfirmation && !closeFxConfirmations.fallback) {
+      setCloseInfo('');
+      setCloseError('Confirma que revisaste manualmente las tasas sin referencia automática.');
+      return;
+    }
     const rawNonMortgageDebtClp = computeRawNonMortgageDebtClpForClose(evaluation.targetRecords, fxForClose);
     const visibleNonMortgageDebtClp = targetMonthKey === monthKey ? Math.abs(sectionAmounts.nonMortgageDebt) : 0;
     const effectiveLiveDebtClp = Math.max(rawNonMortgageDebtClp, visibleNonMortgageDebtClp);
@@ -7063,13 +7231,14 @@ export const Patrimonio: React.FC = () => {
       setPendingCloseOverwrite({
         targetMonthKey,
         fxForClose,
+        fxSelection: closeFxSelection,
         carriedCount: carried.length,
       });
       setCloseConfirmOpen(false);
       setCloseOverwriteConfirmOpen(true);
       return;
     }
-    void finalizeMonthlyClose(targetMonthKey, fxForClose, carried.length);
+    void finalizeMonthlyClose(targetMonthKey, fxForClose, closeFxSelection, carried.length);
   };
 
   const runMonthlyClose = () => {
@@ -8064,6 +8233,50 @@ export const Patrimonio: React.FC = () => {
               </div>
             </div>
 
+            {closePreflightDiagnostic.fxContext && (
+              <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 p-3">
+                <div className="text-xs font-semibold text-sky-900">TASAS DEL CIERRE</div>
+                <div className="mt-1 text-[11px] text-sky-800">
+                  {closePreflightDiagnostic.candidateMonthKey} · fecha económica{' '}
+                  {closePreflightDiagnostic.fxContext.suggestion.economicDate} · fecha operativa al confirmar
+                </div>
+                <div className="mt-2 overflow-x-auto">
+                  <table className="min-w-full text-left text-[11px]">
+                    <thead className="text-slate-500">
+                      <tr>
+                        <th className="pr-3">Tasa</th>
+                        <th className="pr-3 text-right">Sugerida</th>
+                        <th className="pr-3 text-right">Utilizada</th>
+                        <th className="pr-3 text-right">Anterior</th>
+                        <th>Origen</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-slate-800">
+                      {([
+                        ['usd', 'USD/CLP', 'usdClp'],
+                        ['eur', 'EUR/CLP', 'eurClp'],
+                        ['uf', 'UF/CLP', 'ufClp'],
+                      ] as const).map(([key, label, field]) => (
+                        <tr key={key} className="border-t border-sky-100">
+                          <td className="py-1 pr-3 font-medium">{label}</td>
+                          <td className="py-1 pr-3 text-right">
+                            {closePreflightDiagnostic.fxContext?.suggestion.suggestedFxRates[field]?.toLocaleString('es-CL') || '—'}
+                          </td>
+                          <td className="py-1 pr-3 text-right">
+                            {closePreflightDiagnostic.fxForClose[field].toLocaleString('es-CL')}
+                          </td>
+                          <td className="py-1 pr-3 text-right">
+                            {closePreflightDiagnostic.fxContext?.previousClosureFxRates?.[field]?.toLocaleString('es-CL') || '—'}
+                          </td>
+                          <td className="py-1">{closePreflightDiagnostic.fxContext?.selection.rateOrigin[key]}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             <div className="mt-3 grid gap-3 lg:grid-cols-2">
               <div className="rounded-lg border border-slate-200 bg-white p-3">
                 <div className="text-xs font-semibold text-slate-800">Checks criticos</div>
@@ -8216,14 +8429,51 @@ export const Patrimonio: React.FC = () => {
         closeFxReady={closeFxReady}
         closePreview={closePreview}
         closeFxDraft={closeFxDraft}
+        fxGuidance={{
+          loading: closeFxSuggestionLoading,
+          status: closeFxSuggestion.status,
+          economicDate: closeFxSuggestion.economicDate,
+          suggestedFxRates: closeFxSuggestion.suggestedFxRates,
+          previousClosureFxRates: previousClosureForFx?.fxRates || null,
+          rateOrigin: closeFxSelection.rateOrigin,
+          warnings: [
+            ...closeFxSelection.warnings,
+            ...(previousClosureForFx?.fxRates &&
+            closeFxValues.usdClp === previousClosureForFx.fxRates.usdClp &&
+            closeFxValues.eurClp === previousClosureForFx.fxRates.eurClp &&
+            closeFxValues.ufClp === previousClosureForFx.fxRates.ufClp
+              ? [`Las tasas utilizadas coinciden exactamente con el cierre anterior. Revisa que correspondan a ${monthLabel(closeMonthDraft).toLowerCase()}.`]
+              : []),
+            ...(previousClosureForFx?.fxRates && closeFxValues.ufClp === previousClosureForFx.fxRates.ufClp
+              ? ['La UF utilizada coincide con el cierre anterior. Confirma que corresponde al último día del mes seleccionado.']
+              : []),
+          ],
+          manualReason: closeFxManualReason,
+          confirmations: closeFxConfirmations,
+          requiresManualConfirmation: closeFxSelection.requiresManualConfirmation,
+          requiresFallbackConfirmation: closeFxSelection.requiresFallbackConfirmation,
+        }}
         monthLabel={monthLabel}
         onCloseMonthDraftChange={setCloseMonthDraft}
-        onCloseFxDraftChange={(next) =>
+        onCloseFxDraftChange={(next) => {
           setCloseFxDraft((prev) => ({
             usdClp: next.usdClp ?? prev.usdClp,
             eurClp: next.eurClp ?? prev.eurClp,
             ufClp: next.ufClp ?? prev.ufClp,
-          }))
+          }));
+          setCloseFxTouched((previous) => ({
+            usd: next.usdClp === undefined ? previous.usd : true,
+            eur: next.eurClp === undefined ? previous.eur : true,
+            uf: next.ufClp === undefined ? previous.uf : true,
+          }));
+          setCloseFxConfirmations((previous) => ({ ...previous, economic: false, manual: false }));
+        }}
+        onManualReasonChange={(reason) => {
+          setCloseFxManualReason(reason);
+          setCloseFxConfirmations((previous) => ({ ...previous, manual: false }));
+        }}
+        onFxConfirmationChange={(key, checked) =>
+          setCloseFxConfirmations((previous) => ({ ...previous, [key]: checked }))
         }
         onResolveWithPrevious={resolveCloseIssueWithPrevious}
         onResolveExclude={resolveCloseIssueExclude}
@@ -8252,6 +8502,7 @@ export const Patrimonio: React.FC = () => {
           void finalizeMonthlyClose(
             pendingCloseOverwrite.targetMonthKey,
             pendingCloseOverwrite.fxForClose,
+            pendingCloseOverwrite.fxSelection,
             pendingCloseOverwrite.carriedCount,
           );
         }}

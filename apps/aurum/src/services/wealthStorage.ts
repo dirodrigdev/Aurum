@@ -15,6 +15,7 @@ import { db, ensureAuthPersistence, getCurrentUid } from './firebase';
 import { setFirestoreChecking, setFirestoreOk, setFirestoreStatusFromError } from './firestoreStatus';
 import { publishAurumOptimizableInvestmentsSnapshot } from './midasPublished';
 import { sameCanonicalLabel } from '../utils/wealthLabels';
+import type { ClosureFxMetadata, ClosureFxRateOrigin } from './closureFxRates';
 
 export type WealthCurrency = 'CLP' | 'USD' | 'EUR' | 'UF';
 
@@ -98,6 +99,7 @@ export interface WealthMonthlyClosure {
   closedAt: string;
   summary: WealthSnapshotSummary;
   fxRates?: WealthFxRates;
+  fxMetadata?: ClosureFxMetadata;
   fxMissing?: Array<'usdClp' | 'eurClp' | 'ufClp'>;
   records?: WealthRecord[];
   previousVersions?: WealthMonthlyClosureVersion[];
@@ -111,6 +113,7 @@ export interface WealthMonthlyClosureVersion {
   replacedAt?: string;
   summary: WealthSnapshotSummary;
   fxRates?: WealthFxRates;
+  fxMetadata?: ClosureFxMetadata;
   fxMissing?: Array<'usdClp' | 'eurClp' | 'ufClp'>;
   records?: WealthRecord[];
 }
@@ -1314,6 +1317,76 @@ const normalizeClosureFxRates = (raw: any): WealthFxRates | undefined => {
   };
 };
 
+const normalizeClosureFxMetadata = (
+  raw: any,
+  monthKey: string,
+  fxRates?: WealthFxRates,
+): ClosureFxMetadata | undefined => {
+  if (!raw || typeof raw !== 'object' || !fxRates) return undefined;
+  const economicMonthKey = normalizeMonthKey(raw.economicMonthKey);
+  const economicDate = String(raw.economicDate || '');
+  if (economicMonthKey !== monthKey || !economicDate.startsWith(`${monthKey}-`)) return undefined;
+  const validOrigin = (value: unknown): value is ClosureFxRateOrigin =>
+    value === 'automatic' || value === 'manual' || value === 'fallback';
+  const origin = raw.rateOrigin || {};
+  if (!validOrigin(origin.usd) || !validOrigin(origin.eur) || !validOrigin(origin.uf)) return undefined;
+  const suggestedFxRates = raw.suggestedFxRates && typeof raw.suggestedFxRates === 'object'
+    ? Object.fromEntries(
+        (['usdClp', 'eurClp', 'ufClp'] as const)
+          .map((key) => [key, Number(raw.suggestedFxRates[key])])
+          .filter(([, value]) => Number.isFinite(value) && Number(value) > 0),
+      ) as Partial<WealthFxRates>
+    : undefined;
+  const previousClosureFxRates = raw.previousClosureFxRates && typeof raw.previousClosureFxRates === 'object'
+    ? Object.fromEntries(
+        (['usdClp', 'eurClp', 'ufClp'] as const)
+          .map((key) => [key, Number(raw.previousClosureFxRates[key])])
+          .filter(([, value]) => Number.isFinite(value) && Number(value) > 0),
+      ) as Partial<WealthFxRates>
+    : undefined;
+  const source = raw.source && typeof raw.source === 'object'
+    ? Object.fromEntries(
+        (['usd', 'eur', 'uf'] as const)
+          .map((key) => [key, String(raw.source[key] || '').trim()])
+          .filter(([, value]) => Boolean(value)),
+      )
+    : undefined;
+  return {
+    economicMonthKey,
+    economicDate,
+    suggestedFxRates: suggestedFxRates && Object.keys(suggestedFxRates).length ? suggestedFxRates : undefined,
+    // fxRates remains the compatibility source of truth while both fields coexist.
+    usedFxRates: { ...fxRates },
+    rateOrigin: { usd: origin.usd, eur: origin.eur, uf: origin.uf },
+    source,
+    retrievedAt: raw.retrievedAt ? String(raw.retrievedAt) : undefined,
+    manualOverrideReason: raw.manualOverrideReason ? String(raw.manualOverrideReason) : undefined,
+    previousClosureFxRates:
+      previousClosureFxRates && Object.keys(previousClosureFxRates).length ? previousClosureFxRates : undefined,
+    reconciliation: raw.reconciliation?.status === 'reconciled'
+      ? {
+          status: 'reconciled',
+          checkedAt: String(raw.reconciliation.checkedAt || raw.retrievedAt || nowIso()),
+        }
+      : undefined,
+  };
+};
+
+const cloneClosureFxMetadata = (metadata: ClosureFxMetadata | undefined): ClosureFxMetadata | undefined =>
+  metadata
+    ? {
+        ...metadata,
+        suggestedFxRates: metadata.suggestedFxRates ? { ...metadata.suggestedFxRates } : undefined,
+        usedFxRates: { ...metadata.usedFxRates },
+        rateOrigin: { ...metadata.rateOrigin },
+        source: metadata.source ? { ...metadata.source } : undefined,
+        previousClosureFxRates: metadata.previousClosureFxRates
+          ? { ...metadata.previousClosureFxRates }
+          : undefined,
+        reconciliation: metadata.reconciliation ? { ...metadata.reconciliation } : undefined,
+      }
+    : undefined;
+
 const normalizeClosureRecords = (raw: any): WealthRecord[] | undefined => {
   if (!Array.isArray(raw)) return undefined;
   return raw
@@ -1399,6 +1472,7 @@ const toClosureVersion = (
   replacedAt: replacedAt ? String(replacedAt) : undefined,
   summary: closure.summary,
   fxRates: closure.fxRates ? { ...closure.fxRates } : undefined,
+  fxMetadata: cloneClosureFxMetadata(closure.fxMetadata),
   fxMissing: closure.fxMissing ? [...closure.fxMissing] : undefined,
   records: closure.records ? closure.records.map((record) => ({ ...record })) : undefined,
 });
@@ -1411,6 +1485,7 @@ const normalizeClosureVersion = (
   if (!monthKey) return null;
 
   const fxRates = normalizeClosureFxRates(raw?.fxRates);
+  const fxMetadata = normalizeClosureFxMetadata(raw?.fxMetadata, monthKey, fxRates);
   const fxMissing = mergeFxMissingKeys(
     normalizeFxMissingKeys(raw?.fxMissing),
     inferFxMissingFromRawFx(raw?.fxRates),
@@ -1429,6 +1504,7 @@ const normalizeClosureVersion = (
     replacedAt: raw?.replacedAt ? String(raw.replacedAt) : undefined,
     summary,
     fxRates,
+    fxMetadata,
     fxMissing: fxMissing.length ? fxMissing : undefined,
     records,
   };
@@ -3136,6 +3212,7 @@ export const loadClosures = (): WealthMonthlyClosure[] => {
       .map((item: any) => {
         const monthKey = String(item?.monthKey || '');
         const fxRates = normalizeClosureFxRates(item?.fxRates);
+        const fxMetadata = normalizeClosureFxMetadata(item?.fxMetadata, monthKey, fxRates);
         const fxMissing = mergeFxMissingKeys(
           normalizeFxMissingKeys(item?.fxMissing),
           inferFxMissingFromRawFx(item?.fxRates),
@@ -3163,6 +3240,7 @@ export const loadClosures = (): WealthMonthlyClosure[] => {
           closedAt: String(item?.closedAt || nowIso()),
           summary,
           fxRates,
+          fxMetadata,
           fxMissing: fxMissing.length ? fxMissing : undefined,
           records,
           previousVersions: previousVersions.length ? previousVersions : undefined,
@@ -3189,12 +3267,14 @@ const cloneClosureForCheckpoint = (closure: WealthMonthlyClosure | null): Wealth
   return {
     ...closure,
     fxRates: closure.fxRates ? { ...closure.fxRates } : undefined,
+    fxMetadata: cloneClosureFxMetadata(closure.fxMetadata),
     fxMissing: Array.isArray(closure.fxMissing) ? [...closure.fxMissing] : undefined,
     records: Array.isArray(closure.records) ? closure.records.map((record) => ({ ...record })) : undefined,
     previousVersions: Array.isArray(closure.previousVersions)
       ? closure.previousVersions.map((version) => ({
           ...version,
           fxRates: version.fxRates ? { ...version.fxRates } : undefined,
+          fxMetadata: cloneClosureFxMetadata(version.fxMetadata),
           fxMissing: Array.isArray(version.fxMissing) ? [...version.fxMissing] : undefined,
           records: Array.isArray(version.records) ? version.records.map((record) => ({ ...record })) : undefined,
         }))
@@ -3207,6 +3287,7 @@ const normalizeCheckpointClosure = (raw: any, fallbackMonthKey: string): WealthM
   const monthKey = normalizeMonthKey(raw.monthKey) || normalizeMonthKey(fallbackMonthKey);
   if (!monthKey) return null;
   const fxRates = normalizeClosureFxRates(raw.fxRates);
+  const fxMetadata = normalizeClosureFxMetadata(raw.fxMetadata, monthKey, fxRates);
   const fxMissing = mergeFxMissingKeys(
     normalizeFxMissingKeys(raw.fxMissing),
     inferFxMissingFromRawFx(raw.fxRates),
@@ -3229,6 +3310,7 @@ const normalizeCheckpointClosure = (raw: any, fallbackMonthKey: string): WealthM
     closedAt: String(raw.closedAt || nowIso()),
     summary,
     fxRates,
+    fxMetadata,
     fxMissing: fxMissing.length ? fxMissing : undefined,
     records,
     previousVersions: previousVersions.length ? previousVersions : undefined,
@@ -5351,6 +5433,7 @@ export const loadClosuresFromRaw = (parsed: any[]): WealthMonthlyClosure[] => {
     .map((item: any) => {
       const monthKey = String(item?.monthKey || '');
       const fxRates = normalizeClosureFxRates(item?.fxRates);
+      const fxMetadata = normalizeClosureFxMetadata(item?.fxMetadata, monthKey, fxRates);
       const fxMissing = mergeFxMissingKeys(
         normalizeFxMissingKeys(item?.fxMissing),
         inferFxMissingFromRawFx(item?.fxRates),
@@ -5378,6 +5461,7 @@ export const loadClosuresFromRaw = (parsed: any[]): WealthMonthlyClosure[] => {
         closedAt: String(item?.closedAt || nowIso()),
         summary,
         fxRates,
+        fxMetadata,
         fxMissing: fxMissing.length ? fxMissing : undefined,
         records,
         previousVersions: previousVersions.length ? previousVersions : undefined,
@@ -5544,6 +5628,7 @@ export const upsertMonthlyClosure = (input: {
   monthKey: string;
   records: WealthRecord[];
   fxRates: WealthFxRates;
+  fxMetadata?: ClosureFxMetadata;
   closedAt?: string;
 }): WealthMonthlyClosure => {
   const normalizedMonthKey = normalizeMonthKey(input.monthKey) || currentMonthKey();
@@ -5553,6 +5638,24 @@ export const upsertMonthlyClosure = (input: {
   const closedAt = String(input.closedAt || nowIso());
   const existingSameMonth =
     closures.find((closure) => closure.monthKey === normalizedMonthKey) || null;
+  const existingMetadataCompatible = Boolean(
+    existingSameMonth?.fxMetadata &&
+      existingSameMonth.fxRates &&
+      Math.abs(existingSameMonth.fxRates.usdClp - input.fxRates.usdClp) < 1e-9 &&
+      Math.abs(existingSameMonth.fxRates.eurClp - input.fxRates.eurClp) < 1e-9 &&
+      Math.abs(existingSameMonth.fxRates.ufClp - input.fxRates.ufClp) < 1e-9,
+  );
+  const metadataInput = input.fxMetadata || (existingMetadataCompatible ? existingSameMonth?.fxMetadata : undefined);
+  const fxMetadata = metadataInput
+    ? normalizeClosureFxMetadata(
+        { ...metadataInput, usedFxRates: { ...input.fxRates } },
+        normalizedMonthKey,
+        input.fxRates,
+      )
+    : undefined;
+  if (metadataInput && !fxMetadata) {
+    throw new Error('Metadata FX inválida para el mes económico seleccionado.');
+  }
 
   const nextClosure: WealthMonthlyClosure = {
     id: crypto.randomUUID(),
@@ -5560,6 +5663,7 @@ export const upsertMonthlyClosure = (input: {
     closedAt,
     summary,
     fxRates: { ...input.fxRates },
+    fxMetadata,
     records: latest,
   };
 
@@ -5605,6 +5709,7 @@ export const closeMonthlyWithCheckpoint = async (input: {
   monthKey: string;
   records: WealthRecord[];
   fxRates: WealthFxRates;
+  fxMetadata?: ClosureFxMetadata;
   closedAt?: string;
 }): Promise<WealthMonthlyClosure> => {
   const normalizedMonthKey = normalizeCalendarMonthKey(input.monthKey);
@@ -5633,6 +5738,7 @@ export const closeMonthlyWithCheckpoint = async (input: {
     monthKey: normalizedMonthKey,
     records: input.records,
     fxRates: input.fxRates,
+    fxMetadata: input.fxMetadata,
     closedAt: input.closedAt || nowIso(),
   });
   try {

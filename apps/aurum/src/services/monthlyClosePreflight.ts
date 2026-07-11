@@ -33,6 +33,7 @@ import {
 } from './wealthStorage';
 import { buildWealthFreshnessModel, type WealthFreshnessBucket } from './wealthFreshness';
 import { shouldBlockMonthlyCloseForDebtMismatch } from './monthlyCloseDebtGuard';
+import type { ClosureFxPreflightContext } from './closureFxRates';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MATERIALITY_CLP = 1_000_000;
@@ -110,6 +111,7 @@ export interface MonthlyClosePreflightDiagnostic {
   closeTargetRecords: WealthRecord[];
   closeSummary: ReturnType<typeof buildCanonicalClosureSummary>;
   fxForClose: WealthFxRates;
+  fxContext?: ClosureFxPreflightContext;
   freshness: ReturnType<typeof buildWealthFreshnessModel>;
   warnings: string[];
   checks: MonthlyClosePreflightCheck[];
@@ -135,6 +137,7 @@ interface MonthlyClosePreflightInput {
   records: WealthRecord[];
   closures: WealthMonthlyClosure[];
   fxForClose: WealthFxRates;
+  fxContext?: ClosureFxPreflightContext;
   includeRiskCapitalInTotals: boolean;
   uiMonthKey: string;
   targetMonthKey?: string;
@@ -821,6 +824,31 @@ export const buildMonthlyClosePreflightDiagnostic = (
     validateFxRange('eur_clp', fxForClose.eurClp),
     validateFxRange('uf_clp', fxForClose.ufClp),
   ].filter(Boolean);
+  const fxContext = input.fxContext;
+  const economicDateValid = !fxContext || Boolean(
+    fxContext.suggestion.economicDate &&
+      fxContext.suggestion.economicDate.startsWith(`${candidateMonthKey}-`) &&
+      fxContext.suggestion.monthKey === candidateMonthKey,
+  );
+  const fxSelectionMatches = !fxContext || Boolean(
+      Math.abs(fxContext.selection.usedFxRates.usdClp - fxForClose.usdClp) < 1e-9 &&
+      Math.abs(fxContext.selection.usedFxRates.eurClp - fxForClose.eurClp) < 1e-9 &&
+      Math.abs(fxContext.selection.usedFxRates.ufClp - fxForClose.ufClp) < 1e-9,
+  );
+  const previousFx = fxContext?.previousClosureFxRates || null;
+  const sameAsPrevious = (field: keyof WealthFxRates) =>
+    Boolean(previousFx && Math.abs(Number(previousFx[field]) - Number(fxForClose[field])) < 1e-9);
+  const allFxSameAsPrevious = sameAsPrevious('usdClp') && sameAsPrevious('eurClp') && sameAsPrevious('ufClp');
+  const ufSameAsPrevious = sameAsPrevious('ufClp');
+  const suggested = fxContext?.suggestion.suggestedFxRates || {};
+  const manualDifferenceOverThreshold = (['usdClp', 'eurClp', 'ufClp'] as const).some((field) => {
+    const suggestedValue = Number(suggested[field]);
+    if (!Number.isFinite(suggestedValue) || suggestedValue <= 0) return false;
+    return Math.abs(Number(fxForClose[field]) / suggestedValue - 1) > 0.01;
+  });
+  const fxOriginsKnown = !fxContext || (['usd', 'eur', 'uf'] as const).every(
+    (key) => Boolean(fxContext.selection.rateOrigin[key] && fxContext.selection.metadata.source?.[key]),
+  );
 
   const propertyRows = closeTargetRecords.filter(
     (record) => record.block === 'real_estate' && labelMatchKey(record.label) === labelMatchKey(REAL_ESTATE_PROPERTY_VALUE_LABEL),
@@ -959,6 +987,86 @@ export const buildMonthlyClosePreflightDiagnostic = (
       fxChecks.length === 0 ? 'USD, EUR y UF están completos y dentro de rango.' : 'FX faltante o fuera de rango.',
     ),
     buildCheck(
+      'fx_economic_date',
+      'fecha económica corresponde al monthKey',
+      economicDateValid ? 'ok' : 'fail',
+      economicDateValid
+        ? `Fecha económica: ${fxContext?.suggestion.economicDate}.`
+        : 'La fecha económica no pertenece al mes seleccionado.',
+    ),
+    buildCheck(
+      'fx_selection_current',
+      'preview y cierre usan exactamente las mismas tasas',
+      fxSelectionMatches ? 'ok' : 'fail',
+      fxSelectionMatches
+        ? 'Las tasas del preview coinciden con las tasas preparadas para persistencia.'
+        : 'Las tasas visibles y las tasas preparadas para persistencia no coinciden.',
+    ),
+    buildCheck(
+      'fx_origin_known',
+      'procedencia FX identificada',
+      fxOriginsKnown ? 'ok' : 'fail',
+      fxOriginsKnown
+        ? 'Cada tasa utilizada identifica origen automático, manual o fallback.'
+        : 'Una o más tasas no tienen procedencia identificable.',
+    ),
+    buildCheck(
+      'fx_same_as_previous',
+      'tasas no heredadas silenciosamente',
+      allFxSameAsPrevious ? 'warn' : 'ok',
+      allFxSameAsPrevious
+        ? `Las tasas utilizadas coinciden exactamente con el cierre anterior. Revisa que correspondan a ${candidateMonthKey}.`
+        : 'Las tres tasas no repiten exactamente el cierre anterior.',
+    ),
+    buildCheck(
+      'fx_uf_same_as_previous',
+      'UF revisada contra cierre anterior',
+      ufSameAsPrevious ? 'warn' : 'ok',
+      ufSameAsPrevious
+        ? 'La UF utilizada coincide con el cierre anterior. Confirma que corresponde al último día del mes seleccionado.'
+        : 'La UF difiere del cierre anterior o no existe comparación.',
+    ),
+    buildCheck(
+      'fx_manual_reason',
+      'override manual documentado',
+      fxContext?.selection.requiresManualReason ? 'fail' : 'ok',
+      fxContext?.selection.requiresManualReason
+        ? 'Las tasas manuales requieren un motivo antes de cerrar.'
+        : 'No hay override manual sin motivo.',
+    ),
+    buildCheck(
+      'fx_manual_difference',
+      'diferencia manual contra referencia revisada',
+      manualDifferenceOverThreshold ? 'warn' : 'ok',
+      manualDifferenceOverThreshold
+        ? 'Una tasa manual difiere más de 1% de la referencia sugerida.'
+        : 'No hay diferencias manuales superiores a 1% contra la referencia disponible.',
+    ),
+    buildCheck(
+      'fx_economic_confirmation',
+      'confirmación de mes económico',
+      !fxContext || fxContext.confirmations.economic ? 'ok' : 'fail',
+      !fxContext || fxContext.confirmations.economic
+        ? 'El usuario confirmó el mes económico de las tasas.'
+        : 'Falta confirmar que las tasas corresponden al mes económico seleccionado.',
+    ),
+    buildCheck(
+      'fx_manual_confirmation',
+      'confirmación de tasas manuales',
+      !fxContext?.selection.requiresManualConfirmation || fxContext.confirmations.manual ? 'ok' : 'fail',
+      !fxContext?.selection.requiresManualConfirmation || fxContext.confirmations.manual
+        ? 'La confirmación manual está satisfecha o no aplica.'
+        : 'Falta confirmar el uso de tasas particulares.',
+    ),
+    buildCheck(
+      'fx_fallback_confirmation',
+      'confirmación de fallback',
+      !fxContext?.selection.requiresFallbackConfirmation || fxContext.confirmations.fallback ? 'ok' : 'fail',
+      !fxContext?.selection.requiresFallbackConfirmation || fxContext.confirmations.fallback
+        ? 'La revisión de fallback está satisfecha o no aplica.'
+        : 'Falta confirmar la revisión manual de tasas sin referencia automática.',
+    ),
+    buildCheck(
       'critical_values',
       'no hay NaN/null/undefined crítico',
       !hasNaN && !hasCriticalNull ? 'ok' : 'fail',
@@ -995,7 +1103,20 @@ export const buildMonthlyClosePreflightDiagnostic = (
     .map((check) => `${check.label}: ${check.message}`);
 
   const hasDataQualityFailure = checks.some((check) =>
-    ['summary_matches_records', 'mortgage_sign', 'property_single', 'fx_complete', 'critical_values'].includes(check.key) &&
+    [
+      'summary_matches_records',
+      'mortgage_sign',
+      'property_single',
+      'fx_complete',
+      'fx_economic_date',
+      'fx_selection_current',
+      'fx_origin_known',
+      'fx_manual_reason',
+      'fx_economic_confirmation',
+      'fx_manual_confirmation',
+      'fx_fallback_confirmation',
+      'critical_values',
+    ].includes(check.key) &&
     check.status === 'fail',
   );
   const hasSourceTruthFailure = checks.some((check) =>
@@ -1020,6 +1141,7 @@ export const buildMonthlyClosePreflightDiagnostic = (
     closeTargetRecords,
     closeSummary,
     fxForClose,
+    fxContext,
     freshness,
     warnings,
     checks,

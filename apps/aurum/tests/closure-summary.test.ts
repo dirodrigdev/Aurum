@@ -416,4 +416,44 @@ describe('canonical closure summary', () => {
     expect(closures.find((closure) => closure.monthKey === '2023-12')?.fxRates?.ufClp).toBe(36789.36);
     expect(closures.find((closure) => closure.monthKey === '2024-01')?.fxRates?.ufClp).toBe(33000);
   });
+
+  it('persists economic FX metadata without allowing usedFxRates to diverge from fxRates', () => {
+    const usedFxRates = { usdClp: 922.34, eurClp: 1050.38, ufClp: 40820.31 };
+    upsertMonthlyClosure({
+      monthKey: '2026-06',
+      records: [makeRecord({
+        block: 'bank',
+        source: 'Manual',
+        label: BANK_BCHILE_CLP_LABEL,
+        amount: 10_000_000,
+        currency: 'CLP',
+      })],
+      fxRates: usedFxRates,
+      closedAt: '2026-07-03T10:42:00.000Z',
+      fxMetadata: {
+        economicMonthKey: '2026-06',
+        economicDate: '2026-06-30',
+        suggestedFxRates: usedFxRates,
+        usedFxRates: { usdClp: 1, eurClp: 1, ufClp: 1 },
+        rateOrigin: { usd: 'automatic', eur: 'automatic', uf: 'automatic' },
+        source: { usd: 'sii.cl', eur: 'bcentral.cl', uf: 'sii.cl' },
+        retrievedAt: '2026-07-03T10:40:00.000Z',
+        reconciliation: { status: 'reconciled', checkedAt: '2026-07-03T10:41:00.000Z' },
+      },
+    });
+
+    const persisted = loadClosures().find((closure) => closure.monthKey === '2026-06');
+    expect(persisted?.closedAt).toBe('2026-07-03T10:42:00.000Z');
+    expect(persisted?.fxMetadata?.economicDate).toBe('2026-06-30');
+    expect(persisted?.fxMetadata?.usedFxRates).toEqual(usedFxRates);
+    expect(persisted?.fxRates).toEqual(usedFxRates);
+
+    upsertMonthlyClosure({
+      monthKey: '2026-05',
+      records: [],
+      fxRates,
+      closedAt: '2026-06-01T09:00:00.000Z',
+    });
+    expect(loadClosures().find((closure) => closure.monthKey === '2026-05')?.fxMetadata).toBeUndefined();
+  });
 });

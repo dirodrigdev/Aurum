@@ -19,6 +19,7 @@ import {
   MORTGAGE_DEBT_BALANCE_LABEL,
   REAL_ESTATE_PROPERTY_VALUE_LABEL,
   RISK_CAPITAL_LABEL_CLP,
+  buildCanonicalClosureSummary,
   type WealthFxRates,
   type WealthRecord,
 } from '../src/services/wealthStorage';
@@ -26,6 +27,7 @@ import {
   buildMonthlyClosePreflightDiagnostic,
   buildMonthlyClosePreflightReport,
 } from '../src/services/monthlyClosePreflight';
+import { buildClosureFxSelection, type SuggestedClosureRates } from '../src/services/closureFxRates';
 
 const fx: WealthFxRates = { usdClp: 950, eurClp: 1030, ufClp: 39000 };
 
@@ -518,5 +520,65 @@ describe('monthly close preflight diagnostic', () => {
       }),
     ]);
     expect(buildMonthlyClosePreflightReport(diagnostic)).toContain('Agregados legacy ignorados');
+  });
+
+  it('reports economic FX warnings and blocks missing required confirmations', () => {
+    const records: WealthRecord[] = [record({
+      id: 'bank-jun-fx',
+      block: 'bank',
+      label: BANK_BCHILE_CLP_LABEL,
+      amount: 20_000_000,
+      currency: 'CLP',
+      snapshotDate: '2026-06-30',
+      createdAt: '2026-06-30T10:00:00Z',
+      updatedAt: '2026-06-30T10:00:00Z',
+    })];
+    const suggestion: SuggestedClosureRates = {
+      monthKey: '2026-06',
+      economicDate: '2026-06-30',
+      suggestedFxRates: { ...fx },
+      source: { usd: 'sii.cl', eur: 'bcentral.cl', uf: 'sii.cl' },
+      effectiveDate: { usd: '2026-06-30', eur: '2026-06-30', uf: '2026-06-30' },
+      retrievedAt: '2026-07-03T10:00:00Z',
+      status: 'available',
+      warnings: [],
+    };
+    const selection = buildClosureFxSelection({
+      monthKey: '2026-06',
+      usedFxRates: fx,
+      suggestion,
+      touched: { usd: false, eur: false, uf: false },
+      previousClosureFxRates: fx,
+    });
+    const previousRecords = records.map((item) => ({ ...item, id: 'bank-may-fx', snapshotDate: '2026-05-31' }));
+    const diagnostic = buildMonthlyClosePreflightDiagnostic({
+      records,
+      closures: [{
+        id: 'closure-may-fx',
+        monthKey: '2026-05',
+        closedAt: '2026-06-01T10:00:00Z',
+        records: previousRecords,
+        fxRates: fx,
+        summary: buildCanonicalClosureSummary(previousRecords, fx),
+      }],
+      fxForClose: fx,
+      fxContext: {
+        suggestion,
+        selection,
+        previousClosureFxRates: fx,
+        confirmations: { economic: false, manual: false, fallback: false },
+      },
+      includeRiskCapitalInTotals: false,
+      uiMonthKey: '2026-06',
+      targetMonthKey: '2026-06',
+      calendarMonthKey: '2026-07',
+      investmentInstruments: [],
+    });
+
+    expect(diagnostic.checks.find((check) => check.key === 'fx_same_as_previous')).toMatchObject({ status: 'warn' });
+    expect(diagnostic.checks.find((check) => check.key === 'fx_uf_same_as_previous')).toMatchObject({ status: 'warn' });
+    expect(diagnostic.checks.find((check) => check.key === 'fx_economic_confirmation')).toMatchObject({ status: 'fail' });
+    expect(diagnostic.decision).toBe('NO_GO_DATA_QUALITY');
+    expect(buildMonthlyClosePreflightReport(diagnostic)).toContain('fecha económica');
   });
 });

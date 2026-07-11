@@ -6,6 +6,13 @@ import {
   MONTHLY_CLOSE_DEBT_GUARD_MIN_CLP,
   MONTHLY_CLOSE_DEBT_GUARD_TOLERANCE_CLP,
 } from '../../services/monthlyCloseDebtGuard';
+import type {
+  ClosureFxConfirmations,
+  ClosureFxRateKey,
+  ClosureFxRateOrigin,
+  SuggestedClosureRatesStatus,
+} from '../../services/closureFxRates';
+import type { WealthFxRates } from '../../services/wealthStorage';
 
 interface CloseValidationIssueView {
   type: string;
@@ -46,9 +53,24 @@ interface CloseConfirmModalProps {
     eurClp: string;
     ufClp: string;
   };
+  fxGuidance?: {
+    loading: boolean;
+    status: SuggestedClosureRatesStatus;
+    economicDate: string;
+    suggestedFxRates: Partial<WealthFxRates>;
+    previousClosureFxRates?: WealthFxRates | null;
+    rateOrigin: Record<ClosureFxRateKey, ClosureFxRateOrigin>;
+    warnings: string[];
+    manualReason: string;
+    confirmations: ClosureFxConfirmations;
+    requiresManualConfirmation: boolean;
+    requiresFallbackConfirmation: boolean;
+  };
   monthLabel: (monthKey: string) => string;
   onCloseMonthDraftChange: (nextMonth: string) => void;
   onCloseFxDraftChange: (next: { usdClp?: string; eurClp?: string; ufClp?: string }) => void;
+  onManualReasonChange?: (reason: string) => void;
+  onFxConfirmationChange?: (key: keyof ClosureFxConfirmations, checked: boolean) => void;
   onResolveWithPrevious: (issue: CloseValidationIssueView) => void;
   onResolveExclude: (issue: CloseValidationIssueView) => void;
   onReview: (issue: CloseValidationIssueView) => void;
@@ -72,9 +94,12 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
   closeFxReady,
   closePreview,
   closeFxDraft,
+  fxGuidance,
   monthLabel,
   onCloseMonthDraftChange,
   onCloseFxDraftChange,
+  onManualReasonChange,
+  onFxConfirmationChange,
   onResolveWithPrevious,
   onResolveExclude,
   onReview,
@@ -96,10 +121,16 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
     String(closeError || '').trim() === MONTHLY_CLOSE_DEBT_GUARD_ERROR_MESSAGE &&
     previewAppearsDebtIncluded;
   const displayCloseError = shouldSuppressDebtGuardError ? '' : closeError;
+  const fxGuidanceReady = !fxGuidance || (
+    !fxGuidance.loading &&
+    fxGuidance.confirmations.economic &&
+    (!fxGuidance.requiresManualConfirmation || Boolean(fxGuidance.manualReason.trim()) && fxGuidance.confirmations.manual) &&
+    (!fxGuidance.requiresFallbackConfirmation || fxGuidance.confirmations.fallback)
+  );
 
   return (
     <div className="fixed inset-0 z-[90] bg-black/40 p-4 flex items-end sm:items-center justify-center">
-      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
+      <div className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
         <div className="text-base font-semibold text-slate-900">Confirmar cierre mensual</div>
         <div className="mt-1 text-sm text-slate-600">Selecciona el mes que quieres cerrar y resuelve bloqueos aquí mismo.</div>
 
@@ -232,7 +263,109 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
               <span>Deuda no hipotecaria</span>
               <span className="font-medium">-{formatCurrency(closePreview.nonMortgageDebt, 'CLP')}</span>
             </div>
-            {isHistoricalClose ? (
+            {fxGuidance ? (
+              <div className="mt-2 rounded-xl border border-sky-200 bg-sky-50 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-sky-900">Tasas del cierre</div>
+                    <div className="mt-0.5 text-[11px] text-sky-800">
+                      Mes económico: {closeMonthDraft} · fecha económica: {fxGuidance.economicDate || 'no disponible'}
+                    </div>
+                  </div>
+                  <span className="rounded-full border border-sky-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-sky-800">
+                    {fxGuidance.loading ? 'Consultando' : fxGuidance.status}
+                  </span>
+                </div>
+
+                <div className="mt-3 space-y-2">
+                  {([
+                    ['usd', 'USD/CLP', 'usdClp'],
+                    ['eur', 'EUR/CLP', 'eurClp'],
+                    ['uf', 'UF/CLP', 'ufClp'],
+                  ] as const).map(([key, label, field]) => {
+                    const suggested = fxGuidance.suggestedFxRates[field];
+                    const previous = fxGuidance.previousClosureFxRates?.[field];
+                    const origin = fxGuidance.rateOrigin[key];
+                    return (
+                      <div key={key} className="rounded-lg border border-sky-100 bg-white p-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="text-[11px] font-semibold text-slate-800" htmlFor={`close-fx-${key}`}>
+                            {label}
+                          </label>
+                          <span className="text-[10px] uppercase tracking-wide text-slate-500">{origin}</span>
+                        </div>
+                        <Input
+                          id={`close-fx-${key}`}
+                          type="text"
+                          inputMode="decimal"
+                          value={closeFxDraft[field]}
+                          onChange={(event) => onCloseFxDraftChange({ [field]: event.target.value })}
+                          placeholder={label}
+                        />
+                        <div className="mt-1 grid grid-cols-2 gap-2 text-[10px] text-slate-500">
+                          <span>Sugerida: {Number.isFinite(suggested) ? Number(suggested).toLocaleString('es-CL') : '—'}</span>
+                          <span>Anterior: {Number.isFinite(previous) ? Number(previous).toLocaleString('es-CL') : '—'}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {fxGuidance.requiresManualConfirmation && (
+                  <div className="mt-3">
+                    <label htmlFor="close-fx-manual-reason" className="text-[11px] font-semibold text-slate-700">
+                      Motivo de tasas manuales
+                    </label>
+                    <Input
+                      id="close-fx-manual-reason"
+                      value={fxGuidance.manualReason}
+                      onChange={(event) => onManualReasonChange?.(event.target.value)}
+                      placeholder="Explica brevemente el motivo"
+                    />
+                  </div>
+                )}
+
+                {!!fxGuidance.warnings.length && (
+                  <div className="mt-3 space-y-1 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-900">
+                    {[...new Set(fxGuidance.warnings)].map((warning) => <div key={warning}>{warning}</div>)}
+                  </div>
+                )}
+
+                <div className="mt-3 space-y-2 text-[11px] text-slate-700">
+                  <label className="flex cursor-pointer items-start gap-2">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4"
+                      checked={fxGuidance.confirmations.economic}
+                      onChange={(event) => onFxConfirmationChange?.('economic', event.target.checked)}
+                    />
+                    <span>Confirmo que las tasas utilizadas corresponden al cierre económico de {monthLabel(closeMonthDraft).toLowerCase()}.</span>
+                  </label>
+                  {fxGuidance.requiresManualConfirmation && (
+                    <label className="flex cursor-pointer items-start gap-2">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-4 w-4"
+                        checked={fxGuidance.confirmations.manual}
+                        onChange={(event) => onFxConfirmationChange?.('manual', event.target.checked)}
+                      />
+                      <span>Confirmo que deseo utilizar tasas particulares distintas de las sugeridas.</span>
+                    </label>
+                  )}
+                  {fxGuidance.requiresFallbackConfirmation && (
+                    <label className="flex cursor-pointer items-start gap-2">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-4 w-4"
+                        checked={fxGuidance.confirmations.fallback}
+                        onChange={(event) => onFxConfirmationChange?.('fallback', event.target.checked)}
+                      />
+                      <span>Confirmo que revisé manualmente las tasas utilizadas.</span>
+                    </label>
+                  )}
+                </div>
+              </div>
+            ) : isHistoricalClose ? (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-2">
                 <div className="text-[11px] font-semibold text-amber-800">
                   Cierre histórico: ingresa TC/UF del momento ({monthLabel(closeMonthDraft).toLowerCase()})
@@ -300,7 +433,10 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
           <Button variant="outline" onClick={onCancel}>
             Cancelar
           </Button>
-          <Button onClick={() => onAttemptClose(closeMonthDraft)} disabled={closeBlockingIssues.length > 0 || !closeFxReady}>
+          <Button
+            onClick={() => onAttemptClose(closeMonthDraft)}
+            disabled={closeBlockingIssues.length > 0 || !closeFxReady || !fxGuidanceReady}
+          >
             {selectedClosureMonthKey
               ? closeWarningIssues.length
                 ? 'Sobrescribir con arrastres'
