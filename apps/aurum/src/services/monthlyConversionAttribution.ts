@@ -35,7 +35,7 @@ export type ConversionAttributionResult = {
   unavailableReason?: string;
 };
 
-type AttributionInput = {
+type MonthlyAttributionInput = {
   reportingCurrency: WealthCurrency;
   previousMonthKey: string;
   currentMonthKey: string;
@@ -46,6 +46,19 @@ type AttributionInput = {
   includeRiskCapitalInTotals: boolean;
   expectedPreviousReportedValue?: number | null;
   expectedCurrentReportedValue?: number | null;
+};
+
+export type ConversionAttributionInput = {
+  reportingCurrency: WealthCurrency;
+  initialMonthKey: string;
+  finalMonthKey: string;
+  initialRecords: WealthRecord[];
+  finalRecords: WealthRecord[];
+  initialFx: WealthFxRates | null | undefined;
+  finalFx: WealthFxRates | null | undefined;
+  includeRiskCapitalInTotals: boolean;
+  expectedInitialReportedValue?: number | null;
+  expectedFinalReportedValue?: number | null;
 };
 
 const PAIR_BY_CURRENCY: Partial<Record<WealthCurrency, FxPair>> = {
@@ -60,10 +73,10 @@ const FX_KEY_BY_PAIR: Record<FxPair, keyof WealthFxRates> = {
   'UF/CLP': 'ufClp',
 };
 
-const unavailable = (input: AttributionInput, reason: string): ConversionAttributionResult => ({
+const unavailable = (input: ConversionAttributionInput, reason: string): ConversionAttributionResult => ({
   reportingCurrency: input.reportingCurrency,
-  previousMonthKey: input.previousMonthKey,
-  currentMonthKey: input.currentMonthKey,
+  previousMonthKey: input.initialMonthKey,
+  currentMonthKey: input.finalMonthKey,
   previousReportedValue: 0,
   currentReportedValue: 0,
   currentValueAtPreviousRates: 0,
@@ -137,53 +150,53 @@ const reconciles = (actual: number, expected: number | null | undefined) => {
   return Math.abs(actual - expected) <= Math.max(0.01, Math.abs(expected) * 1e-9);
 };
 
-export const calculateMonthlyConversionAttribution = (
-  input: AttributionInput,
+export const calculateConversionAttribution = (
+  input: ConversionAttributionInput,
 ): ConversionAttributionResult => {
-  if (!input.previousRecords.length || !input.currentRecords.length) {
+  if (!input.initialRecords.length || !input.finalRecords.length) {
     return unavailable(input, 'Faltan records nativos auditables en uno de los períodos.');
   }
-  if (!input.previousFx || !input.currentFx) {
+  if (!input.initialFx || !input.finalFx) {
     return unavailable(input, 'Falta un snapshot FX auditable.');
   }
-  if (hasAmbiguousCurrencyChange(input.previousRecords, input.currentRecords)) {
+  if (hasAmbiguousCurrencyChange(input.initialRecords, input.finalRecords)) {
     return unavailable(input, 'Una posición cambió de moneda sin una identidad reconciliable.');
   }
 
-  const previousCanonical = recordsThatAffectNet(input.previousRecords, input.includeRiskCapitalInTotals);
-  const currentCanonical = recordsThatAffectNet(input.currentRecords, input.includeRiskCapitalInTotals);
-  const pairs = requiredPairs(previousCanonical, currentCanonical, input.reportingCurrency);
+  const initialCanonical = recordsThatAffectNet(input.initialRecords, input.includeRiskCapitalInTotals);
+  const finalCanonical = recordsThatAffectNet(input.finalRecords, input.includeRiskCapitalInTotals);
+  const pairs = requiredPairs(initialCanonical, finalCanonical, input.reportingCurrency);
   if (
     pairs.some((pair) => {
       const key = FX_KEY_BY_PAIR[pair];
-      return !isValidRate(input.previousFx?.[key]) || !isValidRate(input.currentFx?.[key]);
+      return !isValidRate(input.initialFx?.[key]) || !isValidRate(input.finalFx?.[key]);
     })
   ) {
     return unavailable(input, 'Falta una tasa histórica requerida por las posiciones visibles.');
   }
 
-  const previousForTotals = resolveRiskCapitalRecordsForTotals(
-    input.previousRecords,
+  const initialForTotals = resolveRiskCapitalRecordsForTotals(
+    input.initialRecords,
     input.includeRiskCapitalInTotals,
   ).recordsForTotals;
-  const currentForTotals = resolveRiskCapitalRecordsForTotals(
-    input.currentRecords,
+  const finalForTotals = resolveRiskCapitalRecordsForTotals(
+    input.finalRecords,
     input.includeRiskCapitalInTotals,
   ).recordsForTotals;
-  const previousClp = buildWealthNetBreakdown(previousForTotals, input.previousFx).netClp;
-  const currentClp = buildWealthNetBreakdown(currentForTotals, input.currentFx).netClp;
-  const currentAtPreviousRatesClp = buildWealthNetBreakdown(currentForTotals, input.previousFx).netClp;
+  const initialClp = buildWealthNetBreakdown(initialForTotals, input.initialFx).netClp;
+  const finalClp = buildWealthNetBreakdown(finalForTotals, input.finalFx).netClp;
+  const finalAtInitialRatesClp = buildWealthNetBreakdown(finalForTotals, input.initialFx).netClp;
 
-  const previousReportedValue = fromClpUsingFx(previousClp, input.reportingCurrency, input.previousFx);
-  const currentReportedValue = fromClpUsingFx(currentClp, input.reportingCurrency, input.currentFx);
+  const previousReportedValue = fromClpUsingFx(initialClp, input.reportingCurrency, input.initialFx);
+  const currentReportedValue = fromClpUsingFx(finalClp, input.reportingCurrency, input.finalFx);
   const currentValueAtPreviousRates = fromClpUsingFx(
-    currentAtPreviousRatesClp,
+    finalAtInitialRatesClp,
     input.reportingCurrency,
-    input.previousFx,
+    input.initialFx,
   );
   if (
-    !reconciles(previousReportedValue, input.expectedPreviousReportedValue) ||
-    !reconciles(currentReportedValue, input.expectedCurrentReportedValue)
+    !reconciles(previousReportedValue, input.expectedInitialReportedValue) ||
+    !reconciles(currentReportedValue, input.expectedFinalReportedValue)
   ) {
     return unavailable(input, 'El universo reconstruido no reconcilia con el patrimonio visible.');
   }
@@ -197,8 +210,8 @@ export const calculateMonthlyConversionAttribution = (
 
   return {
     reportingCurrency: input.reportingCurrency,
-    previousMonthKey: input.previousMonthKey,
-    currentMonthKey: input.currentMonthKey,
+    previousMonthKey: input.initialMonthKey,
+    currentMonthKey: input.finalMonthKey,
     previousReportedValue,
     currentReportedValue,
     currentValueAtPreviousRates,
@@ -210,9 +223,25 @@ export const calculateMonthlyConversionAttribution = (
     conversionEffectPctPoints: conversionEffectAmount / previousReportedValue,
     ratesUsed: pairs.map((pair) => ({
       pair,
-      previous: Number(input.previousFx?.[FX_KEY_BY_PAIR[pair]]),
-      current: Number(input.currentFx?.[FX_KEY_BY_PAIR[pair]]),
+      previous: Number(input.initialFx?.[FX_KEY_BY_PAIR[pair]]),
+      current: Number(input.finalFx?.[FX_KEY_BY_PAIR[pair]]),
     })),
     status: 'available',
   };
 };
+
+export const calculateMonthlyConversionAttribution = (
+  input: MonthlyAttributionInput,
+): ConversionAttributionResult =>
+  calculateConversionAttribution({
+    reportingCurrency: input.reportingCurrency,
+    initialMonthKey: input.previousMonthKey,
+    finalMonthKey: input.currentMonthKey,
+    initialRecords: input.previousRecords,
+    finalRecords: input.currentRecords,
+    initialFx: input.previousFx,
+    finalFx: input.currentFx,
+    includeRiskCapitalInTotals: input.includeRiskCapitalInTotals,
+    expectedInitialReportedValue: input.expectedPreviousReportedValue,
+    expectedFinalReportedValue: input.expectedCurrentReportedValue,
+  });

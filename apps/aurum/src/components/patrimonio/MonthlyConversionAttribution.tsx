@@ -38,7 +38,11 @@ export const MonthlyConversionAttributionLine: React.FC<{
 export const MonthlyConversionAttributionModal: React.FC<{
   result: ConversionAttributionResult;
   onClose: () => void;
-}> = ({ result, onClose }) => {
+  context?: {
+    title: string;
+    elapsedMonths: number;
+  };
+}> = ({ result, onClose, context }) => {
   if (result.status !== 'available') return null;
   const rows = [
     ['Variación reportada', result.reportedChangeAmount, result.reportedChangePct],
@@ -57,16 +61,35 @@ export const MonthlyConversionAttributionModal: React.FC<{
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 id="conversion-attribution-title" className="text-lg font-semibold text-slate-950">
-              Explicación de la variación mensual
+              {context?.title || 'Explicación de la variación mensual'}
             </h2>
             <p className="mt-1 text-xs text-slate-500">
-              {formatMonthLabel(result.previousMonthKey)} → {formatMonthLabel(result.currentMonthKey)} · {result.reportingCurrency}
+              {formatMonthLabel(result.previousMonthKey)} → {formatMonthLabel(result.currentMonthKey)}
+              {context ? ` · ${context.elapsedMonths} ${context.elapsedMonths === 1 ? 'mes' : 'meses'}` : ''}
+              {' · '}{result.reportingCurrency}
             </p>
           </div>
           <button type="button" onClick={onClose} aria-label="Cerrar" className="rounded-full p-2 text-slate-500 hover:bg-slate-100">
             <X className="h-5 w-5" />
           </button>
         </div>
+
+        {context && (
+          <div className="mt-5 grid gap-2 sm:grid-cols-3">
+            {[
+              ['Patrimonio inicial', result.previousReportedValue],
+              ['Final reportado', result.currentReportedValue],
+              ['Final con tasas iniciales', result.currentValueAtPreviousRates],
+            ].map(([label, value]) => (
+              <div key={label as string} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="text-[11px] font-medium text-slate-500">{label}</div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">
+                  {formatCurrency(value as number, result.reportingCurrency)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="mt-5 space-y-2">
           {rows.map(([label, amount, percentage], index) => (
@@ -97,7 +120,11 @@ export const MonthlyConversionAttributionModal: React.FC<{
         )}
 
         <div className="mt-5 space-y-2 text-xs leading-relaxed text-slate-600">
-          <p>La variación a conversiones constantes valoriza las posiciones actuales con las tasas del período anterior. El efecto de conversión muestra cuánto de la variación reportada se explica por cambios en las tasas consideradas.</p>
+          <p>
+            {context
+              ? 'La variación a conversiones constantes valoriza las posiciones del cierre final con las tasas del cierre inicial. El efecto de conversión muestra cuánto de la variación reportada se explica por cambios en las tasas consideradas.'
+              : 'La variación a conversiones constantes valoriza las posiciones actuales con las tasas del período anterior. El efecto de conversión muestra cuánto de la variación reportada se explica por cambios en las tasas consideradas.'}
+          </p>
           <p>Esta explicación no separa rentabilidad, aportes, retiros ni otros cambios de saldo.</p>
         </div>
       </section>

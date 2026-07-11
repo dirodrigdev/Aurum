@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Zap } from 'lucide-react';
 import { Button, Card, Input } from '../components/Components';
 import { BreakdownCard, type BreakdownSummaryInvestmentRow } from '../components/closing/BreakdownCard';
+import { ConversionHorizonsSection } from '../components/closing/ConversionHorizonsSection';
 import {
   MonthlyConversionAttributionLine,
   MonthlyConversionAttributionModal,
@@ -81,6 +82,7 @@ import {
   calculateMonthlyConversionAttribution,
   type ConversionAttributionResult,
 } from '../services/monthlyConversionAttribution';
+import { buildAvailableConversionHorizons } from '../services/conversionHorizons';
 
 type UndoCloseMessageTone = 'success' | 'error' | 'info';
 
@@ -2080,6 +2082,16 @@ export const ClosingAurum: React.FC = () => {
     [evolutionRows],
   );
 
+  const availableConversionHorizons = useMemo(
+    () =>
+      buildAvailableConversionHorizons({
+        closures,
+        reportingCurrency: currency,
+        includeRiskCapitalInTotals,
+      }),
+    [closures, currency, includeRiskCapitalInTotals],
+  );
+
   const closureHistoryVersions = selectedClosure?.previousVersions || [];
   const closureVersionChangesById = useMemo(() => {
     const map = new Map<string, string>();
@@ -3552,6 +3564,7 @@ export const ClosingAurum: React.FC = () => {
               </div>
             ))}
           </Card>
+          <ConversionHorizonsSection horizons={availableConversionHorizons} />
           <button
             type="button"
             onClick={toggleRiskCapitalView}
