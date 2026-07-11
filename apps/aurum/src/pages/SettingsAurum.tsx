@@ -1,4 +1,4 @@
-import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { ChevronDown } from 'lucide-react';
 import { Button, Card, Input } from '../components/Components';
@@ -84,6 +84,10 @@ import {
   getGastappDataRoomV2RowsPage,
 } from '../services/dataRoom/gastappDataRoomV2Adapter';
 import { describeGastappDataRoomV2Status } from '../services/dataRoom/gastappAccessGuidance';
+
+const DevClosureAuditSection = import.meta.env.DEV
+  ? React.lazy(() => import('../components/settings/DevClosureAuditSection'))
+  : null;
 
 const CLOSING_CONFIG_STORAGE_KEY = 'aurum.closing.config.v1';
 const CLOSURE_REVIEW_PENDING_STORAGE_KEY = 'aurum.closure.review.pending.v1';
@@ -1971,6 +1975,12 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
           void loadGastappDataRoomV2Diagnostic();
         }}
       />
+
+      {DevClosureAuditSection && (
+        <Suspense fallback={null}>
+          <DevClosureAuditSection />
+        </Suspense>
+      )}
 
       <Card className="border border-slate-200 bg-white p-3">
         <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => toggleSection('backup')}>
