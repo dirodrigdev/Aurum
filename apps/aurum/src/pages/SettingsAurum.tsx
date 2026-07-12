@@ -10,6 +10,7 @@ import {
   ClosureReviewSource,
 } from '../components/settings/ClosureReviewModal';
 import { LabToolsSection } from '../components/settings/LabToolsSection';
+import { HistoricalFxCorrectionConsole } from '../components/settings/HistoricalFxCorrectionConsole';
 import { SyncStatusSection } from '../components/settings/SyncStatusSection';
 import type { GastappDataRoomV2DiagnosticViewState } from '../components/settings/SyncStatusSection';
 import { TypedConfirmModal } from '../components/settings/TypedConfirmModal';
@@ -2201,6 +2202,20 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
             </div>
           </div>
         )}
+      </Card>
+
+      <Card className="border border-slate-200 bg-white p-3">
+        <div className="text-sm font-semibold text-slate-900">Herramientas de auditoría</div>
+        <div className="mt-1 text-[11px] text-slate-500">Operaciones históricas protegidas y trazables</div>
+        <div className="mt-3">
+          <HistoricalFxCorrectionConsole
+            authEmail={authEmail}
+            onApplied={async () => {
+              await hydrateWealthFromCloudShared({ force: true, minIntervalMs: 0 });
+              refreshLocalState();
+            }}
+          />
+        </div>
       </Card>
 
       <LabToolsSection

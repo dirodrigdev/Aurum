@@ -8360,7 +8360,7 @@ export const Patrimonio: React.FC = () => {
                         <tr key={key} className="border-t border-sky-100 align-top">
                           <td className="py-1 pr-3 font-medium">{label}</td>
                           <td className="py-1 pr-3 text-right">
-                            <div>{closePreflightDiagnostic.fxContext?.suggestion.suggestedFxRates[field]?.toLocaleString('es-CL') || '—'}</div>
+                            <div>{(reference?.value ?? closePreflightDiagnostic.fxContext?.suggestion.suggestedFxRates[field])?.toLocaleString('es-CL') || '—'}</div>
                             <div className="whitespace-nowrap text-[10px] text-sky-700">
                               {availability}{reference?.effectiveDate ? ` al ${reference.effectiveDate}` : ''}
                             </div>
@@ -8370,7 +8370,7 @@ export const Patrimonio: React.FC = () => {
                               aria-label={`${label} utilizada en preflight`}
                               type="text"
                               inputMode="decimal"
-                              className="ml-auto h-8 w-24 px-2 text-right text-[11px] tabular-nums"
+                              className="ml-auto h-7 w-20 px-1.5 text-right text-[11px] tabular-nums"
                               value={closeFxDraft[field]}
                               onChange={(event) => {
                                 setCloseFxDraft((previous) => ({ ...previous, [field]: event.target.value }));

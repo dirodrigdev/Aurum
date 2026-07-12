@@ -345,8 +345,8 @@ export const buildHistoricalPreview = (rawClosure, proposedFxRates) => {
     reconciliation,
     fingerprint: fingerprintValue(rawClosure),
     consumers: {
-      derivedAutomatically: ['Cierres / Evolución', 'Conversion horizons', 'Retornos', 'Portfolio Analytics', 'Wealth Lab', 'Exportaciones'],
-      notModified: ['Patrimonio vivo', 'Mes abierto', 'Snapshot FX operativo', 'Otros cierres', 'MIDAS', 'Data Room'],
+      derivedAutomatically: ['Cierres / Evolución', 'Conversion horizons', 'Retornos', 'Portfolio Analytics', 'Dashboard', 'Wealth Lab', 'Exportaciones financieras'],
+      notModified: ['Patrimonio vivo', 'Mes abierto', 'Snapshot FX operativo', 'Otros cierres', 'MIDAS', 'Data Room de GastApp'],
     },
   };
 };
