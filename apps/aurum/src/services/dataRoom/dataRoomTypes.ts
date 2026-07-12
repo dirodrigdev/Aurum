@@ -181,6 +181,13 @@ export type GastappDataRoomV2PeriodSummary = {
   periodPolicy: string | null;
   readinessStatus: string | null;
   officialAmountEur: number | null;
+  normalizedRowsAmountEur: number | null;
+  reconciliationDeltaEur: number | null;
+  dayToDayEur: number | null;
+  projectsEur: number | null;
+  tripsEur: number | null;
+  classifiedAmountEur: number | null;
+  unclassifiedAmountEur: number | null;
   canonicalRowCount: number | null;
   rowCount: number | null;
   periodStart: string | null;
@@ -202,6 +209,8 @@ export type GastappDataRoomV2Row = {
   subcategory: string | null;
   label: string | null;
   description: string | null;
+  transactionOwner: string | null;
+  transactionOwnerSource: string | null;
   amountEur: number | null;
   isCanonical: boolean | null;
   affectsAurum: boolean | null;
