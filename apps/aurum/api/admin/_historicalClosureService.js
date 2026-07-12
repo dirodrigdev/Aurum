@@ -83,8 +83,21 @@ const readBackupPayload = async ({ db, identity, backupId, get }) => {
   return { manifest, decoded };
 };
 
-export const readHistoricalClosure = async ({ db, identity, monthKey }) => {
-  const snapshot = await rootRef(db, identity.uid).get();
+const verificationMetadata = ({ identity, monthKey, adminContext, updateTime, fingerprint }) => ({
+  projectId: adminContext?.projectId || null,
+  databaseId: adminContext?.databaseId || '(default)',
+  environment: adminContext?.environment || null,
+  documentPath: `aurum_wealth/${identity.uid}`,
+  uid: identity.uid,
+  monthKey,
+  updateTime,
+  fingerprint,
+});
+
+export const readHistoricalClosure = async ({ db, identity, monthKey, adminContext }) => {
+  // A direct Admin get has no browser cache and is independent from client hydration state.
+  const documentRef = rootRef(db, identity.uid);
+  const snapshot = await documentRef.get();
   const rootData = requireRoot(snapshot);
   const { closure } = locateClosure(rootData, monthKey);
   const records = Array.isArray(closure.records) ? closure.records : [];
@@ -103,16 +116,17 @@ export const readHistoricalClosure = async ({ db, identity, monthKey }) => {
     rootUpdateTime: updateTimeIso(snapshot),
     checkpointCount: checkpointSnapshot.size,
     readAt: new Date().toISOString(),
+    verification: verificationMetadata({ identity, monthKey, adminContext: { ...adminContext, db }, updateTime: updateTimeIso(snapshot), fingerprint: fingerprintValue(closure) }),
   };
 };
 
-export const previewHistoricalCorrection = async ({ db, identity, monthKey, expectedFingerprint, proposedFxRates }) => {
-  const read = await readHistoricalClosure({ db, identity, monthKey });
+export const previewHistoricalCorrection = async ({ db, identity, monthKey, expectedFingerprint, proposedFxRates, adminContext }) => {
+  const read = await readHistoricalClosure({ db, identity, monthKey, adminContext });
   if (read.fingerprint !== expectedFingerprint) error('El cierre cambió desde la lectura aprobada.', 409, 'concurrent_modification');
   return { ...buildHistoricalPreview(read.closure, proposedFxRates), rootUpdateTime: read.rootUpdateTime };
 };
 
-export const prepareHistoricalCorrection = async ({ db, identity, monthKey, expectedFingerprint, proposedFxRates, reason }) => {
+export const prepareHistoricalCorrection = async ({ db, identity, monthKey, expectedFingerprint, proposedFxRates, reason, adminContext }) => {
   if (!String(reason || '').trim()) error('El motivo del backup es obligatorio.', 400, 'reason_required');
   const operationId = randomUUID();
   let prepared = null;
@@ -173,6 +187,7 @@ export const prepareHistoricalCorrection = async ({ db, identity, monthKey, expe
     cloudVerified: true,
     approvedCorrection: prepared.checkpoint.approvedCorrection,
     approvedCorrectionFingerprint: prepared.checkpoint.approvedCorrectionFingerprint,
+    verification: verificationMetadata({ identity, monthKey, adminContext: { ...adminContext, db }, updateTime: prepared.manifest.rootDocumentUpdateTime, fingerprint: expectedFingerprint }),
   };
 };
 
@@ -181,10 +196,30 @@ export const exportHistoricalBackup = async ({ db, identity, backupId }) => {
   return { manifest, exportPayload: decoded };
 };
 
-export const applyHistoricalCorrection = async ({ db, identity, input }) => {
+export const readHistoricalAudit = async ({ db, identity, operationId, adminContext }) => {
+  const snapshot = await auditRef(db, identity.uid, operationId).get();
+  if (!snapshot.exists) error('Auditoría histórica no encontrada.', 404, 'audit_not_found');
+  const audit = snapshot.data();
+  return {
+    operationId,
+    status: audit.status || 'unknown',
+    type: audit.type || null,
+    monthKey: audit.monthKey || null,
+    projectId: audit.projectId || adminContext?.projectId || null,
+    documentPath: audit.documentPath || `aurum_wealth/${identity.uid}`,
+    rootUpdateTimeBefore: audit.rootUpdateTimeBefore || null,
+    verification: {
+      before: audit.beforeVerification || null,
+      after: audit.afterVerification || null,
+    },
+  };
+};
+
+export const applyHistoricalCorrection = async ({ db, identity, input, adminContext }) => {
   if (normalizeConfirmationText(input.confirmationText) !== historicalConfirmationText(input.monthKey, 'apply')) error('Confirmación reforzada incorrecta.', 400, 'confirmation_mismatch');
   const operationId = randomUUID();
   let result = null;
+  let beforeVerification = null;
   await db.runTransaction(async (transaction) => {
     const rootDocumentRef = rootRef(db, identity.uid);
     const backupDocumentRef = backupRef(db, identity.uid, input.backupId);
@@ -194,6 +229,7 @@ export const applyHistoricalCorrection = async ({ db, identity, input }) => {
       transaction.get(checkpointDocumentRef),
     ]);
     const rootData = requireRoot(rootSnapshot);
+    beforeVerification = verificationMetadata({ identity, monthKey: input.monthKey, adminContext: { ...adminContext, db }, updateTime: updateTimeIso(rootSnapshot), fingerprint: fingerprintValue(locateClosure(rootData, input.monthKey).closure) });
     const { manifest: backup, decoded: backupPayload } = await readBackupPayload({
       db,
       identity,
@@ -229,18 +265,27 @@ export const applyHistoricalCorrection = async ({ db, identity, input }) => {
       type: 'historical-closure-apply',
       finalDocumentFingerprint: result.finalFingerprint,
       rootUpdateTimeBefore: updateTimeIso(rootSnapshot),
+      projectId: adminContext?.projectId || null,
+      documentPath: rootDocumentRef.path,
+      uid: identity.uid,
     }, { merge: false });
   });
-  const verified = await readHistoricalClosure({ db, identity, monthKey: input.monthKey });
+  // Use a fresh document reference after the transaction; never reuse its snapshot or result object.
+  const verified = await readHistoricalClosure({ db, identity, monthKey: input.monthKey, adminContext });
   const persistedFx = verified.closure.fxRates;
   const approved = result.preview.proposedFxRates;
   const ratesMatch = ['usdClp', 'eurClp', 'ufClp'].every((key) => Math.abs(Number(persistedFx?.[key]) - Number(approved[key])) <= 1e-9);
   const netsMatch = Math.abs(Number(verified.closure.summary?.netClp) - result.preview.withoutRisk.after) <= 0.01 && Math.abs(Number(verified.closure.summary?.netClpWithRisk) - result.preview.withRisk.after) <= 0.01;
-  if (verified.fingerprint !== result.finalFingerprint || !ratesMatch || !netsMatch) {
-    await auditRef(db, identity.uid, operationId).set({ status: 'verification_failed', verifiedAt: new Date().toISOString() }, { merge: true });
+  const beforeTime = Date.parse(String(beforeVerification?.updateTime || ''));
+  const afterTime = Date.parse(String(verified.rootUpdateTime || ''));
+  const updateTimeAdvanced = Number.isFinite(beforeTime) && Number.isFinite(afterTime) && afterTime > beforeTime;
+  if (!updateTimeAdvanced || verified.fingerprint !== result.finalFingerprint || !ratesMatch || !netsMatch) {
+    const status = !updateTimeAdvanced ? 'write_not_persisted' : 'verification_failed';
+    await auditRef(db, identity.uid, operationId).set({ status, verifiedAt: new Date().toISOString(), beforeVerification, afterVerification: verified.verification }, { merge: true });
+    if (!updateTimeAdvanced) error('La transacción no cambió el documento en Firestore. No se considera aplicada.', 500, 'write_not_persisted');
     error(`La verificación post-write no coincide. Operación ${operationId}.`, 500, 'post_write_verification_failed');
   }
-  return { status: 'applied_verified', operationId, monthKey: input.monthKey, fingerprint: verified.fingerprint, persistedFxRates: persistedFx, persistedNetClp: verified.closure.summary?.netClp, persistedNetClpWithRisk: verified.closure.summary?.netClpWithRisk, preview: result.preview, reconciliation: result.preview.reconciliation };
+  return { status: 'applied_verified', operationId, monthKey: input.monthKey, fingerprint: verified.fingerprint, persistedFxRates: persistedFx, persistedNetClp: verified.closure.summary?.netClp, persistedNetClpWithRisk: verified.closure.summary?.netClpWithRisk, preview: result.preview, reconciliation: result.preview.reconciliation, verification: { before: beforeVerification, after: verified.verification } };
 };
 
 export const previewHistoricalRollback = async ({ db, identity, monthKey, checkpointId }) => {

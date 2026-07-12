@@ -20,13 +20,14 @@ const clone = <T>(value: T): T => structuredClone(value);
 class FakeSnapshot {
   exists: boolean;
   ref: FakeDocRef;
-  updateTime = { toDate: () => new Date('2026-07-12T10:00:00.000Z') };
+  updateTime: { toDate: () => Date };
   private value?: Record<string, unknown>;
 
   constructor(ref: FakeDocRef, value?: Record<string, unknown>) {
     this.ref = ref;
     this.exists = value !== undefined;
     this.value = value;
+    this.updateTime = { toDate: () => new Date(ref.updateTimeMs()) };
   }
 
   data() {
@@ -57,6 +58,7 @@ class FakeDocRef {
   constructor(private db: FakeFirestore, readonly path: string) {}
   collection(name: string) { return new FakeCollectionRef(this.db, `${this.path}/${name}`); }
   async get() { return new FakeSnapshot(this, this.db.store.get(this.path)); }
+  updateTimeMs() { return this.db.updateTimeMs(this.path); }
 }
 
 class FakeTransaction {
@@ -73,17 +75,25 @@ class FakeTransaction {
 
 class FakeFirestore {
   store: Stored;
+  private revisions = new Map<string, number>();
   beforeCommit?: () => void;
-  constructor(seed: Stored) { this.store = new Map([...seed].map(([path, value]) => [path, clone(value)])); }
+  constructor(seed: Stored) {
+    this.store = new Map([...seed].map(([path, value]) => [path, clone(value)]));
+    this.store.forEach((_value, path) => this.revisions.set(path, 1));
+  }
   collection(name: string) { return new FakeCollectionRef(this, name); }
   doc(path: string) { return new FakeDocRef(this, path); }
   async runTransaction<T>(callback: (transaction: FakeTransaction) => Promise<T>) {
     const transaction = new FakeTransaction(this);
     const result = await callback(transaction);
     this.beforeCommit?.();
-    transaction.writes.forEach((value, path) => this.store.set(path, clone(value)));
+    transaction.writes.forEach((value, path) => {
+      this.store.set(path, clone(value));
+      this.revisions.set(path, (this.revisions.get(path) || 0) + 1);
+    });
     return result;
   }
+  updateTimeMs(path: string) { return Date.parse('2026-07-12T10:00:00.000Z') + (this.revisions.get(path) || 0); }
 }
 
 const identity = { uid: 'owner-uid', email: 'diegorp.1978@gmail.com', emailVerified: true };

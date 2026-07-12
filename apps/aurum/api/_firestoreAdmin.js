@@ -2,6 +2,8 @@ import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 
+export const EXPECTED_AURUM_PROJECT_ID = 'aurum-prod-a1918';
+
 const parseServiceAccount = () => {
   const raw =
     process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
@@ -30,7 +32,7 @@ const parseServiceAccount = () => {
   }
 };
 
-export const getAdminDb = () => {
+const getAdminApp = () => {
   if (!getApps().length) {
     const serviceAccount = parseServiceAccount();
     if (!serviceAccount) {
@@ -38,7 +40,29 @@ export const getAdminDb = () => {
     }
     initializeApp({ credential: cert(serviceAccount) });
   }
-  return getFirestore();
+  return getApps()[0];
+};
+
+export const getAdminFirestoreContext = () => {
+  const app = getAdminApp();
+  const projectId = String(app.options.projectId || '').trim();
+  const environment = String(process.env.VERCEL_ENV || process.env.NODE_ENV || 'development');
+  if (environment === 'production' && projectId !== EXPECTED_AURUM_PROJECT_ID) {
+    throw Object.assign(new Error('El servicio administrativo está conectado a un proyecto Firebase inesperado.'), {
+      statusCode: 503,
+      code: 'project_mismatch',
+    });
+  }
+  return {
+    db: getFirestore(app),
+    projectId,
+    databaseId: '(default)',
+    environment,
+  };
+};
+
+export const getAdminDb = () => {
+  return getAdminFirestoreContext().db;
 };
 
 export const getAdminAuth = () => {

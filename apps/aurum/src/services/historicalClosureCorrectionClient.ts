@@ -68,6 +68,10 @@ export type HistoricalApplyResult = {
   persistedFxRates: HistoricalFxRates;
   persistedNetClp: number;
   persistedNetClpWithRisk: number;
+  verification: {
+    before: { projectId: string; databaseId: string; environment: string; documentPath: string; updateTime: string; fingerprint: string };
+    after: { projectId: string; databaseId: string; environment: string; documentPath: string; updateTime: string; fingerprint: string };
+  };
 };
 
 export type HistoricalRollbackPreview = {

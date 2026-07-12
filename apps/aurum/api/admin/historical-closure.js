@@ -1,8 +1,9 @@
-import { getAdminDb } from '../_firestoreAdmin.js';
+import { getAdminFirestoreContext } from '../_firestoreAdmin.js';
 import { requireHistoricalAdmin } from './_historicalAuth.js';
 import {
   applyHistoricalCorrection,
   exportHistoricalBackup,
+  readHistoricalAudit,
   prepareHistoricalCorrection,
   previewHistoricalCorrection,
   previewHistoricalRollback,
@@ -37,23 +38,28 @@ export default async function handler(req, res) {
   const identity = await requireHistoricalAdmin(req, res);
   if (!identity) return;
   try {
-    const db = getAdminDb();
+    const adminContext = getAdminFirestoreContext();
+    const db = adminContext.db;
     const action = String(req.method === 'GET' ? req.query?.action || 'read' : req.body?.action || '');
     const monthKey = String(req.method === 'GET' ? req.query?.monthKey || '' : req.body?.monthKey || '');
-    if (action !== 'export' && !validMonthKey(monthKey)) {
+    if (action !== 'export' && action !== 'audit' && !validMonthKey(monthKey)) {
       return res.status(400).json({ ok: false, code: 'invalid_month', error: 'monthKey debe tener formato YYYY-MM.' });
     }
 
     let result;
     if (req.method === 'GET' && action === 'read') {
-      result = await readHistoricalClosure({ db, identity, monthKey });
+      result = await readHistoricalClosure({ db, identity, monthKey, adminContext });
     } else if (req.method === 'GET' && action === 'export') {
       const backupId = String(req.query?.backupId || '');
       if (!backupId) return res.status(400).json({ ok: false, code: 'backup_required', error: 'backupId es obligatorio.' });
       result = await exportHistoricalBackup({ db, identity, backupId });
+    } else if (req.method === 'GET' && action === 'audit') {
+      const operationId = String(req.query?.operationId || '');
+      if (!operationId) return res.status(400).json({ ok: false, code: 'operation_required', error: 'operationId es obligatorio.' });
+      result = await readHistoricalAudit({ db, identity, operationId, adminContext });
     } else if (req.method === 'POST' && action === 'preview') {
       result = await previewHistoricalCorrection({
-        db,
+        db, adminContext,
         identity,
         monthKey,
         expectedFingerprint: String(req.body.expectedFingerprint || ''),
@@ -61,7 +67,7 @@ export default async function handler(req, res) {
       });
     } else if (req.method === 'POST' && action === 'prepare') {
       result = await prepareHistoricalCorrection({
-        db,
+        db, adminContext,
         identity,
         monthKey,
         expectedFingerprint: String(req.body.expectedFingerprint || ''),
@@ -69,16 +75,16 @@ export default async function handler(req, res) {
         reason: req.body.reason,
       });
     } else if (req.method === 'POST' && action === 'apply') {
-      result = await applyHistoricalCorrection({ db, identity, input: req.body });
+      result = await applyHistoricalCorrection({ db, identity, input: req.body, adminContext });
     } else if (req.method === 'POST' && action === 'rollback-preview') {
       result = await previewHistoricalRollback({
-        db,
+        db, adminContext,
         identity,
         monthKey,
         checkpointId: String(req.body.checkpointId || ''),
       });
     } else if (req.method === 'POST' && action === 'rollback') {
-      result = await rollbackHistoricalCorrection({ db, identity, input: req.body });
+      result = await rollbackHistoricalCorrection({ db, identity, input: req.body, adminContext });
     } else {
       return res.status(400).json({ ok: false, code: 'invalid_action', error: 'Acción administrativa no reconocida.' });
     }
