@@ -157,6 +157,7 @@ import {
   type ClosureFxSelection,
   type SuggestedClosureRates,
 } from '../services/closureFxRates';
+import { clearClosureFxDraft, loadClosureFxDraft, saveClosureFxDraft } from '../services/closureFxDraft';
 
 type MainSection = 'investment' | 'real_estate' | 'bank';
 const PREFERRED_DISPLAY_CURRENCY_KEY = 'aurum.preferred.display.currency';
@@ -4766,6 +4767,7 @@ export const Patrimonio: React.FC = () => {
     uf: false,
   });
   const [closeFxManualReason, setCloseFxManualReason] = useState('');
+  const [closeFxDraftSaved, setCloseFxDraftSaved] = useState(false);
   const [closeFxConfirmations, setCloseFxConfirmations] = useState<ClosureFxConfirmations>({
     economic: false,
     manual: false,
@@ -4838,16 +4840,26 @@ export const Patrimonio: React.FC = () => {
     let cancelled = false;
     const closureForDraft = closures.find((closure) => closure.monthKey === closeMonthDraft) || null;
     const sourceFx = closureForDraft?.fxRates || fx;
-    setCloseFxDraft(buildCloseFxDraft(sourceFx));
+    const savedDraft = loadClosureFxDraft(closeMonthDraft);
+    setCloseFxDraft(buildCloseFxDraft(savedDraft?.fxRates || sourceFx));
     setCloseFxSuggestion(emptySuggestedClosureRates(closeMonthDraft));
-    setCloseFxTouched({ usd: false, eur: false, uf: false });
-    setCloseFxManualReason('');
+    setCloseFxTouched(savedDraft
+      ? { usd: true, eur: true, uf: true }
+      : { usd: false, eur: false, uf: false });
+    setCloseFxManualReason(savedDraft?.manualReason || '');
+    setCloseFxDraftSaved(Boolean(savedDraft));
     setCloseFxConfirmations({ economic: false, manual: false, fallback: false });
     setCloseFxSuggestionLoading(true);
     void loadSuggestedClosureRates(closeMonthDraft).then((suggestion) => {
       if (cancelled) return;
       setCloseFxSuggestion(suggestion);
-      if (!closureForDraft) {
+      if (savedDraft) {
+        setCloseFxTouched({
+          usd: suggestion.suggestedFxRates.usdClp !== savedDraft.fxRates.usdClp,
+          eur: suggestion.suggestedFxRates.eurClp !== savedDraft.fxRates.eurClp,
+          uf: suggestion.suggestedFxRates.ufClp !== savedDraft.fxRates.ufClp,
+        });
+      } else if (!closureForDraft) {
         setCloseFxDraft(
           buildCloseFxDraft({
             usdClp: suggestion.suggestedFxRates.usdClp || sourceFx.usdClp,
@@ -6408,6 +6420,8 @@ export const Patrimonio: React.FC = () => {
         },
         closedAt: new Date().toISOString(),
       });
+      clearClosureFxDraft(targetMonthKey);
+      setCloseFxDraftSaved(false);
     } catch (error: any) {
       const message = String(error?.message || 'No se pudo guardar el checkpoint de cierre en la nube.');
       setCloseError(message);
@@ -7023,6 +7037,50 @@ export const Patrimonio: React.FC = () => {
     } catch {
       setClosePreflightCopied(false);
     }
+  };
+
+  const saveCloseFxDraftForMonth = () => {
+    setCloseError('');
+    setCloseInfo('');
+    if (!closeFxReady) {
+      setCloseError('Completa USD/CLP, EUR/CLP y UF/CLP válidos antes de guardar las tasas para el cierre.');
+      return;
+    }
+    if (closeFxSelection.requiresManualReason) {
+      setCloseError('Indica el motivo del ajuste manual antes de guardar las tasas para el cierre.');
+      return;
+    }
+    const saved = saveClosureFxDraft({
+      monthKey: closeMonthDraft,
+      fxRates: closeFxValues,
+      manualReason: closeFxManualReason,
+    });
+    if (!saved) {
+      setCloseError('No pude guardar localmente las tasas preparadas para este cierre.');
+      return;
+    }
+    setCloseFxDraftSaved(true);
+    setCloseInfo(`Tasas guardadas para el cierre de ${monthLabel(closeMonthDraft).toLowerCase()}.`);
+  };
+
+  const restoreCloseFxReference = () => {
+    const suggested = closeFxSuggestion.suggestedFxRates;
+    if (!(suggested.usdClp && suggested.eurClp && suggested.ufClp)) {
+      setCloseError('La referencia automática todavía no está completa para USD, EUR y UF.');
+      return;
+    }
+    setCloseFxDraft(buildCloseFxDraft({
+      usdClp: suggested.usdClp,
+      eurClp: suggested.eurClp,
+      ufClp: suggested.ufClp,
+    }));
+    setCloseFxTouched({ usd: false, eur: false, uf: false });
+    setCloseFxManualReason('');
+    setCloseFxConfirmations({ economic: false, manual: false, fallback: false });
+    clearClosureFxDraft(closeMonthDraft);
+    setCloseFxDraftSaved(false);
+    setCloseError('');
+    setCloseInfo('Se restauraron las referencias automáticas disponibles.');
   };
 
   const verifyCloseBackup = async () => {
@@ -8317,6 +8375,7 @@ export const Patrimonio: React.FC = () => {
                               onChange={(event) => {
                                 setCloseFxDraft((previous) => ({ ...previous, [field]: event.target.value }));
                                 setCloseFxTouched((previous) => ({ ...previous, [key]: true }));
+                                setCloseFxDraftSaved(false);
                                 setCloseFxConfirmations((previous) => ({ ...previous, economic: false, manual: false }));
                               }}
                             />
@@ -8337,6 +8396,45 @@ export const Patrimonio: React.FC = () => {
                       })}
                     </tbody>
                   </table>
+                </div>
+                {Object.values(closePreflightDiagnostic.fxContext.selection.rateOrigin).includes('manual') && (
+                  <div className="mt-2">
+                    <label className="text-[10px] font-semibold text-sky-900" htmlFor="preflight-fx-manual-reason">
+                      Motivo del ajuste manual
+                    </label>
+                    <Input
+                      id="preflight-fx-manual-reason"
+                      className="mt-1 h-8 text-xs"
+                      value={closeFxManualReason}
+                      onChange={(event) => {
+                        setCloseFxManualReason(event.target.value);
+                        setCloseFxDraftSaved(false);
+                        setCloseFxConfirmations((previous) => ({ ...previous, manual: false }));
+                      }}
+                      placeholder="Ej.: tasa contractual o fuente alternativa documentada"
+                    />
+                  </div>
+                )}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Button size="sm" type="button" onClick={saveCloseFxDraftForMonth}>
+                    Guardar para este cierre
+                  </Button>
+                  <Button
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                    disabled={closeFxSuggestion.status !== 'available'}
+                    onClick={restoreCloseFxReference}
+                  >
+                    Volver a referencia
+                  </Button>
+                  <span className="text-[10px] text-sky-800">
+                    {closeFxDraftSaved
+                      ? 'Borrador guardado para este mes'
+                      : Object.values(closePreflightDiagnostic.fxContext.selection.rateOrigin).includes('manual')
+                        ? 'Cambios aún no guardados'
+                        : 'Usando referencia automática'}
+                  </span>
                 </div>
               </div>
             )}
@@ -8531,10 +8629,12 @@ export const Patrimonio: React.FC = () => {
             eur: next.eurClp === undefined ? previous.eur : true,
             uf: next.ufClp === undefined ? previous.uf : true,
           }));
+          setCloseFxDraftSaved(false);
           setCloseFxConfirmations((previous) => ({ ...previous, economic: false, manual: false }));
         }}
         onManualReasonChange={(reason) => {
           setCloseFxManualReason(reason);
+          setCloseFxDraftSaved(false);
           setCloseFxConfirmations((previous) => ({ ...previous, manual: false }));
         }}
         onFxConfirmationChange={(key, checked) =>
