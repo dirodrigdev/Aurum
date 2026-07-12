@@ -1,4 +1,5 @@
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 
 const parseServiceAccount = () => {
@@ -33,9 +34,14 @@ export const getAdminDb = () => {
   if (!getApps().length) {
     const serviceAccount = parseServiceAccount();
     if (!serviceAccount) {
-      throw new Error('Falta FIREBASE_SERVICE_ACCOUNT_JSON para escribir refresh intents.');
+      throw new Error('Falta configurar una service account Firebase Admin válida.');
     }
     initializeApp({ credential: cert(serviceAccount) });
   }
   return getFirestore();
+};
+
+export const getAdminAuth = () => {
+  getAdminDb();
+  return getAuth();
 };

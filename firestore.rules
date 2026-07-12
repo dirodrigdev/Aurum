@@ -10,6 +10,12 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function isHistoricalAdmin(userId) {
+      return isOwner(userId)
+        && request.auth.token.email == 'diegorp.1978@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
     // Aurum wealth data is user-scoped. This includes:
     // - root wealth doc
     // - monthly close checkpoints
@@ -21,6 +27,23 @@ service cloud.firestore {
       match /{subPath=**} {
         allow read, create, update, delete: if isOwner(userId);
       }
+    }
+
+    // Historical correction artifacts are written only by Firebase Admin.
+    // The authorized owner may read them for download/rollback previews.
+    match /aurum_historical_backups/{userId}/{document=**} {
+      allow read: if isHistoricalAdmin(userId);
+      allow create, update, delete: if false;
+    }
+
+    match /aurum_historical_checkpoints/{userId}/{document=**} {
+      allow read: if isHistoricalAdmin(userId);
+      allow create, update, delete: if false;
+    }
+
+    match /aurum_historical_audits/{userId}/{document=**} {
+      allow read: if isHistoricalAdmin(userId);
+      allow create, update, delete: if false;
     }
 
     // User-scoped MIDAS config persisted in the same Firebase project.
