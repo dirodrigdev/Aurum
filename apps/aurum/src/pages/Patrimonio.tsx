@@ -150,6 +150,7 @@ import { calculateMonthlyConversionAttribution } from '../services/monthlyConver
 import {
   buildClosureFxSelection,
   deriveClosureEconomicDate,
+  isEconomicMonthOpen,
   loadSuggestedClosureRates,
   type ClosureFxConfirmations,
   type ClosureFxRateKey,
@@ -162,6 +163,16 @@ const PREFERRED_DISPLAY_CURRENCY_KEY = 'aurum.preferred.display.currency';
 const HIDE_SENSITIVE_AMOUNTS_PREF_KEY = 'aurum.hide-sensitive-amounts.v1';
 const HIDE_SENSITIVE_AMOUNTS_UPDATED_EVENT = 'aurum:hide-sensitive-amounts-updated';
 const NAVIGATE_PATRIMONIO_HOME_EVENT = 'aurum:navigate-patrimonio-home';
+
+const formatEconomicDateForMessage = (economicDate: string) => {
+  const [year, month, day] = economicDate.split('-');
+  return year && month && day ? `${day}-${month}-${year}` : economicDate;
+};
+
+const buildEconomicMonthOpenMessage = (monthKey: string) => {
+  const economicDate = deriveClosureEconomicDate(monthKey) || monthKey;
+  return `${monthLabel(monthKey)} aún no ha finalizado. Puedes revisar y preparar el cierre, pero el cierre mensual definitivo se habilitará a partir del ${formatEconomicDateForMessage(economicDate)}.`;
+};
 const CLOSING_FOCUS_MONTH_KEY = 'aurum.closing.focus.month.v1';
 const BANKS_LAST_AUTO_SYNC_DAY_KEY = 'aurum:banks:last-auto-sync-day:v1';
 const BANKS_LAST_AUTO_ATTEMPT_DAY_KEY = 'aurum:banks:last-auto-attempt-day:v1';
@@ -1168,6 +1179,11 @@ const emptySuggestedClosureRates = (monthKey: string): SuggestedClosureRates => 
   suggestedFxRates: {},
   source: {},
   effectiveDate: {},
+  references: {
+    usd: { availability: 'unavailable' },
+    eur: { availability: 'unavailable' },
+    uf: { availability: 'unavailable' },
+  },
   retrievedAt: '',
   status: 'unavailable',
   warnings: [],
@@ -6244,6 +6260,12 @@ export const Patrimonio: React.FC = () => {
     if (isMonthlyCloseDebtGuardError(closeError)) {
       setCloseError('');
     }
+    if (isEconomicMonthOpen(targetMonthKey)) {
+      const message = buildEconomicMonthOpenMessage(targetMonthKey);
+      setCloseInfo('');
+      setCloseError(message);
+      return { ok: false, errorMessage: message };
+    }
     const carriedIntoClose = fillMissingWithPreviousClosure(
       targetMonthKey,
       visualMonthSnapshotDate(targetMonthKey),
@@ -7130,6 +7152,11 @@ export const Patrimonio: React.FC = () => {
   const attemptMonthlyClose = (targetMonthKey: string) => {
     if (isMonthlyCloseDebtGuardError(closeError)) {
       setCloseError('');
+    }
+    if (isEconomicMonthOpen(targetMonthKey)) {
+      setCloseInfo('');
+      setCloseError(buildEconomicMonthOpenMessage(targetMonthKey));
+      return;
     }
     const evaluation = evaluateCloseValidation(targetMonthKey);
     const blocking = evaluation.issues.filter((issue) => issue.level === 'error');
@@ -8196,7 +8223,11 @@ export const Patrimonio: React.FC = () => {
                   ? 'GO PARA CERRAR'
                   : closePreflightDiagnostic.decision === 'NO_GO_DATA_QUALITY'
                     ? 'NO-GO: calidad de datos'
-                  : 'NO-GO: fuentes no reconciliadas'}
+                    : closePreflightDiagnostic.decision === 'NO_GO_ECONOMIC_MONTH_OPEN'
+                      ? 'NO-GO: mes económico aún abierto'
+                      : closePreflightDiagnostic.decision === 'NO_GO_PENDING_CONFIRMATIONS'
+                        ? 'NO-GO: confirmaciones pendientes'
+                        : 'NO-GO: fuentes no reconciliadas'}
               </div>
             </div>
 
@@ -8245,7 +8276,7 @@ export const Patrimonio: React.FC = () => {
                     <thead className="text-slate-500">
                       <tr>
                         <th className="pr-3">Tasa</th>
-                        <th className="pr-3 text-right">Sugerida</th>
+                        <th className="pr-3 text-right">Referencia</th>
                         <th className="pr-3 text-right">Utilizada</th>
                         <th className="pr-3 text-right">Anterior</th>
                         <th>Origen</th>
@@ -8256,21 +8287,53 @@ export const Patrimonio: React.FC = () => {
                         ['usd', 'USD/CLP', 'usdClp'],
                         ['eur', 'EUR/CLP', 'eurClp'],
                         ['uf', 'UF/CLP', 'ufClp'],
-                      ] as const).map(([key, label, field]) => (
-                        <tr key={key} className="border-t border-sky-100">
+                      ] as const).map(([key, label, field]) => {
+                        const reference = closePreflightDiagnostic.fxContext?.suggestion.references[key];
+                        const availability = reference?.availability === 'final'
+                          ? 'Final'
+                          : reference?.availability === 'provisional'
+                            ? 'Provisional'
+                            : reference?.availability === 'fallback'
+                              ? 'Fallback'
+                              : reference?.availability === 'manual_required'
+                                ? 'Manual'
+                                : 'No disponible';
+                        return (
+                        <tr key={key} className="border-t border-sky-100 align-top">
                           <td className="py-1 pr-3 font-medium">{label}</td>
                           <td className="py-1 pr-3 text-right">
-                            {closePreflightDiagnostic.fxContext?.suggestion.suggestedFxRates[field]?.toLocaleString('es-CL') || '—'}
+                            <div>{closePreflightDiagnostic.fxContext?.suggestion.suggestedFxRates[field]?.toLocaleString('es-CL') || '—'}</div>
+                            <div className="whitespace-nowrap text-[10px] text-sky-700">
+                              {availability}{reference?.effectiveDate ? ` al ${reference.effectiveDate}` : ''}
+                            </div>
                           </td>
-                          <td className="py-1 pr-3 text-right">
-                            {closePreflightDiagnostic.fxForClose[field].toLocaleString('es-CL')}
+                          <td className="min-w-28 py-1 pr-3 text-right">
+                            <Input
+                              aria-label={`${label} utilizada en preflight`}
+                              type="text"
+                              inputMode="decimal"
+                              value={closeFxDraft[field]}
+                              onChange={(event) => {
+                                setCloseFxDraft((previous) => ({ ...previous, [field]: event.target.value }));
+                                setCloseFxTouched((previous) => ({ ...previous, [key]: true }));
+                                setCloseFxConfirmations((previous) => ({ ...previous, economic: false, manual: false }));
+                              }}
+                            />
                           </td>
                           <td className="py-1 pr-3 text-right">
                             {closePreflightDiagnostic.fxContext?.previousClosureFxRates?.[field]?.toLocaleString('es-CL') || '—'}
                           </td>
-                          <td className="py-1">{closePreflightDiagnostic.fxContext?.selection.rateOrigin[key]}</td>
+                          <td className="py-1">
+                            {closePreflightDiagnostic.fxContext?.selection.rateOrigin[key] === 'automatic-provisional'
+                              ? 'provisional'
+                              : closePreflightDiagnostic.fxContext?.selection.rateOrigin[key] === 'automatic-final' ||
+                                  closePreflightDiagnostic.fxContext?.selection.rateOrigin[key] === 'automatic'
+                                ? 'final'
+                                : closePreflightDiagnostic.fxContext?.selection.rateOrigin[key]}
+                          </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -8434,6 +8497,7 @@ export const Patrimonio: React.FC = () => {
           status: closeFxSuggestion.status,
           economicDate: closeFxSuggestion.economicDate,
           suggestedFxRates: closeFxSuggestion.suggestedFxRates,
+          references: closeFxSuggestion.references,
           previousClosureFxRates: previousClosureForFx?.fxRates || null,
           rateOrigin: closeFxSelection.rateOrigin,
           warnings: [

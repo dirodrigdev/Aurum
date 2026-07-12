@@ -98,7 +98,11 @@ describe('closure rates by economic month', () => {
       touched: { usd: false, eur: false, uf: false },
     });
 
-    expect(automatic.rateOrigin).toEqual({ usd: 'automatic', eur: 'automatic', uf: 'automatic' });
+    expect(automatic.rateOrigin).toEqual({
+      usd: 'automatic-final',
+      eur: 'automatic-final',
+      uf: 'automatic-final',
+    });
     expect(manual.rateOrigin.usd).toBe('manual');
     expect(manual.metadata.source?.usd).toBe('manual_user_input');
     expect(manual.requiresManualReason).toBe(false);
@@ -107,6 +111,36 @@ describe('closure rates by economic month', () => {
     expect(fallback.metadata.source?.uf).toBe('operational_fx_fallback');
     expect(fallback.requiresFallbackConfirmation).toBe(true);
     expect(closureFxRatesMatchMetadata(manual.usedFxRates, manual.metadata)).toBe(true);
+  });
+
+  it('keeps an open-month reference provisional instead of classifying it as fallback', async () => {
+    const suggestion = await loadSuggestedClosureRates('2026-07', provider({
+      rates: { usdClp: 928.99, eurClp: 1060.12, ufClp: 40844.79 },
+      source: { usd: 'sii.cl', eur: 'bcentral.cl', uf: 'sii.cl' },
+      effectiveDate: { usd: '2026-07-10', eur: '2026-07-10', uf: '2026-07-11' },
+      references: {
+        usd: { value: 928.99, availability: 'provisional', effectiveDate: '2026-07-10', source: 'sii.cl' },
+        eur: { value: 1060.12, availability: 'provisional', effectiveDate: '2026-07-10', source: 'bcentral.cl' },
+        uf: { value: 40844.79, availability: 'provisional', effectiveDate: '2026-07-11', source: 'sii.cl' },
+      },
+    }));
+    const selection = buildClosureFxSelection({
+      monthKey: '2026-07',
+      usedFxRates: { usdClp: 928.99, eurClp: 1060.12, ufClp: 40844.79 },
+      suggestion,
+      touched: { usd: false, eur: false, uf: false },
+    });
+
+    expect(suggestion.references.usd).toMatchObject({
+      availability: 'provisional',
+      effectiveDate: '2026-07-10',
+    });
+    expect(selection.rateOrigin).toEqual({
+      usd: 'automatic-provisional',
+      eur: 'automatic-provisional',
+      uf: 'automatic-provisional',
+    });
+    expect(selection.requiresFallbackConfirmation).toBe(false);
   });
 
   it('requires a reason for any manual override', async () => {

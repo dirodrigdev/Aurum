@@ -8,6 +8,7 @@ import {
 } from '../../services/monthlyCloseDebtGuard';
 import type {
   ClosureFxConfirmations,
+  ClosureRateReference,
   ClosureFxRateKey,
   ClosureFxRateOrigin,
   SuggestedClosureRatesStatus,
@@ -58,6 +59,7 @@ interface CloseConfirmModalProps {
     status: SuggestedClosureRatesStatus;
     economicDate: string;
     suggestedFxRates: Partial<WealthFxRates>;
+    references?: Record<ClosureFxRateKey, ClosureRateReference>;
     previousClosureFxRates?: WealthFxRates | null;
     rateOrigin: Record<ClosureFxRateKey, ClosureFxRateOrigin>;
     warnings: string[];
@@ -121,6 +123,24 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
     String(closeError || '').trim() === MONTHLY_CLOSE_DEBT_GUARD_ERROR_MESSAGE &&
     previewAppearsDebtIncluded;
   const displayCloseError = shouldSuppressDebtGuardError ? '' : closeError;
+  const originText = (origin: ClosureFxRateOrigin) =>
+    origin === 'automatic-provisional'
+      ? 'Provisional'
+      : origin === 'automatic-final' || origin === 'automatic'
+        ? 'Automático final'
+        : origin === 'manual'
+          ? 'Manual'
+          : 'Fallback';
+  const availabilityText = (reference: ClosureRateReference) =>
+    reference.availability === 'final'
+      ? `Final${reference.effectiveDate ? ` al ${reference.effectiveDate}` : ''}`
+      : reference.availability === 'provisional'
+        ? `Provisional${reference.effectiveDate ? ` al ${reference.effectiveDate}` : ''}`
+        : reference.availability === 'fallback'
+          ? 'Fallback'
+          : reference.availability === 'manual_required'
+            ? 'Manual requerida'
+            : 'No disponible';
   const fxGuidanceReady = !fxGuidance || (
     !fxGuidance.loading &&
     fxGuidance.confirmations.economic &&
@@ -284,6 +304,10 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
                     ['uf', 'UF/CLP', 'ufClp'],
                   ] as const).map(([key, label, field]) => {
                     const suggested = fxGuidance.suggestedFxRates[field];
+                    const reference = fxGuidance.references?.[key] || {
+                      value: suggested,
+                      availability: suggested ? 'final' : 'unavailable',
+                    };
                     const previous = fxGuidance.previousClosureFxRates?.[field];
                     const origin = fxGuidance.rateOrigin[key];
                     return (
@@ -292,7 +316,7 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
                           <label className="text-[11px] font-semibold text-slate-800" htmlFor={`close-fx-${key}`}>
                             {label}
                           </label>
-                          <span className="text-[10px] uppercase tracking-wide text-slate-500">{origin}</span>
+                          <span className="text-[10px] uppercase tracking-wide text-slate-500">{originText(origin)}</span>
                         </div>
                         <Input
                           id={`close-fx-${key}`}
@@ -303,9 +327,10 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
                           placeholder={label}
                         />
                         <div className="mt-1 grid grid-cols-2 gap-2 text-[10px] text-slate-500">
-                          <span>Sugerida: {Number.isFinite(suggested) ? Number(suggested).toLocaleString('es-CL') : '—'}</span>
+                          <span>Referencia: {Number.isFinite(suggested) ? Number(suggested).toLocaleString('es-CL') : '—'}</span>
                           <span>Anterior: {Number.isFinite(previous) ? Number(previous).toLocaleString('es-CL') : '—'}</span>
                         </div>
+                        <div className="mt-1 text-[10px] font-medium text-sky-700">{availabilityText(reference)}</div>
                       </div>
                     );
                   })}

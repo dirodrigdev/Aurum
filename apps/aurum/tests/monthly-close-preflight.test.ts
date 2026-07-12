@@ -230,6 +230,7 @@ describe('monthly close preflight diagnostic', () => {
     });
 
     expect(diagnostic.decision).toBe('NO_GO_DATA_QUALITY');
+    expect(diagnostic.decisionReason).toBe('data-quality');
     expect(diagnostic.checks.find((check) => check.key === 'fx_complete')?.status).toBe('fail');
   });
 
@@ -354,7 +355,8 @@ describe('monthly close preflight diagnostic', () => {
     expect(debtAssetRows.reduce((sum, row) => sum + Math.abs(Number(row.amountClpCloseTarget || 0)), 0)).toBe(93_200_000);
     expect(aggregateUiRow).toBeUndefined();
     expect(diagnostic.checks.find((check) => check.key === 'debt_assets_match_blocks')?.status).toBe('ok');
-    expect(diagnostic.checks.find((check) => check.key === 'aggregate_conflicts')?.status).toBe('warn');
+    expect(diagnostic.checks.find((check) => check.key === 'aggregate_conflicts')?.status).toBe('ok');
+    expect(diagnostic.warnings.join(' ')).not.toContain('Agregado legacy');
     expect(diagnostic.aggregateCompetitionConflicts).toEqual([
       expect.objectContaining({
         family: 'non_mortgage_debt',
@@ -448,7 +450,7 @@ describe('monthly close preflight diagnostic', () => {
     });
 
     expect(diagnostic.decision).toBe('GO_PARA_CERRAR');
-    expect(diagnostic.checks.find((check) => check.key === 'aggregate_conflicts')?.status).toBe('warn');
+    expect(diagnostic.checks.find((check) => check.key === 'aggregate_conflicts')?.status).toBe('ok');
     expect(diagnostic.aggregateCompetitionConflicts).toEqual([
       expect.objectContaining({
         family: 'bank',
@@ -501,6 +503,7 @@ describe('monthly close preflight diagnostic', () => {
       uiMonthKey: '2026-07',
       targetMonthKey: '2026-07',
       calendarMonthKey: '2026-07',
+      todayYmd: '2026-07-31',
       investmentInstruments: [],
     });
 
@@ -508,7 +511,8 @@ describe('monthly close preflight diagnostic', () => {
     expect(diagnostic.checks.find((check) => check.key === 'ui_assets_vs_close')?.status).toBe('ok');
     expect(diagnostic.checks.find((check) => check.key === 'ui_amounts_vs_close')?.status).toBe('ok');
     expect(diagnostic.checks.find((check) => check.key === 'summary_matches_records')?.status).toBe('ok');
-    expect(diagnostic.checks.find((check) => check.key === 'aggregate_conflicts')?.status).toBe('warn');
+    expect(diagnostic.checks.find((check) => check.key === 'aggregate_conflicts')?.status).toBe('ok');
+    expect(diagnostic.warnings.join(' ')).not.toContain('Agregado legacy');
     expect(diagnostic.aggregateCompetitionConflicts).toEqual([
       expect.objectContaining({
         family: 'bank',
@@ -539,6 +543,11 @@ describe('monthly close preflight diagnostic', () => {
       suggestedFxRates: { ...fx },
       source: { usd: 'sii.cl', eur: 'bcentral.cl', uf: 'sii.cl' },
       effectiveDate: { usd: '2026-06-30', eur: '2026-06-30', uf: '2026-06-30' },
+      references: {
+        usd: { value: fx.usdClp, availability: 'final', effectiveDate: '2026-06-30', source: 'sii.cl' },
+        eur: { value: fx.eurClp, availability: 'final', effectiveDate: '2026-06-30', source: 'bcentral.cl' },
+        uf: { value: fx.ufClp, availability: 'final', effectiveDate: '2026-06-30', source: 'sii.cl' },
+      },
       retrievedAt: '2026-07-03T10:00:00Z',
       status: 'available',
       warnings: [],
@@ -578,7 +587,64 @@ describe('monthly close preflight diagnostic', () => {
     expect(diagnostic.checks.find((check) => check.key === 'fx_same_as_previous')).toMatchObject({ status: 'warn' });
     expect(diagnostic.checks.find((check) => check.key === 'fx_uf_same_as_previous')).toMatchObject({ status: 'warn' });
     expect(diagnostic.checks.find((check) => check.key === 'fx_economic_confirmation')).toMatchObject({ status: 'fail' });
-    expect(diagnostic.decision).toBe('NO_GO_DATA_QUALITY');
+    expect(diagnostic.decision).toBe('NO_GO_PENDING_CONFIRMATIONS');
+    expect(diagnostic.decisionReason).toBe('pending-confirmations');
     expect(buildMonthlyClosePreflightReport(diagnostic)).toContain('fecha económica');
+  });
+
+  it('classifies a reconciled open month separately from data quality failures', () => {
+    const records: WealthRecord[] = [record({
+      id: 'bank-jul-open',
+      block: 'bank',
+      label: BANK_BCHILE_CLP_LABEL,
+      amount: 20_000_000,
+      currency: 'CLP',
+      snapshotDate: '2026-07-31',
+      createdAt: '2026-07-11T10:00:00Z',
+      updatedAt: '2026-07-11T10:00:00Z',
+    })];
+    const suggestion: SuggestedClosureRates = {
+      monthKey: '2026-07',
+      economicDate: '2026-07-31',
+      suggestedFxRates: { ...fx },
+      source: { usd: 'sii.cl', eur: 'bcentral.cl', uf: 'sii.cl' },
+      effectiveDate: { usd: '2026-07-10', eur: '2026-07-10', uf: '2026-07-11' },
+      references: {
+        usd: { value: fx.usdClp, availability: 'provisional', effectiveDate: '2026-07-10', source: 'sii.cl' },
+        eur: { value: fx.eurClp, availability: 'provisional', effectiveDate: '2026-07-10', source: 'bcentral.cl' },
+        uf: { value: fx.ufClp, availability: 'provisional', effectiveDate: '2026-07-11', source: 'sii.cl' },
+      },
+      retrievedAt: '2026-07-11T10:00:00Z',
+      status: 'available',
+      warnings: [],
+    };
+    const selection = buildClosureFxSelection({
+      monthKey: '2026-07',
+      usedFxRates: fx,
+      suggestion,
+      touched: { usd: false, eur: false, uf: false },
+    });
+    const diagnostic = buildMonthlyClosePreflightDiagnostic({
+      records,
+      closures: [],
+      fxForClose: fx,
+      fxContext: {
+        suggestion,
+        selection,
+        previousClosureFxRates: null,
+        confirmations: { economic: true, manual: false, fallback: false },
+      },
+      includeRiskCapitalInTotals: false,
+      uiMonthKey: '2026-07',
+      targetMonthKey: '2026-07',
+      calendarMonthKey: '2026-07',
+      todayYmd: '2026-07-11',
+      investmentInstruments: [],
+    });
+
+    expect(diagnostic.decision).toBe('NO_GO_ECONOMIC_MONTH_OPEN');
+    expect(diagnostic.decisionReason).toBe('economic-month-open');
+    expect(diagnostic.checks.find((check) => check.key === 'economic_month_open')).toMatchObject({ status: 'warn' });
+    expect(buildMonthlyClosePreflightReport(diagnostic)).toContain('NO-GO: mes económico aún abierto');
   });
 });

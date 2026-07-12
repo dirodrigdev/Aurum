@@ -33,7 +33,7 @@ import {
 } from './wealthStorage';
 import { buildWealthFreshnessModel, type WealthFreshnessBucket } from './wealthFreshness';
 import { shouldBlockMonthlyCloseForDebtMismatch } from './monthlyCloseDebtGuard';
-import type { ClosureFxPreflightContext } from './closureFxRates';
+import { isEconomicMonthOpen, type ClosureFxPreflightContext } from './closureFxRates';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MATERIALITY_CLP = 1_000_000;
@@ -41,8 +41,17 @@ const DIFF_TOLERANCE_CLP = 5_000;
 
 export type MonthlyClosePreflightDecision =
   | 'GO_PARA_CERRAR'
+  | 'NO_GO_ECONOMIC_MONTH_OPEN'
+  | 'NO_GO_PENDING_CONFIRMATIONS'
   | 'NO_GO_SOURCE_OF_TRUTH_UNCLEAR'
   | 'NO_GO_DATA_QUALITY';
+
+export type PreflightDecisionReason =
+  | 'economic-month-open'
+  | 'pending-confirmations'
+  | 'data-quality'
+  | 'reconciliation'
+  | 'ready';
 
 export type MonthlyClosePreflightStatus = 'ok' | 'warn' | 'fail';
 
@@ -107,6 +116,7 @@ export interface MonthlyClosePreflightDiagnostic {
   hasExistingClosure: boolean;
   wouldOverwrite: boolean;
   decision: MonthlyClosePreflightDecision;
+  decisionReason: PreflightDecisionReason;
   uiRecordsEquivalent: WealthRecord[];
   closeTargetRecords: WealthRecord[];
   closeSummary: ReturnType<typeof buildCanonicalClosureSummary>;
@@ -143,6 +153,7 @@ interface MonthlyClosePreflightInput {
   targetMonthKey?: string;
   calendarMonthKey?: string;
   investmentInstruments?: WealthInvestmentInstrument[];
+  todayYmd?: string;
 }
 
 type SourceAggregate = {
@@ -420,6 +431,8 @@ const formatAggregateCompetitionConflict = (conflict: AggregateCompetitionConfli
 
 const formatPreflightDecision = (decision: MonthlyClosePreflightDecision) => {
   if (decision === 'GO_PARA_CERRAR') return 'GO PARA CERRAR';
+  if (decision === 'NO_GO_ECONOMIC_MONTH_OPEN') return 'NO-GO: mes económico aún abierto';
+  if (decision === 'NO_GO_PENDING_CONFIRMATIONS') return 'NO-GO: confirmaciones pendientes';
   if (decision === 'NO_GO_DATA_QUALITY') return 'NO-GO: calidad de datos';
   return 'NO-GO: fuentes no reconciliadas';
 };
@@ -464,6 +477,7 @@ export const buildMonthlyClosePreflightDiagnostic = (
   const calendarMonth = input.calendarMonthKey || currentMonthKey();
   const candidateMonthKey = deriveOperationalMonthKeyFromClosures(input.closures, calendarMonth);
   const targetMonthKey = input.targetMonthKey || candidateMonthKey;
+  const economicMonthOpen = isEconomicMonthOpen(targetMonthKey, input.todayYmd);
   const previousClosure =
     [...input.closures]
       .filter((closure) => closure.monthKey < targetMonthKey)
@@ -872,6 +886,15 @@ export const buildMonthlyClosePreflightDiagnostic = (
   const freshnessMismatches = latestFreshnessMaterial.filter(
     (row) => row.missingInClose || Math.abs(Number(row.diffFreshnessVsClose || 0)) > MATERIALITY_CLP,
   );
+  const freshnessMismatchDetail = freshnessMismatches.map((row) => {
+    const freshnessValue = row.amountClpFreshness;
+    const closeValue = row.amountClpCloseTarget;
+    const difference = row.diffFreshnessVsClose;
+    if (row.missingInClose) {
+      return `${row.label}: freshness ${Number(freshnessValue || 0).toLocaleString('es-CL')} CLP, no incluido directamente en el cierre; revisar lineage del componente.`;
+    }
+    return `${row.label}: freshness ${Number(freshnessValue || 0).toLocaleString('es-CL')} CLP, cierre ${Number(closeValue || 0).toLocaleString('es-CL')} CLP, diferencia ${Number(difference || 0).toLocaleString('es-CL')} CLP; la discrepancia queda informativa mientras no altere la reconciliación canónica.`;
+  });
   const aggregateCompetitionConflicts = detectAggregateCompetitionConflicts(
     closeTargetRecords,
     safeFx,
@@ -924,7 +947,7 @@ export const buildMonthlyClosePreflightDiagnostic = (
       'Frescura y cierre usan mismos assets materiales o diferencia explicada',
       freshnessMismatches.length ? 'warn' : 'ok',
       freshnessMismatches.length
-        ? `${freshnessMismatches.length} componente(s) materiales de freshness no reconcilian de forma directa con cierre.`
+        ? freshnessMismatchDetail.join(' · ')
         : 'Freshness y cierre reconcilian para los componentes materiales.',
     ),
     buildCheck(
@@ -959,23 +982,23 @@ export const buildMonthlyClosePreflightDiagnostic = (
     buildCheck(
       'debt_duplicates',
       'tarjetas/deudas no duplicadas',
-      aggregateDebtRows.length > 0 && detailedDebtRows.length > 0 ? 'warn' : 'ok',
-      aggregateDebtRows.length > 0 && detailedDebtRows.length > 0
-        ? 'Coexisten deuda agregada y deuda detallada; revisar antes de cerrar.'
-        : 'No hay mezcla visible de deuda agregada y detallada en targetRecords.',
+      blockedAggregateCompetitionConflicts.length > 0 ? 'warn' : 'ok',
+      blockedAggregateCompetitionConflicts.length > 0
+        ? 'Existe competencia operativa entre deuda agregada y detallada; revisar antes de cerrar.'
+        : aggregateDebtRows.length > 0 && detailedDebtRows.length > 0
+          ? 'El detalle canónico es la única fuente operativa; el agregado legacy queda ignorado como diagnóstico técnico.'
+          : 'No hay mezcla visible de deuda agregada y detallada en targetRecords.',
     ),
     buildCheck(
       'aggregate_conflicts',
       'agregados no compiten contra detalle',
       blockedAggregateCompetitionConflicts.length
         ? 'fail'
-        : ignoredLegacyAggregateCompetitionConflicts.length
-          ? 'warn'
-          : 'ok',
+        : 'ok',
       blockedAggregateCompetitionConflicts.length
         ? blockedAggregateCompetitionConflicts.map(formatAggregateCompetitionConflict).join(' · ')
         : ignoredLegacyAggregateCompetitionConflicts.length
-          ? `Agregado legacy ignorado porque el detalle canonico ya es la fuente activa: ${ignoredLegacyAggregateCompetitionConflicts
+          ? `Diagnóstico técnico: agregado legacy ignorado porque el detalle canónico ya es la fuente activa: ${ignoredLegacyAggregateCompetitionConflicts
               .map(formatAggregateCompetitionConflict)
               .join(' · ')}`
           : 'No hay conflictos materiales entre agregado y detalle.',
@@ -1096,6 +1119,14 @@ export const buildMonthlyClosePreflightDiagnostic = (
         ? 'El código crea checkpoint cloud-first, pero aquí solo podemos marcar overwrite como advertencia operativa.'
         : 'El código de cierre crea checkpoint cloud-first antes de persistir; en runtime debería permitir undo completo si el checkpoint guarda estado completo.',
     ),
+    buildCheck(
+      'economic_month_open',
+      'mes económico finalizado',
+      economicMonthOpen ? 'warn' : 'ok',
+      economicMonthOpen
+        ? `Puedes revisar y editar las tasas provisionales. El cierre definitivo estará disponible el ${fxContext?.suggestion.economicDate || targetMonthKey}.`
+        : 'El mes económico ya alcanzó su último día calendario.',
+    ),
   ];
 
   const warnings = checks
@@ -1111,10 +1142,6 @@ export const buildMonthlyClosePreflightDiagnostic = (
       'fx_economic_date',
       'fx_selection_current',
       'fx_origin_known',
-      'fx_manual_reason',
-      'fx_economic_confirmation',
-      'fx_manual_confirmation',
-      'fx_fallback_confirmation',
       'critical_values',
     ].includes(check.key) &&
     check.status === 'fail',
@@ -1123,12 +1150,33 @@ export const buildMonthlyClosePreflightDiagnostic = (
     ['ui_assets_vs_close', 'ui_amounts_vs_close', 'aggregate_conflicts'].includes(check.key) &&
     check.status === 'fail',
   );
+  const hasPendingConfirmations = checks.some((check) =>
+    [
+      'fx_manual_reason',
+      'fx_economic_confirmation',
+      'fx_manual_confirmation',
+      'fx_fallback_confirmation',
+    ].includes(check.key) && check.status === 'fail',
+  );
 
   const decision: MonthlyClosePreflightDecision = hasDataQualityFailure
     ? 'NO_GO_DATA_QUALITY'
     : hasSourceTruthFailure || fillMissingWarning.wouldRun || debtAlignmentWarning.wouldAlign
       ? 'NO_GO_SOURCE_OF_TRUTH_UNCLEAR'
-      : 'GO_PARA_CERRAR';
+      : economicMonthOpen
+        ? 'NO_GO_ECONOMIC_MONTH_OPEN'
+        : hasPendingConfirmations
+          ? 'NO_GO_PENDING_CONFIRMATIONS'
+          : 'GO_PARA_CERRAR';
+  const decisionReason: PreflightDecisionReason = hasDataQualityFailure
+    ? 'data-quality'
+    : hasSourceTruthFailure || fillMissingWarning.wouldRun || debtAlignmentWarning.wouldAlign
+      ? 'reconciliation'
+      : economicMonthOpen
+        ? 'economic-month-open'
+        : hasPendingConfirmations
+          ? 'pending-confirmations'
+          : 'ready';
 
   return {
     candidateMonthKey,
@@ -1137,6 +1185,7 @@ export const buildMonthlyClosePreflightDiagnostic = (
     hasExistingClosure: Boolean(existingClosure),
     wouldOverwrite: Boolean(existingClosure),
     decision,
+    decisionReason,
     uiRecordsEquivalent,
     closeTargetRecords,
     closeSummary,

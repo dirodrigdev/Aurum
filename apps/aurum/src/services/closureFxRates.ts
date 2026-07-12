@@ -1,8 +1,21 @@
 import type { WealthFxRates } from './wealthStorage';
 
 export type ClosureFxRateKey = 'usd' | 'eur' | 'uf';
-export type ClosureFxRateOrigin = 'automatic' | 'manual' | 'fallback';
+export type ClosureFxRateOrigin =
+  | 'automatic'
+  | 'automatic-final'
+  | 'automatic-provisional'
+  | 'manual'
+  | 'fallback';
+export type ClosureRateAvailability = 'final' | 'provisional' | 'manual_required' | 'fallback' | 'unavailable';
 export type SuggestedClosureRatesStatus = 'available' | 'partial' | 'unavailable';
+
+export interface ClosureRateReference {
+  value?: number;
+  availability: ClosureRateAvailability;
+  effectiveDate?: string;
+  source?: string;
+}
 
 export interface ClosureFxMetadata {
   economicMonthKey: string;
@@ -26,6 +39,7 @@ export interface SuggestedClosureRates {
   suggestedFxRates: Partial<WealthFxRates>;
   source: Partial<Record<ClosureFxRateKey, string>>;
   effectiveDate: Partial<Record<ClosureFxRateKey, string>>;
+  references: Record<ClosureFxRateKey, ClosureRateReference>;
   retrievedAt: string;
   status: SuggestedClosureRatesStatus;
   warnings: string[];
@@ -38,6 +52,7 @@ export interface ClosureRatesProvider {
     effectiveDate?: Partial<Record<ClosureFxRateKey, string>>;
     retrievedAt?: string;
     warnings?: string[];
+    references?: Partial<Record<ClosureFxRateKey, ClosureRateReference>>;
   }>;
 }
 
@@ -71,6 +86,18 @@ const RATE_FIELD: Record<ClosureFxRateKey, keyof WealthFxRates> = {
 };
 
 const validRate = (value: unknown): value is number => Number.isFinite(Number(value)) && Number(value) > 0;
+export const CLOSURE_TIME_ZONE = 'America/Santiago';
+
+export const canonicalClosureTodayYmd = (now = new Date()): string => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: CLOSURE_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+};
 
 export const deriveClosureEconomicDate = (monthKey: string): string | null => {
   const match = String(monthKey || '').match(/^(\d{4})-(\d{2})$/);
@@ -80,6 +107,11 @@ export const deriveClosureEconomicDate = (monthKey: string): string | null => {
   if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return null;
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
   return `${match[1]}-${match[2]}-${String(lastDay).padStart(2, '0')}`;
+};
+
+export const isEconomicMonthOpen = (monthKey: string, todayYmd = canonicalClosureTodayYmd()) => {
+  const economicDate = deriveClosureEconomicDate(monthKey);
+  return Boolean(economicDate && todayYmd < economicDate);
 };
 
 const defaultProvider: ClosureRatesProvider = {
@@ -99,6 +131,7 @@ const defaultProvider: ClosureRatesProvider = {
       effectiveDate: payload.effectiveDates,
       retrievedAt: payload.retrievedAt,
       warnings: payload.warnings,
+      references: payload.references,
     };
   },
 };
@@ -115,6 +148,11 @@ export const loadSuggestedClosureRates = async (
       suggestedFxRates: {},
       source: {},
       effectiveDate: {},
+      references: {
+        usd: { availability: 'unavailable' },
+        eur: { availability: 'unavailable' },
+        uf: { availability: 'unavailable' },
+      },
       retrievedAt: new Date().toISOString(),
       status: 'unavailable',
       warnings: ['El mes económico no tiene formato YYYY-MM válido.'],
@@ -129,23 +167,32 @@ export const loadSuggestedClosureRates = async (
       ['ufClp', 'uf'],
     ] as const;
     const validationWarnings: string[] = [];
+    const references = {} as Record<ClosureFxRateKey, ClosureRateReference>;
     const suggestedFxRates = Object.fromEntries(
       fieldContext.flatMap(([field, key]) => {
-        const value = loaded.rates?.[field];
-        const effectiveDate = String(loaded.effectiveDate?.[key] || '');
-        const source = String(loaded.source?.[key] || '').trim();
-        if (!validRate(value)) return [];
+        const providedReference = loaded.references?.[key];
+        const value = providedReference?.value ?? loaded.rates?.[field];
+        const effectiveDate = String(providedReference?.effectiveDate || loaded.effectiveDate?.[key] || '');
+        const source = String(providedReference?.source || loaded.source?.[key] || '').trim();
+        const availability = providedReference?.availability || (validRate(value) ? 'final' : 'unavailable');
+        references[key] = { value: validRate(value) ? Number(value) : undefined, availability, effectiveDate, source };
+        if (!validRate(value) || availability === 'unavailable' || availability === 'manual_required') return [];
         if (!effectiveDate.startsWith(`${monthKey}-`)) {
           validationWarnings.push(`${key.toUpperCase()}: la referencia recibida no pertenece al mes económico.`);
+          references[key] = { availability: 'unavailable' };
           return [];
         }
         if (!source) {
           validationWarnings.push(`${key.toUpperCase()}: la referencia no identifica su fuente.`);
+          references[key] = { availability: 'unavailable' };
           return [];
         }
         return [[field, Number(value)]];
       }),
     ) as Partial<WealthFxRates>;
+    (['usd', 'eur', 'uf'] as const).forEach((key) => {
+      if (!references[key]) references[key] = { availability: 'unavailable' };
+    });
     const availableCount = Object.keys(suggestedFxRates).length;
     const status: SuggestedClosureRatesStatus =
       availableCount === 3 ? 'available' : availableCount > 0 ? 'partial' : 'unavailable';
@@ -159,6 +206,7 @@ export const loadSuggestedClosureRates = async (
       suggestedFxRates,
       source: loaded.source || {},
       effectiveDate: loaded.effectiveDate || {},
+      references,
       retrievedAt: loaded.retrievedAt || new Date().toISOString(),
       status,
       warnings,
@@ -170,6 +218,11 @@ export const loadSuggestedClosureRates = async (
       suggestedFxRates: {},
       source: {},
       effectiveDate: {},
+      references: {
+        usd: { availability: 'unavailable' },
+        eur: { availability: 'unavailable' },
+        uf: { availability: 'unavailable' },
+      },
       retrievedAt: new Date().toISOString(),
       status: 'unavailable',
       warnings: [
@@ -204,7 +257,14 @@ export const buildClosureFxSelection = (input: {
       rateOrigin[key] = 'manual';
       return;
     }
-    rateOrigin[key] = validRate(suggested) ? 'automatic' : 'fallback';
+    const availability = input.suggestion.references?.[key]?.availability;
+    rateOrigin[key] = validRate(suggested)
+      ? availability === 'provisional'
+        ? 'automatic-provisional'
+        : availability === 'fallback'
+          ? 'fallback'
+          : 'automatic-final'
+      : 'fallback';
   });
 
   const requiresManualConfirmation = Object.values(rateOrigin).includes('manual');

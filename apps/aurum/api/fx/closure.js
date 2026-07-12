@@ -1,6 +1,7 @@
 const FETCH_TIMEOUT_MS = 8000;
 const BCCH_SERIES_ENDPOINT = 'https://si3.bcentral.cl/SieteRestWS/SieteRestWS.ashx';
 const BCCH_EUR_SERIES = 'F072.CLP.EUR.N.O.D';
+const CLOSURE_TIME_ZONE = 'America/Santiago';
 
 const setSharedHeaders = (res) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -46,6 +47,31 @@ const economicDateForMonth = (monthKey) => {
   return `${match[1]}-${match[2]}-${String(lastDay).padStart(2, '0')}`;
 };
 
+const canonicalTodayYmd = (now = new Date()) => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: CLOSURE_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+};
+
+const resolveClosureRateWindow = (monthKey, todayYmd = canonicalTodayYmd()) => {
+  const economicDate = economicDateForMonth(monthKey);
+  if (!economicDate) return null;
+  const monthOpen = todayYmd < economicDate;
+  const monthStarted = todayYmd >= `${monthKey}-01`;
+  return {
+    economicDate,
+    asOfDate: monthOpen ? todayYmd : economicDate,
+    monthOpen,
+    monthStarted,
+    availability: monthOpen ? 'provisional' : 'final',
+  };
+};
+
 const extractMonthSection = (html, monthNumber) => {
   const monthNames = [
     'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
@@ -87,14 +113,13 @@ const extractDayValues = (section) => {
   return values.sort((left, right) => left.day - right.day);
 };
 
-const fetchSiiMonthRate = async ({ year, month, kind, exactLastDay }) => {
+const fetchSiiMonthRate = async ({ year, month, kind, exactDay, maxDay }) => {
   const url = `https://www.sii.cl/valores_y_fechas/${kind}/${kind}${year}.htm`;
   const html = await fetchText(url);
   const values = extractDayValues(extractMonthSection(html, month));
-  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  const selected = exactLastDay
-    ? values.find((item) => item.day === lastDay)
-    : [...values].reverse().find((item) => item.day <= lastDay);
+  const selected = exactDay
+    ? values.find((item) => item.day === exactDay)
+    : [...values].reverse().find((item) => item.day <= maxDay);
   if (!selected) throw new Error(`${kind.toUpperCase()} sin valor oficial dentro del mes`);
   return {
     value: selected.value,
@@ -167,17 +192,44 @@ export default async function handler(req, res) {
     return res.status(405).json({ ok: false, error: 'Método no permitido' });
   }
   const monthKey = String(req.query?.monthKey || '');
-  const economicDate = economicDateForMonth(monthKey);
-  if (!economicDate) return res.status(400).json({ ok: false, error: 'monthKey inválido' });
+  const window = resolveClosureRateWindow(monthKey);
+  if (!window) return res.status(400).json({ ok: false, error: 'monthKey inválido' });
+  const { economicDate, asOfDate, monthOpen, monthStarted, availability } = window;
   const [year, month] = monthKey.split('-').map(Number);
+  if (!monthStarted) {
+    return res.status(200).json({
+      ok: true,
+      monthKey,
+      economicDate,
+      asOfDate,
+      rates: {},
+      sources: {},
+      effectiveDates: {},
+      references: {
+        usd: { availability: 'unavailable' },
+        eur: { availability: 'unavailable' },
+        uf: { availability: 'unavailable' },
+      },
+      retrievedAt: new Date().toISOString(),
+      warnings: ['El mes económico todavía no comenzó.'],
+    });
+  }
+  const cutoffDay = Number(asOfDate.slice(-2));
   const warnings = [];
   const rates = {};
   const sources = {};
   const effectiveDates = {};
+  const references = {};
   const loaders = [
-    ['usdClp', 'usd', () => fetchSiiMonthRate({ year, month, kind: 'dolar', exactLastDay: false })],
-    ['eurClp', 'eur', () => fetchBcentralEur({ year, month, economicDate })],
-    ['ufClp', 'uf', () => fetchSiiMonthRate({ year, month, kind: 'uf', exactLastDay: true })],
+    ['usdClp', 'usd', () => fetchSiiMonthRate({ year, month, kind: 'dolar', maxDay: cutoffDay })],
+    ['eurClp', 'eur', () => fetchBcentralEur({ year, month, economicDate: asOfDate })],
+    ['ufClp', 'uf', () => fetchSiiMonthRate({
+      year,
+      month,
+      kind: 'uf',
+      exactDay: monthOpen ? undefined : cutoffDay,
+      maxDay: cutoffDay,
+    })],
   ];
   await Promise.all(loaders.map(async ([field, key, load]) => {
     try {
@@ -185,8 +237,15 @@ export default async function handler(req, res) {
       rates[field] = result.value;
       sources[key] = result.source;
       effectiveDates[key] = result.effectiveDate;
+      references[key] = {
+        value: result.value,
+        availability,
+        effectiveDate: result.effectiveDate,
+        source: result.source,
+      };
     } catch (error) {
       warnings.push(`${key.toUpperCase()}: ${String(error?.message || 'fuente no disponible')}`);
+      references[key] = { availability: 'unavailable' };
     }
   }));
   if (!Object.keys(rates).length) {
@@ -199,9 +258,17 @@ export default async function handler(req, res) {
     rates,
     sources,
     effectiveDates,
+    references,
+    asOfDate,
     retrievedAt: new Date().toISOString(),
     warnings,
   });
 }
 
-export { economicDateForMonth, extractDayValues, extractMonthSection };
+export {
+  canonicalTodayYmd,
+  economicDateForMonth,
+  extractDayValues,
+  extractMonthSection,
+  resolveClosureRateWindow,
+};

@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 // The Vercel endpoint is JavaScript by design; these exports keep its HTML parser testable offline.
 // @ts-expect-error The API route has no standalone declaration file.
-import { economicDateForMonth, extractDayValues, extractMonthSection } from '../api/fx/closure.js';
+import {
+  canonicalTodayYmd,
+  economicDateForMonth,
+  extractDayValues,
+  extractMonthSection,
+  resolveClosureRateWindow,
+} from '../api/fx/closure.js';
 
 describe('closure FX historical API parser', () => {
   it('keeps descending SII month sections isolated', () => {
@@ -28,5 +34,20 @@ describe('closure FX historical API parser', () => {
 
     expect(economicDateForMonth('2026-05')).toBe('2026-05-31');
     expect(extractDayValues(extractMonthSection(html, 5))).toEqual([{ day: 31, value: 40610.69 }]);
+  });
+
+  it('uses provisional references until the last calendar day in Chile', () => {
+    expect(resolveClosureRateWindow('2026-07', '2026-07-30')).toMatchObject({
+      asOfDate: '2026-07-30',
+      availability: 'provisional',
+      monthOpen: true,
+    });
+    expect(resolveClosureRateWindow('2026-07', '2026-07-31')).toMatchObject({
+      asOfDate: '2026-07-31',
+      availability: 'final',
+      monthOpen: false,
+    });
+    expect(canonicalTodayYmd(new Date('2026-07-31T03:30:00.000Z'))).toBe('2026-07-30');
+    expect(canonicalTodayYmd(new Date('2026-07-31T04:30:00.000Z'))).toBe('2026-07-31');
   });
 });

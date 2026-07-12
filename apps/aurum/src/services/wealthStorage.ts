@@ -1327,7 +1327,11 @@ const normalizeClosureFxMetadata = (
   const economicDate = String(raw.economicDate || '');
   if (economicMonthKey !== monthKey || !economicDate.startsWith(`${monthKey}-`)) return undefined;
   const validOrigin = (value: unknown): value is ClosureFxRateOrigin =>
-    value === 'automatic' || value === 'manual' || value === 'fallback';
+    value === 'automatic' ||
+    value === 'automatic-final' ||
+    value === 'automatic-provisional' ||
+    value === 'manual' ||
+    value === 'fallback';
   const origin = raw.rateOrigin || {};
   if (!validOrigin(origin.usd) || !validOrigin(origin.eur) || !validOrigin(origin.uf)) return undefined;
   const suggestedFxRates = raw.suggestedFxRates && typeof raw.suggestedFxRates === 'object'

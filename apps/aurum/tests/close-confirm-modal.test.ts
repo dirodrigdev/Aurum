@@ -271,7 +271,7 @@ describe('CloseConfirmModal close preview', () => {
 
     expect(html).toContain('Tasas del cierre');
     expect(html).toContain('2026-06-30');
-    expect(html).toContain('Sugerida: 922,34');
+    expect(html).toContain('Referencia: 922,34');
     expect(html).toContain('Anterior: 892,89');
     expect(html).toContain('Motivo de tasas manuales');
     expect(html).toContain('Confirmo que las tasas utilizadas corresponden');
