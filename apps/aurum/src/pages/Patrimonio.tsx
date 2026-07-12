@@ -4834,7 +4834,7 @@ export const Patrimonio: React.FC = () => {
   }, [closeConfirmOpen]);
 
   useEffect(() => {
-    if (!closeConfirmOpen) return;
+    if (!closeConfirmOpen && !closePreflightVisible) return;
     let cancelled = false;
     const closureForDraft = closures.find((closure) => closure.monthKey === closeMonthDraft) || null;
     const sourceFx = closureForDraft?.fxRates || fx;
@@ -8307,11 +8307,12 @@ export const Patrimonio: React.FC = () => {
                               {availability}{reference?.effectiveDate ? ` al ${reference.effectiveDate}` : ''}
                             </div>
                           </td>
-                          <td className="min-w-28 py-1 pr-3 text-right">
+                          <td className="w-28 py-1 pr-3 text-right">
                             <Input
                               aria-label={`${label} utilizada en preflight`}
                               type="text"
                               inputMode="decimal"
+                              className="ml-auto h-8 w-24 px-2 text-right text-[11px] tabular-nums"
                               value={closeFxDraft[field]}
                               onChange={(event) => {
                                 setCloseFxDraft((previous) => ({ ...previous, [field]: event.target.value }));
