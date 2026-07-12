@@ -48,14 +48,26 @@ export type HistoricalPreparedCorrection = {
   chunkCount: number;
   status: 'prepared';
   cloudVerified: boolean;
+  approvedCorrection: {
+    monthKey: string;
+    proposedFxRates: HistoricalFxRates;
+    expectedNetClp: number;
+    expectedNetClpWithRisk: number;
+    previewFingerprint: string;
+  };
+  approvedCorrectionFingerprint: string;
 };
 
 export type HistoricalApplyResult = {
+  status: 'applied_verified';
   operationId: string;
   monthKey: string;
   fingerprint: string;
   preview: HistoricalPreview;
   reconciliation: HistoricalPreview['reconciliation'];
+  persistedFxRates: HistoricalFxRates;
+  persistedNetClp: number;
+  persistedNetClpWithRisk: number;
 };
 
 export type HistoricalRollbackPreview = {
@@ -115,6 +127,7 @@ export const previewHistoricalClosureCorrection = (input: {
 export const prepareHistoricalClosureCorrection = (input: {
   monthKey: string;
   expectedFingerprint: string;
+  proposedFxRates: HistoricalFxRates;
   reason: string;
 }) => request<HistoricalPreparedCorrection>('POST', 'prepare', input);
 

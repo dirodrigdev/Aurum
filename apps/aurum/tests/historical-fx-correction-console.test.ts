@@ -44,7 +44,7 @@ vi.mock('../src/services/closureFxRates', () => ({
   })),
 }));
 
-import { HistoricalFxCorrectionConsole } from '../src/components/settings/HistoricalFxCorrectionConsole';
+import { HistoricalFxCorrectionConsole, isHistoricalConfirmationValid } from '../src/components/settings/HistoricalFxCorrectionConsole';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -89,6 +89,11 @@ describe('historical FX correction console', () => {
     return renderConsole('other@example.com').then(() => expect(container?.innerHTML).toBe(''));
   });
 
+  it('accepts the short month-specific confirmation case-insensitively', () => {
+    expect(isHistoricalConfirmationValid('  confirmo mayo  ', '2026-05')).toBe(true);
+    expect(isHistoricalConfirmationValid('CONFIRMO JUNIO', '2026-05')).toBe(false);
+  });
+
   it('reads May cloud-first, shows references and uses compact right-aligned inputs', async () => {
     mocks.readHistoricalClosureCloud.mockResolvedValue(cloudRead);
     await renderConsole('diegorp.1978@gmail.com');
@@ -97,7 +102,7 @@ describe('historical FX correction console', () => {
     expect(mocks.readHistoricalClosureCloud).toHaveBeenCalledWith('2026-05');
     expect(container?.textContent).toContain('Referencia de cierre · 2026-05-29');
     const usd = container?.querySelector('[aria-label="USD/CLP propuesta"]') as HTMLInputElement;
-    expect(usd.className).toContain('w-24');
+    expect(usd.className).toContain('w-[6.75rem]');
     expect(usd.className).toContain('text-right');
     expect(usd.value).toBe('892.89');
   });

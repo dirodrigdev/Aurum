@@ -65,6 +65,7 @@ export default async function handler(req, res) {
         identity,
         monthKey,
         expectedFingerprint: String(req.body.expectedFingerprint || ''),
+        proposedFxRates: req.body.proposedFxRates,
         reason: req.body.reason,
       });
     } else if (req.method === 'POST' && action === 'apply') {

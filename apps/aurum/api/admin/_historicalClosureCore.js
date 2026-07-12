@@ -116,11 +116,13 @@ export const economicDateForMonth = (monthKey) => {
 export const historicalConfirmationText = (monthKey, action = 'apply') => {
   const match = /^(\d{4})-(\d{2})$/.exec(String(monthKey || ''));
   if (!match) return '';
-  const label = `${MONTH_NAMES[Number(match[2]) - 1]} de ${match[1]}`;
+  const monthName = MONTH_NAMES[Number(match[2]) - 1];
   return action === 'rollback'
-    ? `Confirmo que deseo restaurar el cierre histórico de ${label} desde checkpoint.`
-    : `Confirmo que deseo corregir las tasas y recalcular el cierre histórico de ${label}.`;
+    ? `RESTAURAR ${monthName.toUpperCase()}`
+    : `CONFIRMO ${monthName.toUpperCase()}`;
 };
+
+export const normalizeConfirmationText = (value) => String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();
 
 const validFx = (fx) => Boolean(
   fx &&
@@ -365,7 +367,7 @@ export const joinBackupPayload = (chunks, factories) => {
   return decodeFirestoreValue(JSON.parse(text), factories);
 };
 
-export const createBackupPackage = ({ rootData, rawClosure, identity, monthKey, reason, rootUpdateTime, now = new Date(), operationId = randomUUID() }) => {
+export const createBackupPackage = ({ rootData, rawClosure, identity, monthKey, reason, rootUpdateTime, approvedCorrection = null, now = new Date(), operationId = randomUUID() }) => {
   const createdAt = now.toISOString();
   const backupId = `historical_${monthKey}_${operationId}`;
   const checkpointId = `checkpoint_${monthKey}_${operationId}`;
@@ -402,6 +404,8 @@ export const createBackupPackage = ({ rootData, rawClosure, identity, monthKey, 
       encoding: 'base64-json',
       chunkCount: chunks.length,
       reason,
+      approvedCorrection,
+      approvedCorrectionFingerprint: approvedCorrection ? fingerprintValue(approvedCorrection) : null,
       status: 'prepared',
     },
     checkpoint: {
@@ -416,6 +420,8 @@ export const createBackupPackage = ({ rootData, rawClosure, identity, monthKey, 
       createdAt,
       closureFingerprint,
       rootDocumentFingerprint,
+      approvedCorrection,
+      approvedCorrectionFingerprint: approvedCorrection ? fingerprintValue(approvedCorrection) : null,
       backupChunkCount: chunks.length,
       status: 'prepared',
     },
@@ -437,6 +443,11 @@ export const applyCorrectionToRoot = ({ rootData, monthKey, expectedFingerprint,
     throw Object.assign(new Error('El cierre no reconcilia y no puede corregirse automáticamente.'), { statusCode: 409, code: 'reconciliation_failed' });
   }
   const proposedFx = preview.proposedFxRates;
+  const fxChanged = ['usdClp', 'eurClp', 'ufClp'].some((key) => Math.abs(Number(preview.currentFxRates[key]) - Number(proposedFx[key])) > 1e-9);
+  const netChanged = Math.abs(preview.withoutRisk.difference) > 0.01 || Math.abs(preview.withRisk.difference) > 0.01;
+  if (!fxChanged && !netChanged) {
+    throw Object.assign(new Error('La corrección no produce ningún cambio. No se realizó ninguna escritura.'), { statusCode: 409, code: 'no_op' });
+  }
   const previousAudit = Array.isArray(rawClosure.historicalFxCorrectionAudit) ? rawClosure.historicalFxCorrectionAudit : [];
   const auditEntry = {
     operationId,

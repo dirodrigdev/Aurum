@@ -206,7 +206,7 @@ describe('historical closure correction core', () => {
   });
 
   it('requires exact independent confirmation text for apply and rollback', () => {
-    expect(historicalConfirmationText('2026-05')).toBe('Confirmo que deseo corregir las tasas y recalcular el cierre histórico de mayo de 2026.');
-    expect(historicalConfirmationText('2026-06', 'rollback')).toBe('Confirmo que deseo restaurar el cierre histórico de junio de 2026 desde checkpoint.');
+    expect(historicalConfirmationText('2026-05')).toBe('CONFIRMO MAYO');
+    expect(historicalConfirmationText('2026-06', 'rollback')).toBe('RESTAURAR JUNIO');
   });
 });

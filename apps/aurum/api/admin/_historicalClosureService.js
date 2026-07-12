@@ -6,6 +6,7 @@ import {
   createBackupPackage,
   fingerprintValue,
   historicalConfirmationText,
+  normalizeConfirmationText,
   joinBackupPayload,
   locateClosure,
   restoreClosureInRoot,
@@ -111,7 +112,7 @@ export const previewHistoricalCorrection = async ({ db, identity, monthKey, expe
   return { ...buildHistoricalPreview(read.closure, proposedFxRates), rootUpdateTime: read.rootUpdateTime };
 };
 
-export const prepareHistoricalCorrection = async ({ db, identity, monthKey, expectedFingerprint, reason }) => {
+export const prepareHistoricalCorrection = async ({ db, identity, monthKey, expectedFingerprint, proposedFxRates, reason }) => {
   if (!String(reason || '').trim()) error('El motivo del backup es obligatorio.', 400, 'reason_required');
   const operationId = randomUUID();
   let prepared = null;
@@ -121,6 +122,20 @@ export const prepareHistoricalCorrection = async ({ db, identity, monthKey, expe
     const rootData = requireRoot(snapshot);
     const { closure } = locateClosure(rootData, monthKey);
     if (fingerprintValue(closure) !== expectedFingerprint) error('El cierre cambió antes de preparar el backup.', 409, 'concurrent_modification');
+    const preview = buildHistoricalPreview(closure, proposedFxRates);
+    const approvedCorrection = {
+      monthKey,
+      expectedOriginalFingerprint: expectedFingerprint,
+      proposedFxRates: preview.proposedFxRates,
+      expectedNetClp: preview.withoutRisk.after,
+      expectedNetClpWithRisk: preview.withRisk.after,
+      previewFingerprint: fingerprintValue(preview),
+      reason: String(reason).trim(),
+    };
+    const unchangedFx = ['usdClp', 'eurClp', 'ufClp'].every((key) => Math.abs(Number(preview.currentFxRates[key]) - Number(preview.proposedFxRates[key])) <= 1e-9);
+    if (unchangedFx && Math.abs(preview.withoutRisk.difference) <= 0.01 && Math.abs(preview.withRisk.difference) <= 0.01) {
+      error('La corrección no produce ningún cambio. No se realizó ninguna escritura.', 409, 'no_op');
+    }
     prepared = createBackupPackage({
       rootData,
       rawClosure: closure,
@@ -129,6 +144,7 @@ export const prepareHistoricalCorrection = async ({ db, identity, monthKey, expe
       reason: String(reason).trim(),
       rootUpdateTime: updateTimeIso(snapshot),
       operationId,
+      approvedCorrection,
     });
     writeBackupPackage(transaction, db, identity, prepared);
   });
@@ -155,6 +171,8 @@ export const prepareHistoricalCorrection = async ({ db, identity, monthKey, expe
     chunkCount: prepared.chunks.length,
     status: 'prepared',
     cloudVerified: true,
+    approvedCorrection: prepared.checkpoint.approvedCorrection,
+    approvedCorrectionFingerprint: prepared.checkpoint.approvedCorrectionFingerprint,
   };
 };
 
@@ -164,7 +182,7 @@ export const exportHistoricalBackup = async ({ db, identity, backupId }) => {
 };
 
 export const applyHistoricalCorrection = async ({ db, identity, input }) => {
-  if (input.confirmationText !== historicalConfirmationText(input.monthKey, 'apply')) error('Confirmación reforzada incorrecta.', 400, 'confirmation_mismatch');
+  if (normalizeConfirmationText(input.confirmationText) !== historicalConfirmationText(input.monthKey, 'apply')) error('Confirmación reforzada incorrecta.', 400, 'confirmation_mismatch');
   const operationId = randomUUID();
   let result = null;
   await db.runTransaction(async (transaction) => {
@@ -184,6 +202,10 @@ export const applyHistoricalCorrection = async ({ db, identity, input }) => {
     });
     const checkpoint = checkpointSnapshot.exists ? checkpointSnapshot.data() : null;
     assertPreparedArtifacts(backup, checkpoint, input);
+    const approved = checkpoint.approvedCorrection;
+    if (!approved || checkpoint.approvedCorrectionFingerprint !== input.approvedCorrectionFingerprint || fingerprintValue(approved) !== checkpoint.approvedCorrectionFingerprint) {
+      error('La propuesta aprobada no coincide con el checkpoint preparado.', 409, 'approved_correction_mismatch');
+    }
     if (fingerprintValue(backupPayload.closure) !== input.expectedFingerprint) {
       error('El cierre recuperable del backup no coincide con la preview aprobada.', 409, 'backup_closure_mismatch');
     }
@@ -191,9 +213,9 @@ export const applyHistoricalCorrection = async ({ db, identity, input }) => {
       rootData,
       monthKey: input.monthKey,
       expectedFingerprint: input.expectedFingerprint,
-      proposedFxRates: input.proposedFxRates,
-      suggestedFxRates: input.suggestedFxRates,
-      reason: input.reason,
+      proposedFxRates: approved.proposedFxRates,
+      suggestedFxRates: approved.proposedFxRates,
+      reason: approved.reason,
       identity,
       backupId: input.backupId,
       checkpointId: input.checkpointId,
@@ -210,8 +232,15 @@ export const applyHistoricalCorrection = async ({ db, identity, input }) => {
     }, { merge: false });
   });
   const verified = await readHistoricalClosure({ db, identity, monthKey: input.monthKey });
-  if (verified.fingerprint !== result.finalFingerprint) error('La relectura final no coincide con la escritura aplicada.', 500, 'post_write_verification_failed');
-  return { operationId, monthKey: input.monthKey, fingerprint: verified.fingerprint, preview: result.preview, reconciliation: result.preview.reconciliation };
+  const persistedFx = verified.closure.fxRates;
+  const approved = result.preview.proposedFxRates;
+  const ratesMatch = ['usdClp', 'eurClp', 'ufClp'].every((key) => Math.abs(Number(persistedFx?.[key]) - Number(approved[key])) <= 1e-9);
+  const netsMatch = Math.abs(Number(verified.closure.summary?.netClp) - result.preview.withoutRisk.after) <= 0.01 && Math.abs(Number(verified.closure.summary?.netClpWithRisk) - result.preview.withRisk.after) <= 0.01;
+  if (verified.fingerprint !== result.finalFingerprint || !ratesMatch || !netsMatch) {
+    await auditRef(db, identity.uid, operationId).set({ status: 'verification_failed', verifiedAt: new Date().toISOString() }, { merge: true });
+    error(`La verificación post-write no coincide. Operación ${operationId}.`, 500, 'post_write_verification_failed');
+  }
+  return { status: 'applied_verified', operationId, monthKey: input.monthKey, fingerprint: verified.fingerprint, persistedFxRates: persistedFx, persistedNetClp: verified.closure.summary?.netClp, persistedNetClpWithRisk: verified.closure.summary?.netClpWithRisk, preview: result.preview, reconciliation: result.preview.reconciliation };
 };
 
 export const previewHistoricalRollback = async ({ db, identity, monthKey, checkpointId }) => {
@@ -238,7 +267,7 @@ export const previewHistoricalRollback = async ({ db, identity, monthKey, checkp
 };
 
 export const rollbackHistoricalCorrection = async ({ db, identity, input }) => {
-  if (input.confirmationText !== historicalConfirmationText(input.monthKey, 'rollback')) error('Confirmación reforzada de rollback incorrecta.', 400, 'confirmation_mismatch');
+  if (normalizeConfirmationText(input.confirmationText) !== historicalConfirmationText(input.monthKey, 'rollback')) error('Confirmación reforzada de rollback incorrecta.', 400, 'confirmation_mismatch');
   if (!String(input.reason || '').trim()) error('El motivo del rollback es obligatorio.', 400, 'reason_required');
   const operationId = randomUUID();
   let result = null;

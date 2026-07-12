@@ -29,12 +29,13 @@ const rateRows = [
 type FxKey = typeof rateRows[number][2];
 type ReasonKind = 'previous' | 'economic' | 'manual' | 'other';
 
-const exactConfirmation = (monthKey: string, rollback = false) => {
-  const month = formatMonthLabel(monthKey).toLowerCase();
-  return rollback
-    ? `Confirmo que deseo restaurar el cierre histórico de ${month} desde el checkpoint.`
-    : `Confirmo que deseo corregir las tasas y recalcular el cierre histórico de ${month}.`;
+export const historicalUiConfirmationText = (monthKey: string, rollback = false) => {
+  const month = formatMonthLabel(monthKey).split(' ')[0].toUpperCase();
+  return rollback ? `RESTAURAR ${month}` : `CONFIRMO ${month}`;
 };
+const normalizedConfirmation = (value: string) => value.trim().replace(/\s+/g, ' ').toUpperCase();
+export const isHistoricalConfirmationValid = (value: string, monthKey: string, rollback = false) =>
+  normalizedConfirmation(value) === historicalUiConfirmationText(monthKey, rollback);
 
 const asFx = (rates: Record<FxKey, string>): HistoricalFxRates | null => {
   const parsed = Object.fromEntries(Object.entries(rates).map(([key, value]) => [key, Number(String(value).replace(',', '.'))])) as HistoricalFxRates;
@@ -78,7 +79,8 @@ export const HistoricalFxCorrectionConsole: React.FC<{
   const [rollbackConfirmation, setRollbackConfirmation] = useState('');
   const [busy, setBusy] = useState<'read' | 'preview' | 'prepare' | 'export' | 'apply' | 'rollback-preview' | 'rollback' | null>(null);
   const [message, setMessage] = useState('');
-  const [resultState, setResultState] = useState<'idle' | 'read' | 'preview' | 'prepared' | 'applied' | 'restored' | 'conflict' | 'error'>('idle');
+  const [resultState, setResultState] = useState<'idle' | 'read' | 'preview_ready' | 'prepared' | 'applying' | 'applied_verified' | 'no_op' | 'restored' | 'conflict' | 'verification_failed' | 'error'>('idle');
+  const [verifiedResult, setVerifiedResult] = useState<Awaited<ReturnType<typeof applyHistoricalClosureCorrection>> | null>(null);
 
   const reason = reasonKind === 'previous'
     ? 'Tasa heredada del cierre anterior.'
@@ -88,8 +90,8 @@ export const HistoricalFxCorrectionConsole: React.FC<{
         ? 'Corrección manual.'
         : otherReason.trim();
   const fx = asFx(draft);
-  const confirmationText = exactConfirmation(monthKey);
-  const rollbackText = exactConfirmation(monthKey, true);
+  const confirmationText = historicalUiConfirmationText(monthKey);
+  const rollbackText = historicalUiConfirmationText(monthKey, true);
 
   const invalidatePrepared = () => {
     setPreview(null);
@@ -128,6 +130,7 @@ export const HistoricalFxCorrectionConsole: React.FC<{
       setManual(false);
       invalidatePrepared();
       setResultState('read');
+      setVerifiedResult(null);
       setMessage('Cierre leído directamente desde Firestore.');
     } catch (error) {
       const text = errorMessage(error);
@@ -149,7 +152,7 @@ export const HistoricalFxCorrectionConsole: React.FC<{
       setBackupExported(false);
       setReviewed(false);
       setConfirmation('');
-      setResultState('preview');
+      setResultState('preview_ready');
       setMessage('Preview calculada sin escribir datos.');
     } catch (error) {
       const status = Number((error as { status?: number })?.status);
@@ -165,7 +168,7 @@ export const HistoricalFxCorrectionConsole: React.FC<{
     if (!read || !preview || !reason) return setMessage('Indica un motivo antes de preparar la corrección.');
     setBusy('prepare');
     try {
-      const next = await prepareHistoricalClosureCorrection({ monthKey, expectedFingerprint: read.fingerprint, reason });
+      const next = await prepareHistoricalClosureCorrection({ monthKey, expectedFingerprint: read.fingerprint, proposedFxRates: preview.proposedFxRates, reason });
       setPrepared(next);
       setBackupExported(false);
       setResultState('prepared');
@@ -194,28 +197,32 @@ export const HistoricalFxCorrectionConsole: React.FC<{
   };
 
   const apply = async () => {
-    if (!read || !preview || !prepared || !fx || !reason || !backupExported || !reviewed || confirmation !== confirmationText) return;
+    if (!read || !preview || !prepared || !reason || !backupExported || !reviewed || !isHistoricalConfirmationValid(confirmation, monthKey)) return;
     setBusy('apply');
+    setResultState('applying');
     try {
       const result = await applyHistoricalClosureCorrection({
         monthKey,
         expectedFingerprint: read.fingerprint,
         backupId: prepared.backupId,
         checkpointId: prepared.checkpointId,
-        proposedFxRates: fx,
-        suggestedFxRates: references?.suggestedFxRates || fx,
-        reason,
+        approvedCorrectionFingerprint: prepared.approvedCorrectionFingerprint,
         confirmationText: confirmation,
       });
       const reread = await readHistoricalClosureCloud(monthKey);
+      const ratesVerified = rateRows.every(([, , field]) => Math.abs(Number(reread.closure.fxRates?.[field]) - Number(result.persistedFxRates[field])) <= 1e-9);
+      const netsVerified = Math.abs(Number(reread.closure.summary?.netClp) - result.persistedNetClp) <= 0.01 && Math.abs(Number(reread.closure.summary?.netClpWithRisk) - result.persistedNetClpWithRisk) <= 0.01;
+      if (result.status !== 'applied_verified' || !ratesVerified || !netsVerified || reread.fingerprint !== result.fingerprint) throw Object.assign(new Error(`La relectura UI no verificó la operación ${result.operationId}.`), { code: 'post_write_verification_failed' });
       setRead(reread);
-      setResultState('applied');
+      setVerifiedResult(result);
+      setResultState('applied_verified');
       setMessage(`Corrección aplicada y verificada. Operación ${result.operationId}.`);
       await onApplied();
     } catch (error) {
       const status = Number((error as { status?: number })?.status);
       if (status === 409) invalidatePrepared();
-      setResultState(status === 409 ? 'conflict' : 'error');
+      const code = String((error as { code?: string })?.code || '');
+      setResultState(code === 'no_op' ? 'no_op' : code === 'post_write_verification_failed' ? 'verification_failed' : status === 409 ? 'conflict' : 'error');
       setMessage(errorMessage(error));
     } finally {
       setBusy(null);
@@ -236,7 +243,7 @@ export const HistoricalFxCorrectionConsole: React.FC<{
   };
 
   const rollback = async () => {
-    if (!read || !prepared || !rollbackPreview || rollbackConfirmation !== rollbackText) return;
+    if (!read || !prepared || !rollbackPreview || !isHistoricalConfirmationValid(rollbackConfirmation, monthKey, true)) return;
     setBusy('rollback');
     try {
       const result = await rollbackHistoricalClosureCorrection({
@@ -273,7 +280,7 @@ export const HistoricalFxCorrectionConsole: React.FC<{
             {MONTHS.map((month) => <option key={month} value={month}>{formatMonthLabel(month)}</option>)}
           </select>
         </label>
-        <div className="text-[11px] text-slate-500">Estado: <span className="font-medium text-slate-700">{resultState === 'idle' ? 'No leído' : resultState === 'read' ? 'Leído' : resultState === 'preview' ? 'Preview lista' : resultState === 'prepared' ? 'Backup preparado' : resultState === 'applied' ? 'Corregido' : resultState === 'restored' ? 'Restaurado' : resultState === 'conflict' ? 'Conflicto' : 'Error'}</span></div>
+        <div className="text-[11px] text-slate-500">Estado: <span className="font-medium text-slate-700">{resultState === 'idle' ? 'No leído' : resultState === 'read' ? 'Leído' : resultState === 'preview_ready' ? 'Preview lista' : resultState === 'prepared' ? 'Backup preparado' : resultState === 'applying' ? 'Aplicando' : resultState === 'applied_verified' ? 'Corrección aplicada y verificada' : resultState === 'restored' ? 'Restaurado' : resultState === 'no_op' ? 'Sin cambios' : resultState === 'conflict' ? 'Conflicto' : resultState === 'verification_failed' ? 'Verificación fallida' : 'Error'}</span></div>
         <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void readCloud()}>{busy === 'read' ? 'Leyendo...' : 'Leer cierre desde Firestore'}</Button>
       </div>
 
@@ -296,7 +303,7 @@ export const HistoricalFxCorrectionConsole: React.FC<{
                 const current = Number(read.closure.fxRates?.[field]);
                 const reference = references?.references[key];
                 const proposal = Number(draft[field]);
-                return <tr key={key} className="border-t border-sky-100"><td className="py-1.5 font-medium text-slate-800">{label}</td><td className="py-1.5 text-right tabular-nums">{number(current)}</td><td className="py-1.5 text-right tabular-nums"><div>{reference?.value ? number(reference.value) : '—'}</div><div className="text-[10px] text-sky-700">{reference?.effectiveDate ? `${reference.availability === 'final' ? 'Referencia de cierre' : reference.availability} · ${reference.effectiveDate}` : references ? 'No disponible' : 'Cargando referencia…'}</div></td><td className="py-1.5 text-right"><Input aria-label={`${label} propuesta`} className="ml-auto h-7 w-24 px-2 text-right text-[11px] tabular-nums" value={draft[field]} inputMode="decimal" disabled={busy !== null || resultState === 'applied'} onChange={(event) => { setDraft((previous) => ({ ...previous, [field]: event.target.value })); setManual(true); invalidatePrepared(); setResultState('read'); }} /></td><td className="py-1.5 text-right tabular-nums">{Number.isFinite(proposal) ? number(proposal - current) : '—'}</td></tr>;
+                return <tr key={key} className="border-t border-sky-100"><td className="py-1.5 font-medium text-slate-800">{label}</td><td className="py-1.5 text-right tabular-nums">{number(current)}</td><td className="py-1.5 text-right tabular-nums"><div>{reference?.value ? number(reference.value) : '—'}</div><div className="text-[10px] text-sky-700">{reference?.effectiveDate ? `${reference.availability === 'final' ? 'Referencia de cierre' : reference.availability} · ${reference.effectiveDate}` : references ? 'No disponible' : 'Cargando referencia…'}</div></td><td className="py-1.5 text-right"><Input aria-label={`${label} propuesta`} className="ml-auto h-7 w-[6.75rem] max-w-full px-2 text-right text-[11px] tabular-nums" value={draft[field]} inputMode="decimal" disabled={busy !== null || resultState === 'applied_verified'} onChange={(event) => { setDraft((previous) => ({ ...previous, [field]: event.target.value })); setManual(true); invalidatePrepared(); setResultState('read'); }} /></td><td className="py-1.5 text-right tabular-nums">{Number.isFinite(proposal) ? number(proposal - current) : '—'}</td></tr>;
               })}
             </tbody></table></div>
             <div className="mt-2 text-[11px] text-sky-800">Origen de propuesta: <span className="font-medium">{manual ? 'Manual' : references?.status === 'available' ? 'Referencia' : 'Fallback persistido'}</span>{references?.warnings?.length ? ` · ${references.warnings[0]}` : ''}</div>
@@ -309,9 +316,9 @@ export const HistoricalFxCorrectionConsole: React.FC<{
 
           {preview && <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2"><div className="flex flex-wrap items-center justify-between gap-2"><div><div className="text-xs font-semibold">Backup y checkpoint</div><div className="text-[11px] text-slate-500">Se preparan en cloud antes de habilitar una escritura.</div></div><Button size="sm" variant="outline" disabled={busy !== null || !reason} onClick={() => void prepare()}>{busy === 'prepare' ? 'Preparando...' : 'Preparar corrección'}</Button></div>{prepared && <div className="rounded-lg bg-emerald-50 p-2 text-[11px] text-emerald-900">Backup {prepared.backupId} · checkpoint {prepared.checkpointId} · {prepared.chunkCount} chunk(s) · cloud verificado: {prepared.cloudVerified ? 'sí' : 'no'}<div className="mt-2"><Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void exportBackup()}>{busy === 'export' ? 'Exportando...' : 'Descargar backup JSON'}</Button>{backupExported && <span className="ml-2 font-medium">Backup preparado y descargable</span>}</div></div>}</div>}
 
-          {prepared && preview && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 space-y-2"><div className="text-xs font-semibold text-amber-950">Aplicar corrección histórica</div><div className="text-[11px] text-amber-900">{formatMonthLabel(monthKey)} · neto sin CapRiesgo {formatCurrency(preview.withoutRisk.before, 'CLP')} → {formatCurrency(preview.withoutRisk.after, 'CLP')} · backup listo: {prepared.backupId}</div><label className="flex gap-2 text-[11px] text-amber-950"><input type="checkbox" checked={reviewed} onChange={(event) => setReviewed(event.target.checked)} disabled={busy !== null || !backupExported} />Confirmo que revisé el backup y el impacto de esta corrección.</label><Input aria-label="Confirmación exacta de corrección" className="h-8 text-xs" disabled={busy !== null || !backupExported} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder={confirmationText} /><Button variant="danger" size="sm" disabled={busy !== null || !backupExported || !reviewed || confirmation !== confirmationText} onClick={() => void apply()}>{busy === 'apply' ? 'Aplicando...' : 'Aplicar corrección histórica'}</Button></div>}
+          {prepared && preview && resultState !== 'applied_verified' && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 space-y-2"><div className="text-xs font-semibold text-amber-950">Aplicar corrección histórica</div><div className="text-[11px] text-amber-900">{formatMonthLabel(monthKey)} · neto sin CapRiesgo {formatCurrency(preview.withoutRisk.before, 'CLP')} → {formatCurrency(preview.withoutRisk.after, 'CLP')} · backup listo: {prepared.backupId}</div><label className="flex gap-2 text-[11px] text-amber-950"><input type="checkbox" checked={reviewed} onChange={(event) => setReviewed(event.target.checked)} disabled={busy !== null || !backupExported} />Confirmo que revisé el backup y el impacto de esta corrección.</label><div className="text-[11px] font-semibold text-amber-950">Escribe: {confirmationText}</div><Input aria-label="Confirmación exacta de corrección" className="h-8 text-xs" disabled={busy !== null || !backupExported} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /><Button variant="danger" size="sm" disabled={busy !== null || !backupExported || !reviewed || !isHistoricalConfirmationValid(confirmation, monthKey)} onClick={() => void apply()}>{busy === 'apply' ? 'Aplicando...' : 'Aplicar corrección histórica'}</Button></div>}
 
-          {resultState === 'applied' && prepared && <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2"><div className="text-xs font-semibold">Rollback</div><Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void inspectRollback()}>{busy === 'rollback-preview' ? 'Revisando...' : 'Revisar restauración'}</Button>{rollbackPreview && <><div className="text-[11px] text-slate-700">USD/CLP {number(rollbackPreview.currentFxRates.usdClp)} → {number(rollbackPreview.restoredFxRates.usdClp)} · neto {formatCurrency(rollbackPreview.currentNetClp, 'CLP')} → {formatCurrency(rollbackPreview.restoredNetClp, 'CLP')}</div><Input aria-label="Confirmación exacta de rollback" className="h-8 text-xs" value={rollbackConfirmation} onChange={(event) => setRollbackConfirmation(event.target.value)} placeholder={rollbackText} /><Button size="sm" variant="danger" disabled={busy !== null || rollbackConfirmation !== rollbackText} onClick={() => void rollback()}>{busy === 'rollback' ? 'Restaurando...' : 'Restaurar desde checkpoint'}</Button></>}</div>}
+          {resultState === 'applied_verified' && prepared && verifiedResult && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 space-y-2"><div className="text-sm font-semibold text-emerald-950">Corrección aplicada y verificada</div><div className="grid gap-1 text-[11px] text-emerald-900 sm:grid-cols-2">{rateRows.map(([, label, field]) => <div key={field}>{label}: {number(preview?.currentFxRates[field])} → {number(verifiedResult.persistedFxRates[field])}</div>)}<div>Sin CapRiesgo: {formatCurrency(preview!.withoutRisk.before, 'CLP')} → {formatCurrency(verifiedResult.persistedNetClp, 'CLP')}</div><div>Con CapRiesgo: {formatCurrency(preview!.withRisk.before, 'CLP')} → {formatCurrency(verifiedResult.persistedNetClpWithRisk, 'CLP')}</div></div><div className="text-[11px] text-emerald-900">Reconciliación: OK · Operation ID: {verifiedResult.operationId}</div><div className="border-t border-emerald-200 pt-2"><Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void inspectRollback()}>{busy === 'rollback-preview' ? 'Revisando...' : 'Revisar restauración'}</Button>{rollbackPreview && <><div className="mt-2 text-[11px] text-slate-700">USD/CLP {number(rollbackPreview.currentFxRates.usdClp)} → {number(rollbackPreview.restoredFxRates.usdClp)} · neto {formatCurrency(rollbackPreview.currentNetClp, 'CLP')} → {formatCurrency(rollbackPreview.restoredNetClp, 'CLP')}</div>{Math.abs(rollbackPreview.currentNetClp - rollbackPreview.restoredNetClp) > 0.01 && <><div className="mt-2 text-[11px] font-semibold">Escribe: {rollbackText}</div><Input aria-label="Confirmación exacta de rollback" className="h-8 text-xs" value={rollbackConfirmation} onChange={(event) => setRollbackConfirmation(event.target.value)} /><Button className="mt-2" size="sm" variant="danger" disabled={busy !== null || !isHistoricalConfirmationValid(rollbackConfirmation, monthKey, true)} onClick={() => void rollback()}>{busy === 'rollback' ? 'Restaurando...' : 'Restaurar desde checkpoint'}</Button></>}</>}</div></div>}
         </div>
       )}
     </Card>

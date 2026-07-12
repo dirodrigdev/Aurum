@@ -130,9 +130,10 @@ describe('historical closure transactional service', () => {
   it('prepares a cloud-verifiable, reversible, chunked backup and checkpoint', async () => {
     const db = database();
     const prepared = await prepareHistoricalCorrection({
-      db, identity, monthKey: '2026-06', expectedFingerprint: fingerprintValue(closure), reason: 'Corregir FX histórico',
+      db, identity, monthKey: '2026-06', expectedFingerprint: fingerprintValue(closure), proposedFxRates, reason: 'Corregir FX histórico',
     });
     expect(prepared.cloudVerified).toBe(true);
+    expect(prepared.approvedCorrection.proposedFxRates).toEqual(proposedFxRates);
     const exported = await exportHistoricalBackup({ db, identity, backupId: prepared.backupId });
     expect(exported.exportPayload.rootDocument).toEqual(root);
     expect(exported.exportPayload.closure.unknownFutureField).toEqual({ keep: true });
@@ -142,12 +143,12 @@ describe('historical closure transactional service', () => {
   it('applies atomically to only the target closure and preserves live, other and unknown data', async () => {
     const db = database();
     const prepared = await prepareHistoricalCorrection({
-      db, identity, monthKey: '2026-06', expectedFingerprint: fingerprintValue(closure), reason: 'Corregir FX histórico',
+      db, identity, monthKey: '2026-06', expectedFingerprint: fingerprintValue(closure), proposedFxRates, reason: 'Corregir FX histórico',
     });
     const result = await applyHistoricalCorrection({
       db, identity, input: {
         monthKey: '2026-06', expectedFingerprint: fingerprintValue(closure), backupId: prepared.backupId,
-        checkpointId: prepared.checkpointId, proposedFxRates, reason: 'Corregir FX histórico',
+        checkpointId: prepared.checkpointId, approvedCorrectionFingerprint: prepared.approvedCorrectionFingerprint,
         confirmationText: historicalConfirmationText('2026-06'),
       },
     });
@@ -161,18 +162,36 @@ describe('historical closure transactional service', () => {
     expect(saved.closures[1].legacyDebtAggregate).toEqual({ amount: 999 });
     expect(saved.closures[1].fxRates).toEqual(proposedFxRates);
     expect(result.reconciliation.after).toBe(true);
+    expect(result.status).toBe('applied_verified');
+    expect(result.persistedFxRates).toEqual(proposedFxRates);
+    expect(result.persistedNetClp).toBe(result.preview.withoutRisk.after);
+    expect(result.persistedNetClpWithRisk).toBe(result.preview.withRisk.after);
+  });
+
+  it('blocks a no-op before creating an applied audit or changing artifact status', async () => {
+    const db = database();
+    await expect(prepareHistoricalCorrection({
+      db,
+      identity,
+      monthKey: '2026-06',
+      expectedFingerprint: fingerprintValue(closure),
+      proposedFxRates: originalFx,
+      reason: 'No-op accidental',
+    })).rejects.toMatchObject({ code: 'no_op' });
+    expect(db.store.get(`aurum_wealth/${identity.uid}`)).toEqual(root);
+    expect([...db.store.keys()].some((path) => path.includes('aurum_historical_audits'))).toBe(false);
   });
 
   it('aborts stale or failed transactions without partial writes', async () => {
     const db = database();
     const prepared = await prepareHistoricalCorrection({
-      db, identity, monthKey: '2026-06', expectedFingerprint: fingerprintValue(closure), reason: 'Corregir FX histórico',
+      db, identity, monthKey: '2026-06', expectedFingerprint: fingerprintValue(closure), proposedFxRates, reason: 'Corregir FX histórico',
     });
     const before = clone([...db.store.entries()]);
     await expect(applyHistoricalCorrection({
       db, identity, input: {
         monthKey: '2026-06', expectedFingerprint: 'stale', backupId: prepared.backupId,
-        checkpointId: prepared.checkpointId, proposedFxRates, reason: 'Corregir FX histórico',
+        checkpointId: prepared.checkpointId, approvedCorrectionFingerprint: prepared.approvedCorrectionFingerprint,
         confirmationText: historicalConfirmationText('2026-06'),
       },
     })).rejects.toMatchObject({ code: 'artifact_fingerprint_mismatch' });
@@ -180,14 +199,14 @@ describe('historical closure transactional service', () => {
 
     const failingDb = database();
     const failingPrepared = await prepareHistoricalCorrection({
-      db: failingDb, identity, monthKey: '2026-06', expectedFingerprint: fingerprintValue(closure), reason: 'Corregir FX histórico',
+      db: failingDb, identity, monthKey: '2026-06', expectedFingerprint: fingerprintValue(closure), proposedFxRates, reason: 'Corregir FX histórico',
     });
     const failingBefore = clone([...failingDb.store.entries()]);
     failingDb.beforeCommit = () => { throw new Error('simulated commit failure'); };
     await expect(applyHistoricalCorrection({
       db: failingDb, identity, input: {
         monthKey: '2026-06', expectedFingerprint: fingerprintValue(closure), backupId: failingPrepared.backupId,
-        checkpointId: failingPrepared.checkpointId, proposedFxRates, reason: 'Corregir FX histórico',
+        checkpointId: failingPrepared.checkpointId, approvedCorrectionFingerprint: failingPrepared.approvedCorrectionFingerprint,
         confirmationText: historicalConfirmationText('2026-06'),
       },
     })).rejects.toThrow('simulated commit failure');
@@ -197,12 +216,12 @@ describe('historical closure transactional service', () => {
   it('rolls back only the target closure and first creates a safety backup', async () => {
     const db = database();
     const prepared = await prepareHistoricalCorrection({
-      db, identity, monthKey: '2026-06', expectedFingerprint: fingerprintValue(closure), reason: 'Corregir FX histórico',
+      db, identity, monthKey: '2026-06', expectedFingerprint: fingerprintValue(closure), proposedFxRates, reason: 'Corregir FX histórico',
     });
     const applied = await applyHistoricalCorrection({
       db, identity, input: {
         monthKey: '2026-06', expectedFingerprint: fingerprintValue(closure), backupId: prepared.backupId,
-        checkpointId: prepared.checkpointId, proposedFxRates, reason: 'Corregir FX histórico',
+        checkpointId: prepared.checkpointId, approvedCorrectionFingerprint: prepared.approvedCorrectionFingerprint,
         confirmationText: historicalConfirmationText('2026-06'),
       },
     });
