@@ -155,6 +155,26 @@ describe('available conversion horizons', () => {
     expect(distorted?.conversionEffectAmount).toBeCloseTo(baseline?.conversionEffectAmount || 0, 8);
   });
 
+  it('keeps January as the complete endpoint when a position changes native currency', () => {
+    const closures = currentDetailedClosureFixtures();
+    const january = closures.find((closure) => closure.monthKey === '2026-01')!;
+    const june = closures.find((closure) => closure.monthKey === '2026-06')!;
+    const changedCurrency = {
+      ...june,
+      records: june.records!.map((record) => record.label === 'Inversión USD'
+        ? { ...record, currency: 'CLP' as const, amount: 9_500_000 }
+        : record),
+    };
+    changedCurrency.summary = buildCanonicalClosureSummary(changedCurrency.records!, changedCurrency.fxRates!);
+    const horizons = build(closures.map((closure) => closure.monthKey === '2026-06' ? changedCurrency : closure));
+
+    expect(horizons.find((item) => item.key === 'SINCE_COMPLETE')).toMatchObject({
+      initialMonthKey: january.monthKey,
+      finalMonthKey: '2026-06',
+      elapsedMonths: 5,
+    });
+  });
+
   it('reconciles final versus initial in every currency and both risk universes', () => {
     const closures = currentDetailedClosureFixtures();
     const constantPercentages: number[] = [];

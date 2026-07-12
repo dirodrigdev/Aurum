@@ -59,6 +59,8 @@ export type ConversionAttributionInput = {
   includeRiskCapitalInTotals: boolean;
   expectedInitialReportedValue?: number | null;
   expectedFinalReportedValue?: number | null;
+  /** Aggregate endpoint analysis can reconcile complete balances without matching each instrument. */
+  allowCurrencyCompositionChanges?: boolean;
 };
 
 const PAIR_BY_CURRENCY: Partial<Record<WealthCurrency, FxPair>> = {
@@ -159,7 +161,7 @@ export const calculateConversionAttribution = (
   if (!input.initialFx || !input.finalFx) {
     return unavailable(input, 'Falta un snapshot FX auditable.');
   }
-  if (hasAmbiguousCurrencyChange(input.initialRecords, input.finalRecords)) {
+  if (!input.allowCurrencyCompositionChanges && hasAmbiguousCurrencyChange(input.initialRecords, input.finalRecords)) {
     return unavailable(input, 'Una posición cambió de moneda sin una identidad reconciliable.');
   }
 

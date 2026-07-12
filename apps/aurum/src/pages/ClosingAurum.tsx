@@ -2927,6 +2927,9 @@ export const ClosingAurum: React.FC = () => {
                                 currency,
                               )}
                             </div>
+                            <div className="mt-0.5 text-[10px] text-slate-500">
+                              USD/CLP {formatRateInt((closure.fxMetadata?.usedFxRates || closure.fxRates || currentFx).usdClp)}
+                            </div>
                           </button>
                         );
                       })}
@@ -3529,7 +3532,12 @@ export const ClosingAurum: React.FC = () => {
             {evolutionWithReturns.map((row) => (
               <div key={`${row.key}-${row.kind}`} className="flex items-center justify-between text-xs border-b border-slate-100 py-1">
                 <span>
-                  {row.label} {row.kind === 'hoy' ? '(hoy)' : '(cierre)'}
+              {row.label} {row.kind === 'hoy' ? '(hoy)' : '(cierre)'}
+              {row.kind !== 'hoy' && (() => {
+                const closure = closures.find((item) => item.monthKey === row.key);
+                const rate = closure?.fxMetadata?.usedFxRates || closure?.fxRates;
+                return rate ? <span className="ml-1 text-[10px] text-slate-400">USD/CLP {formatRateInt(rate.usdClp)}</span> : null;
+              })()}
                 </span>
                 <span className="inline-flex items-center gap-2 font-semibold">
                   {row.net === null ? '—' : formatCurrency(row.net, currency)}

@@ -124,6 +124,8 @@ const calculateForEndpoints = (
     includeRiskCapitalInTotals,
     expectedInitialReportedValue: fromClpUsingFx(initialStoredClp, reportingCurrency, initial.fxRates),
     expectedFinalReportedValue: fromClpUsingFx(finalStoredClp, reportingCurrency, final.fxRates),
+    // This is an endpoint comparison of complete, reconciled balances, not an attribution by instrument.
+    allowCurrencyCompositionChanges: true,
   });
   return result.status === 'available' ? result : null;
 };
