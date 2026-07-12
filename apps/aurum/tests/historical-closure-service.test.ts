@@ -171,6 +171,7 @@ describe('historical closure transactional service', () => {
     expect(saved.closures[1].unknownFutureField).toEqual({ keep: true });
     expect(saved.closures[1].legacyDebtAggregate).toEqual({ amount: 999 });
     expect(saved.closures[1].fxRates).toEqual(proposedFxRates);
+    expect(saved.updatedAt).not.toBe(root.updatedAt);
     expect(result.reconciliation.after).toBe(true);
     expect(result.status).toBe('applied_verified');
     expect(result.persistedFxRates).toEqual(proposedFxRates);

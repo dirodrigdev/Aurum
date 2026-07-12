@@ -66,7 +66,7 @@ const errorMessage = (error: unknown) => {
 
 export const HistoricalFxCorrectionConsole: React.FC<{
   authEmail: string;
-  onApplied: () => Promise<void> | void;
+  onApplied: (read: HistoricalClosureRead) => Promise<void> | void;
 }> = ({ authEmail, onApplied }) => {
   const authorized = authEmail.trim().toLowerCase() === ADMIN_EMAIL;
   const [monthKey, setMonthKey] = useState('2026-05');
@@ -223,7 +223,7 @@ export const HistoricalFxCorrectionConsole: React.FC<{
       setVerifiedResult(result);
       setResultState('applied_verified');
       setMessage(`Corrección aplicada y verificada. Operación ${result.operationId}.`);
-      await onApplied();
+      await onApplied(reread);
     } catch (error) {
       const status = Number((error as { status?: number })?.status);
       if (status === 409) invalidatePrepared();
@@ -259,10 +259,11 @@ export const HistoricalFxCorrectionConsole: React.FC<{
         reason: 'Restauración manual revisada desde la consola de FX histórico.',
         confirmationText: rollbackConfirmation,
       });
-      setRead(await readHistoricalClosureCloud(monthKey));
+      const reread = await readHistoricalClosureCloud(monthKey);
+      setRead(reread);
       setResultState('restored');
       setMessage(`Cierre restaurado y verificado. Backup preventivo ${result.safetyBackupId}.`);
-      await onApplied();
+      await onApplied(reread);
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {

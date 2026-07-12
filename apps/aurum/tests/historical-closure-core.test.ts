@@ -163,6 +163,7 @@ describe('historical closure correction core', () => {
     expect(result.nextRootData.records).toEqual(rootData.records);
     expect(result.nextRootData.fx).toEqual(rootData.fx);
     expect(result.nextRootData.unknownRootField).toEqual(rootData.unknownRootField);
+    expect(result.nextRootData.updatedAt).not.toBe(rootData.updatedAt);
     expect(result.nextRootData.closures[0]).toBe(rootData.closures[0]);
     expect(result.nextClosure.records).toEqual(closure.records);
     expect(result.nextClosure.unknownFutureField).toEqual(closure.unknownFutureField);

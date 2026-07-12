@@ -2210,8 +2210,13 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         <div className="mt-3">
           <HistoricalFxCorrectionConsole
             authEmail={authEmail}
-            onApplied={async () => {
-              await hydrateWealthFromCloudShared({ force: true, minIntervalMs: 0 });
+            onApplied={async (cloudRead) => {
+              const current = loadClosures();
+              const authoritative = cloudRead.closure as WealthMonthlyClosure;
+              const next = current.some((closure) => closure.monthKey === authoritative.monthKey)
+                ? current.map((closure) => closure.monthKey === authoritative.monthKey ? authoritative : closure)
+                : [...current, authoritative];
+              saveClosures(next, { skipCloudSync: true, silent: true });
               refreshLocalState();
             }}
           />

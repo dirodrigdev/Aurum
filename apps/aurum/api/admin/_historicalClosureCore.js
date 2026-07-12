@@ -491,7 +491,7 @@ export const applyCorrectionToRoot = ({ rootData, monthKey, expectedFingerprint,
   const closures = [...rootData.closures];
   closures[index] = nextClosure;
   return {
-    nextRootData: { ...rootData, closures },
+    nextRootData: { ...rootData, updatedAt: auditEntry.editedAt, closures },
     previousClosure: rawClosure,
     nextClosure,
     preview,
@@ -527,5 +527,5 @@ export const restoreClosureInRoot = ({ rootData, monthKey, expectedFingerprint, 
     restoredFingerprint: fingerprintValue(restoredClosure),
     checkpointId: checkpoint.checkpointId,
   };
-  return { nextRootData: { ...rootData, closures }, currentClosure, restoredClosure, auditEntry };
+  return { nextRootData: { ...rootData, updatedAt: auditEntry.editedAt, closures }, currentClosure, restoredClosure, auditEntry };
 };
