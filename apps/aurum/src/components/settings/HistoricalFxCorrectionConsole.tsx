@@ -56,7 +56,13 @@ const toRateDraft = (fx: HistoricalFxRates) => ({
   ufClp: String(fx.ufClp),
 });
 
-const errorMessage = (error: unknown) => String((error as { message?: string })?.message || 'No pude completar la operación.');
+const errorMessage = (error: unknown) => {
+  const typed = error as { message?: string; code?: string; authProjectId?: string };
+  if (typed?.code === 'project_mismatch') return 'El endpoint administrativo no está conectado a aurum-prod-a1918. Revisa la service account de Vercel antes de continuar.';
+  if (typed?.code === 'admin_credentials_missing') return 'Falta la service account Firebase Admin en Vercel. No se realizó ninguna operación.';
+  if (typed?.code === 'invalid_token') return `La sesión Firebase no pudo verificarse. Cierra sesión, vuelve a entrar con Google y reintenta. Proyecto de tu sesión: ${typed.authProjectId || 'desconocido'}.`;
+  return String(typed?.message || 'No pude completar la operación.');
+};
 
 export const HistoricalFxCorrectionConsole: React.FC<{
   authEmail: string;

@@ -55,6 +55,17 @@ describe('historical closure server authorization', () => {
     expect(verifyIdToken).toHaveBeenCalledWith('valid', true);
   });
 
+  it('surfaces Admin project and credential configuration errors instead of mislabeling them as expired sessions', async () => {
+    verifyIdToken.mockRejectedValue(Object.assign(new Error('El servicio administrativo está conectado a un proyecto Firebase inesperado.'), {
+      statusCode: 503,
+      code: 'project_mismatch',
+    }));
+    const res = response();
+    expect(await requireHistoricalAdmin(request() as never, res as never)).toBeNull();
+    expect(res.statusCode).toBe(503);
+    expect(res.payload).toMatchObject({ code: 'project_mismatch', error: 'El servicio administrativo está conectado a un proyecto Firebase inesperado.' });
+  });
+
   it('blocks access to a different UID', async () => {
     const res = response();
     expect(await requireHistoricalAdmin(request('valid', 'other-uid') as never, res as never)).toBeNull();

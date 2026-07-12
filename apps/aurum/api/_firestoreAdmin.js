@@ -36,9 +36,12 @@ const getAdminApp = () => {
   if (!getApps().length) {
     const serviceAccount = parseServiceAccount();
     if (!serviceAccount) {
-      throw new Error('Falta configurar una service account Firebase Admin válida.');
+      throw Object.assign(new Error('Falta configurar una service account Firebase Admin válida.'), {
+        statusCode: 503,
+        code: 'admin_credentials_missing',
+      });
     }
-    initializeApp({ credential: cert(serviceAccount) });
+    initializeApp({ credential: cert(serviceAccount), projectId: serviceAccount.project_id });
   }
   return getApps()[0];
 };

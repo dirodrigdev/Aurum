@@ -116,7 +116,13 @@ const request = async <T,>(method: 'GET' | 'POST', action: string, payload: Reco
     },
     body: method === 'POST' ? JSON.stringify({ action, uid: user.uid, ...payload }) : undefined,
   });
-  return messageFrom(response) as Promise<T>;
+  try {
+    return await messageFrom(response) as T;
+  } catch (error) {
+    const enriched = error as Error & { code?: string; authProjectId?: string };
+    enriched.authProjectId = String(auth.app.options.projectId || 'desconocido');
+    throw enriched;
+  }
 };
 
 export const readHistoricalClosureCloud = (monthKey: string) =>
