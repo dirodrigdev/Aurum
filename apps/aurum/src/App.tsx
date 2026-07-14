@@ -8,7 +8,12 @@ import { ClosingAurum } from './pages/ClosingAurum';
 import { AnalysisAurum } from './pages/AnalysisAurum';
 import { DashboardAurum } from './pages/DashboardAurum';
 import { WEALTH_DELTA_TOAST_TRIGGER_EVENT } from './hooks/useWealthDelta';
-import { auth, ensureAuthPersistence, signInWithGoogle } from './services/firebase';
+import {
+  auth,
+  ensureAuthPersistence,
+  ensureE2EEmulatorAuthentication,
+  signInWithGoogle,
+} from './services/firebase';
 import {
   FX_INDICATOR_APPLIED_SNAPSHOT_KEY,
   FX_INDICATOR_MONTH_STARTED_KEY,
@@ -207,6 +212,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
     const startAuthListener = async () => {
       await ensureAuthPersistence();
+      await ensureE2EEmulatorAuthentication();
       if (!alive) return;
 
       timeout = window.setTimeout(() => {

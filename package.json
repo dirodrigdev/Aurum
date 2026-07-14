@@ -12,9 +12,14 @@
     "test:aurum:integration": "npm -w apps/aurum run test:integration",
     "test:e2e:aurum": "playwright test -c apps/aurum/playwright.config.ts",
     "test:e2e:aurum:headed": "playwright test -c apps/aurum/playwright.config.ts --headed",
-    "test:e2e:aurum:report": "playwright show-report .playwright/aurum/playwright-report"
+    "test:e2e:aurum:report": "playwright show-report .playwright/aurum/playwright-report",
+    "emulators:aurum": "node scripts/run-firebase-e2e.mjs emulators:start --only auth,firestore --project aurum-e2e-local",
+    "seed:e2e:aurum": "node scripts/seed-aurum-e2e.mjs",
+    "test:e2e:aurum:authenticated": "node scripts/run-firebase-e2e.mjs emulators:exec --only auth,firestore --project aurum-e2e-local \"npm run seed:e2e:aurum && playwright test -c apps/aurum/playwright.authenticated.config.ts\"",
+    "clean:e2e:aurum": "node scripts/clean-aurum-e2e.mjs"
   },
   "devDependencies": {
-    "@playwright/test": "^1.60.0"
+    "@playwright/test": "^1.60.0",
+    "firebase-tools": "^13.35.1"
   }
 }

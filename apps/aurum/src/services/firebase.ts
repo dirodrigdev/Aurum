@@ -1,11 +1,13 @@
 import { getApps, initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 import {
   browserLocalPersistence,
+  connectAuthEmulator,
   getAuth,
   GoogleAuthProvider,
   onAuthStateChanged,
   setPersistence,
+  signInWithEmailAndPassword,
   signInAnonymously,
   signInWithPopup,
   signInWithRedirect,
@@ -21,11 +23,33 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
+const E2E_LOCAL_PROJECT_ID = 'aurum-e2e-local';
+const E2E_AUTH_EMAIL = 'aurum.e2e@example.test';
+const E2E_AUTH_PASSWORD = 'aurum-e2e-only-not-a-secret';
+const isLocalProjectId = (projectId: string) => /^(aurum-e2e|local-|demo-)/.test(projectId);
+
+export const isE2EFirebaseEmulatorEnabled = () =>
+  import.meta.env.VITE_E2E_USE_FIREBASE_EMULATOR === 'true';
+
+const assertSafeE2EFirebaseConfig = () => {
+  if (!isE2EFirebaseEmulatorEnabled()) return;
+  const projectId = String(firebaseConfig.projectId || '');
+  if (!isLocalProjectId(projectId) || projectId !== E2E_LOCAL_PROJECT_ID) {
+    throw new Error(`E2E Firebase requires the local project ${E2E_LOCAL_PROJECT_ID}.`);
+  }
+};
+
 const app = initializeApp(firebaseConfig);
 
 export const db = getFirestore(app);
 export const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
+
+if (isE2EFirebaseEmulatorEnabled()) {
+  assertSafeE2EFirebaseConfig();
+  connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+  connectFirestoreEmulator(db, '127.0.0.1', 8080);
+}
 
 const gastappFirebaseConfig = {
   apiKey: import.meta.env.VITE_GASTAPP_FIREBASE_API_KEY,
@@ -49,6 +73,7 @@ const hasGastappFirebaseConfig = () =>
 let gastappDbSingleton: ReturnType<typeof getFirestore> | null = null;
 
 export const getGastappFirestore = () => {
+  if (isE2EFirebaseEmulatorEnabled()) return null;
   if (!hasGastappFirebaseConfig()) return null;
   if (gastappDbSingleton) return gastappDbSingleton;
 
@@ -88,6 +113,14 @@ export function ensureAuthPersistence(): Promise<void> {
     .then(() => undefined)
     .catch(() => undefined);
   return _persistenceInitPromise;
+}
+
+export async function ensureE2EEmulatorAuthentication(): Promise<void> {
+  if (!isE2EFirebaseEmulatorEnabled()) return;
+  assertSafeE2EFirebaseConfig();
+  await ensureAuthPersistence();
+  if (auth.currentUser) return;
+  await signInWithEmailAndPassword(auth, E2E_AUTH_EMAIL, E2E_AUTH_PASSWORD);
 }
 
 export function ensureAnonymousAuth(): Promise<void> {

@@ -1,4 +1,4 @@
-import { auth } from './firebase';
+import { auth, isE2EFirebaseEmulatorEnabled } from './firebase';
 
 export type HistoricalFxRates = { usdClp: number; eurClp: number; ufClp: number };
 
@@ -96,6 +96,9 @@ const messageFrom = async (response: Response) => {
 };
 
 const request = async <T,>(method: 'GET' | 'POST', action: string, payload: Record<string, unknown> = {}): Promise<T> => {
+  if (isE2EFirebaseEmulatorEnabled()) {
+    throw new Error('Las correcciones históricas están deshabilitadas en E2E local.');
+  }
   const user = auth.currentUser;
   if (!user) {
     const error = new Error('Debes iniciar sesión con la cuenta autorizada para usar esta herramienta.');

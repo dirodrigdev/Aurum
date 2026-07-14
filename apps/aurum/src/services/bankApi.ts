@@ -1,4 +1,4 @@
-import { auth } from './firebase';
+import { auth, isE2EFirebaseEmulatorEnabled } from './firebase';
 
 export interface FintocAccountNormalized {
   id: string;
@@ -88,6 +88,9 @@ const getAuthHeaders = async (): Promise<Record<string, string> | null> => {
 export const createFintocRefreshIntent = async (
   linkToken: string,
 ): Promise<FintocRefreshIntentResponse> => {
+  if (isE2EFirebaseEmulatorEnabled()) {
+    return { ok: false, error: 'Fintoc está deshabilitado en E2E local.' };
+  }
   const headers = await getAuthHeaders();
   if (!headers) {
     return { ok: false, error: 'Debes iniciar sesión nuevamente para consultar bancos.' };
@@ -121,6 +124,9 @@ export const createFintocRefreshIntent = async (
 export const getFintocRefreshStatus = async (
   refreshIntentId: string,
 ): Promise<FintocRefreshStatusResponse> => {
+  if (isE2EFirebaseEmulatorEnabled()) {
+    return { ok: false, error: 'Fintoc está deshabilitado en E2E local.' };
+  }
   const headers = await getAuthHeaders();
   if (!headers) {
     return { ok: false, error: 'Debes iniciar sesión nuevamente para consultar bancos.' };
@@ -163,6 +169,15 @@ export const discoverFintocData = async (
   linkToken: string,
   options?: { refreshIntentId?: string },
 ): Promise<FintocDiscoverResponse> => {
+  if (isE2EFirebaseEmulatorEnabled()) {
+    return {
+      ok: false,
+      summary: { institution: 'E2E local', accounts: 0, clp: 0, usd: 0, movements: 0 },
+      accounts: [],
+      probes: [],
+      error: 'Fintoc está deshabilitado en E2E local.',
+    };
+  }
   const headers = await getAuthHeaders();
   if (!headers) {
     return {

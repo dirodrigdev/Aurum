@@ -1,4 +1,4 @@
-import { auth } from './firebase';
+import { auth, isE2EFirebaseEmulatorEnabled } from './firebase';
 import { resolveClosureSectionAmounts, type WealthFxRates, type WealthMonthlyClosure } from './wealthStorage';
 import { formatMonthLabel } from '../utils/wealthFormat';
 
@@ -337,6 +337,9 @@ export const publishAurumOptimizableInvestmentsSnapshot = async (
   }
 
   const snapshot = ensureSnapshotFxReference(prepared.snapshot, closures, options?.activeFxRates);
+  if (isE2EFirebaseEmulatorEnabled()) {
+    return { ok: true, snapshot };
+  }
   const currentUser = auth.currentUser;
   if (!currentUser) {
     return {

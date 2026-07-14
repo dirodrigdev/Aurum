@@ -11,7 +11,12 @@ import {
   query,
   setDoc,
 } from 'firebase/firestore';
-import { db, ensureAuthPersistence, getCurrentUid } from './firebase';
+import {
+  db,
+  ensureAuthPersistence,
+  getCurrentUid,
+  isE2EFirebaseEmulatorEnabled,
+} from './firebase';
 import { setFirestoreChecking, setFirestoreOk, setFirestoreStatusFromError } from './firestoreStatus';
 import { publishAurumOptimizableInvestmentsSnapshot } from './midasPublished';
 import { sameCanonicalLabel } from '../utils/wealthLabels';
@@ -2213,6 +2218,13 @@ const parseFlexibleNumeric = (value: unknown): number => {
 };
 
 const fetchLiveFxComposite = async (): Promise<{ rates: WealthFxRates; source: string; fetchedAt: string }> => {
+  if (isE2EFirebaseEmulatorEnabled()) {
+    return {
+      rates: { usdClp: 950, eurClp: 1030, ufClp: 38000 },
+      source: 'e2e_emulator_fixture',
+      fetchedAt: '2026-01-15T12:00:00.000Z',
+    };
+  }
   const response = await fetch(`/api/fx/live?_ts=${Date.now()}`, {
     method: 'GET',
     cache: 'no-store',

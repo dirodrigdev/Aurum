@@ -11,6 +11,8 @@ dist/
 build/
 apps/midas/.playwright/
 .playwright/aurum/
+.playwright/aurum-e2e/
+.firebase/aurum-e2e/
 
 # Logs
 *.log
@@ -20,3 +22,4 @@ apps/midas/.playwright/
 # Keep environment templates versionable while ignoring local secrets above.
 !.env.example
 !.env.template
+!.env.e2e

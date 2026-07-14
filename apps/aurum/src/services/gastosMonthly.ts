@@ -146,6 +146,7 @@ const gastappMonthlyDiag = {
 type GastappFirebaseBridge = {
   getGastappConfiguredProjectId: () => string;
   isGastappFirestoreConfigured: () => boolean;
+  isE2EFirebaseEmulatorEnabled: () => boolean;
   getGastappFirestore: () => ReturnType<typeof import('firebase/firestore').getFirestore> | null;
 };
 
@@ -155,6 +156,7 @@ const loadGastappFirebaseBridge = async (): Promise<GastappFirebaseBridge | null
     return {
       getGastappConfiguredProjectId: mod.getGastappConfiguredProjectId,
       isGastappFirestoreConfigured: mod.isGastappFirestoreConfigured,
+      isE2EFirebaseEmulatorEnabled: mod.isE2EFirebaseEmulatorEnabled,
       getGastappFirestore: mod.getGastappFirestore,
     };
   } catch (error: any) {
@@ -378,6 +380,14 @@ const loadGastappMonthlyContable = async () => {
       gastappMonthlyRuntime.mode = 'legacy';
       gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
       logSourceModeOnce();
+      emitGastappSourceUpdated();
+      return;
+    }
+
+    if (firebaseBridge.isE2EFirebaseEmulatorEnabled()) {
+      gastappMonthlyRuntime.status = 'ready';
+      gastappMonthlyRuntime.mode = 'legacy';
+      gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
       emitGastappSourceUpdated();
       return;
     }
