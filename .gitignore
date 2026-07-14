@@ -14,3 +14,8 @@ apps/midas/.playwright/
 # Logs
 *.log
 .DS_Store
+.vercel
+
+# Keep environment templates versionable while ignoring local secrets above.
+!.env.example
+!.env.template
