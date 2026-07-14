@@ -30,6 +30,8 @@ MIDAS puede reconciliar automáticamente la configuración de simulación tras l
 
 ## Portabilidad
 
-`scripts/run-firebase-e2e.mjs` acepta `E2E_FIREBASE_RUNTIME_DIR`, `E2E_NODE_BINARY` y `E2E_JAVA_HOME`. Reutiliza un Node 22 y Java compatible instalados; si no existen, descarga Node 22 y Temurin 21 una sola vez a una caché local configurable. No modifica runtimes globales. Aurum conserva su comando existente y puede reutilizar su caché anterior durante la transición.
+El launcher del arnés común acepta `E2E_FIREBASE_RUNTIME_DIR`, `E2E_NODE_BINARY` y `E2E_JAVA_HOME`. Reutiliza un Node 22 y Java compatible instalados; si no existen, descarga Node 22 y Temurin 21 una sola vez a una caché local configurable. No modifica runtimes globales. Aurum conserva su comando existente y puede reutilizar su caché anterior durante la transición.
 
-La implementación MIDAS y la de Aurum son ahora candidatas para extraer un arnés común, pero esa extracción queda pendiente hasta mantener ambas suites estables.
+La infraestructura equivalente de MIDAS y Aurum ya fue extraída tras validar ambas suites; las reglas específicas de cada aplicación continúan separadas.
+
+MIDAS consume el arnés común local en `packages/e2e-harness`; su proyecto, seed, autenticación, reconciliación, stubs, puertos y selectores permanecen específicos.

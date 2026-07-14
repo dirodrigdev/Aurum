@@ -281,3 +281,5 @@ El smoke autenticado ya no usa producción, Google, Vercel ni MIDAS. `VITE_E2E_U
 Desde la raíz: `npm run emulators:aurum` inicia Auth y Firestore Emulator; `npm run seed:e2e:aurum` crea el usuario y `aurum_wealth/{uid}` ficticio; `npm run test:e2e:aurum:authenticated` ejecuta emuladores efímeros, seed, Vite E2E y el smoke completo; `npm run clean:e2e:aurum` elimina sus artefactos locales. Firebase CLI se ejecuta mediante un lanzador local con Node LTS y Java aislados, sin cambiar el runtime normal de Aurum.
 
 La prueba comprueba restauración de sesión local, Dashboard, navegación Dashboard/Patrimonio, ausencia de login Google, errores críticos y tráfico no local. Toda solicitud cuyo host no sea `127.0.0.1` o `localhost` se aborta y hace fallar la prueba. La validación inicial pasó con emuladores y seed locales; no se contactaron servicios de datos de producción.
+
+La suite consume el arnés común local en `packages/e2e-harness`; conserva su proyecto, seed, autenticación, stubs, puertos y selectores propios.
