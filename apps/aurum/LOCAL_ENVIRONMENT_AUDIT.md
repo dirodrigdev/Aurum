@@ -210,3 +210,66 @@ Registra metodo, origen y pathname de las solicitudes, sin capturar cabeceras, t
 Limitaciones: no automatiza Google, MFA, `storageState`, sesion autenticada, dashboard, Vercel Dev ni APIs. La siguiente fase recomendada es una cuenta Google de pruebas aprobada, una sesion manual supervisada y pruebas de solo lectura con barreras de red conservadas.
 
 Validacion: Chromium de Playwright quedo instalado; `npm run build:aurum` y el smoke headless pasaron con Vite iniciado automaticamente por `webServer`. La variante headed tambien paso en este entorno. Se verificaron temporalmente tres fallos esperados y se retiraron las simulaciones: marca Aurum ausente, `pageerror` inyectado y un `POST` simulado hacia `/api/midas/publish-snapshot`, detectado por la barrera antes de llegar a red. El runner de Node puede avisar que `NO_COLOR` se ignora cuando `FORCE_COLOR` esta definido; es una condicion del entorno de terminal, no un warning de Aurum.
+
+## Auditoría de preparación para pruebas autenticadas
+
+### Veredicto
+
+No es seguro ejecutar hoy un smoke autenticado contra producción, aunque no se pulse ningún control. La autenticación restaura correctamente la sesión, pero `AuthGate` llama siempre a `hydrateWealthFromCloudShared({ force: true })` y después instala un listener de Firestore. La hidratación puede escribir el patrimonio y el listener puede programar otra sincronización cuando el estado local y remoto no coinciden. Además, la hidratación publica automáticamente el snapshot Aurum hacia MIDAS aun cuando no haya diferencias que persistir.
+
+### Mapa de escrituras Firebase y servicios
+
+| Hallazgo | Destino | Activador | ¿Automático? | Riesgo E2E |
+| --- | --- | --- | --- | --- |
+| `syncWealthToCloudNow` / `setDoc` | `aurum_wealth/{uid}` | Cualquier mutación local confirmada, hidratación si el documento no existe o si la reconciliación detecta diferencia, listener si recibe diferencia | Sí, en esas condiciones de arranque | Crítico: fusiona estado local del perfil con producción y publica MIDAS después |
+| `hydrateWealthFromCloud` | `aurum_wealth/{uid}` | Bootstrap de `AuthGate`, Patrimonio o Settings; foco/visibilidad en pantallas que rehidratan | Sí: si falta documento o `cloudNeedsUpdate` | Crítico: un perfil de navegador con datos residuales basta para disparar `scheduleWealthCloudSync` |
+| `subscribeWealthCloud` / `onSnapshot` | `aurum_wealth/{uid}` | Después de hidratación autenticada | Sí: si el documento falta y hay datos locales, o si la fusión difiere del remoto | Crítico: listener de lectura puede terminar programando una escritura |
+| `publishAurumOptimizableInvestmentsSnapshot` / `POST /api/midas/publish-snapshot` | `aurum_published/optimizableInvestments` vía Admin SDK | Cada hidratación que llega a documento existente y cada sincronización | Sí: la hidratación lo invoca sin condición de diferencia | Crítico: modifica el snapshot que consume MIDAS |
+| `setDoc` de checkpoints | `aurum_wealth/{uid}/monthly_close_checkpoints/{key}` | Crear/cerrar mes y operaciones de checkpoint | No, requiere acción de cierre/undo | Alto; excluir por completo |
+| `deleteDoc` de checkpoints y `setDoc` de auditoría de undo | Subcolecciones de checkpoints y `monthly_close_undo_audits` | Undo o rollback explícito | No | Alto; excluir |
+| `setDoc` de backup y restauración | `aurum_wealth/{uid}/backups/{id}` y documento raíz | Crear/restaurar backup explícitamente | No | Alto; excluir |
+| `deleteDoc` raíz | `aurum_wealth/{uid}` | Reset/fresh start explícito | No | Crítico; excluir |
+| Reparaciones de cierres históricos | Documento raíz de `aurum_wealth/{uid}` mediante guardado y sync | Botones administrativos, salvo reparación UF conocida en Análisis | Sí al montar `/analysis`: `repairKnownHistoricalUfClpClosures()` escribe si halla candidatos | Crítico; no navegar a Análisis en ningún smoke autenticado actual |
+| Backfill GastApp mensual | `aurum_monthly_from_periods_v1/{monthKey}` del proyecto GastApp | Acción administrativa explícita | No | Alto; excluir |
+| Fintoc refresh/discover/webhook | `fintoc_refresh_intents/{id}` y proveedor Fintoc | Inicio de refresh o webhook | No desde el arranque | Crítico; excluir |
+| Corrección histórica Admin | `aurum_wealth/{uid}`, backups, checkpoints y auditorías históricas | POST `prepare`, `apply` o `rollback` con confirmación | No | Crítico; excluir |
+
+No se encontraron en código activo de Aurum `addDoc`, `updateDoc`, `writeBatch`, `arrayUnion`, `arrayRemove`, `increment`, uploads de Firebase Storage ni Functions callable. Las escrituras REST identificadas son las APIs propias anteriores; las llamadas `POST` de Firebase Auth no son por sí mismas una escritura de negocio.
+
+### Llamadas automáticas y flujo posterior al login
+
+1. `ensureAuthPersistence()` configura `browserLocalPersistence`; Firebase restaura la identidad mediante `onAuthStateChanged`.
+2. Al aceptar un usuario Google no anónimo, `AuthGate` monta las rutas y ejecuta dos familias de efectos: consulta de FX en vivo y bootstrap de patrimonio.
+3. La consulta FX hace `GET /api/fx/live` al montar y nuevamente en foco/visibilidad. Solo escribe snapshots de indicadores en `localStorage`; no persiste FX en Firestore salvo que se pulse `Reflejar cambios`.
+4. El bootstrap hace `getDoc(aurum_wealth/{uid})`, fusiona estado local/remoto, actualiza almacenamiento local si corresponde y puede llamar `syncWealthToCloudNow`. Si el documento no existe, sincroniza inmediatamente.
+5. Aun si no hay `cloudNeedsUpdate`, el bootstrap llama a `POST /api/midas/publish-snapshot`, cuyo servidor escribe el snapshot publicado de MIDAS.
+6. Luego se crea `onSnapshot(aurum_wealth/{uid})`. Si la fusión producida por el listener difiere del remoto, programa `setDoc` con un temporizador corto.
+7. La ruta inicial es Dashboard. Dashboard ejecuta `warmGastappMonthlyContable()`, que hace `getDocs` de `aurum_monthly_from_periods_v1`: es lectura. No monta Fintoc, Data Room v2, FX histórico ni APIs administrativas.
+8. Navegar a Settings agrega hidrataciones por foco/visibilidad y lecturas de Data Room solo al abrir su sección Sync. Navegar a Patrimonio agrega otra hidratación. Navegar a Análisis es inseguro hoy porque ejecuta la reparación UF automática indicada arriba; sus cargas de GastApp son de lectura.
+
+Por lo tanto, el primer punto que puede cambiar producción sin clic es el `useEffect` de bootstrap autenticado: si el documento de patrimonio no existe, primero hace `setDoc`; si existe, la hidratación publica MIDAS y, según estado local/remoto, puede programar después el `setDoc` de reconciliación. No es una inferencia de UI: ambas llamadas están en el flujo de código posterior a `onAuthStateChanged`.
+
+### Límites de Playwright y estrategia
+
+Bloquear globalmente `POST` no sirve: Firebase Auth y Firestore usan transporte no equivalente a una operación de negocio y se romperían lecturas válidas. Bloquear solo `/api/*` tampoco basta, porque `setDoc` y `onSnapshot` se comunican directamente con Firestore. No pulsar botones ni identificar controles visualmente no evita los efectos anteriores. Un interceptor puede abortar rutas propias conocidas, pero no prueba de manera fiable que el SDK Firestore no intentará una escritura sin también cortar sus lecturas.
+
+| Opción | Esfuerzo | Seguridad | Fidelidad | Recomendación |
+| --- | --- | --- | --- | --- |
+| A. Cuenta Google read-only en producción | Medio | Media: detiene escrituras, pero genera `permission-denied` y no representa el flujo real | Media | No como primer smoke; útil solo tras modo read-only explícito |
+| B. Firebase staging con cuenta de pruebas | Medio/alto | Alta para producción | Alta si replica reglas, datos sanitizados y APIs | Recomendado para E2E autenticado real |
+| C. Firebase Emulator | Medio | Muy alta | Media: no cubre reglas/servicios productivos completos | Recomendado para pruebas de mutación y regresión |
+| D. Sesión personal contra producción | Bajo | Inaceptable con el código actual | Máxima | No usar |
+| E. Modo E2E read-only instrumentado | Medio | Alta si desactiva reconciliación, sync y publicación antes de crear clientes | Alta para UI de lectura | Necesario si se quiere probar producción visualmente |
+| F. Staging + Emulator + modo read-only | Alto inicial, bajo mantenimiento posterior | Máxima | Alta | Estrategia recomendada |
+
+La combinación recomendada es: Emulator para mutaciones, staging con cuenta de pruebas para el smoke autenticado normal y, solo si se necesita UI contra producción, un modo read-only de aplicación que prohíba antes de red `syncWealthToCloudNow`, `scheduleWealthCloudSync`, publicación MIDAS, reparaciones automáticas y acciones Fintoc. Este modo debe acompañarse de una identidad de producción con permisos estrictamente de lectura; no basta el flag del navegador.
+
+### Persistencia y storageState propuesto
+
+La aplicación usa explícitamente `browserLocalPersistence`, no persistencia de sesión ni memoria. La captura futura debe ser manual y supervisada en Chromium headed: el usuario inicia Google sin entregar contraseña a Codex, se confirma que se está en el entorno seguro aprobado y recién entonces se guarda el contexto con `context.storageState({ path: '.playwright/aurum/auth/aurum-test.json', indexedDB: true })`. Ese archivo debe crearse con permisos locales restrictivos, permanecer bajo el directorio ya ignorado por Git, validarse con `git check-ignore` y `git status`, y regenerarse al expirar o invalidarse eliminándolo localmente. No deben adjuntarse screenshots, traces ni reportes con saldos; los artefactos solo se retienen ante fallo y siguen ignorados.
+
+### Condiciones previas y primer smoke autenticado propuesto
+
+Antes de crear cualquier `storageState` se deben cumplir estas condiciones: elegir staging/emulator o implementar y revisar el modo read-only; disponer de cuenta Google de pruebas aprobada; verificar que el perfil de navegador no contiene datos locales que puedan fusionarse; y añadir una barrera explícita que rechace toda llamada de sincronización/publicación esperada. La acción manual necesaria hoy es aprobar esa arquitectura y proporcionar una cuenta de pruebas solo para el entorno aislado; no se debe capturar una sesión personal de producción.
+
+El primer smoke futuro debe restaurar sesión, comprobar que desaparece el login, que Dashboard termina de cargar y que no hay errores críticos ni rutas mutadoras. Selectores seguros: `Dashboard`, `Patrimonio`, `Análisis`, `Configuración`, `Resumen`, `Evolución patrimonial` y `Cerrar sesión`; no usar importes, saldos, email, UID, periodos ni nombres de instrumentos. Debe quedarse en Dashboard, no pulsar controles, registrar solo método/origen/pathname, y desactivar screenshots/traces por defecto o guardarlos exclusivamente bajo la ruta local ignorada si falla.
