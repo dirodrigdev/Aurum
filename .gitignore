@@ -10,6 +10,7 @@ node_modules/
 dist/
 build/
 apps/midas/.playwright/
+.playwright/aurum/
 
 # Logs
 *.log

@@ -9,6 +9,12 @@
     "build:aurum": "npm -w apps/aurum run build",
     "lint:aurum": "npm -w apps/aurum run lint",
     "test:aurum": "npm -w apps/aurum run test",
-    "test:aurum:integration": "npm -w apps/aurum run test:integration"
+    "test:aurum:integration": "npm -w apps/aurum run test:integration",
+    "test:e2e:aurum": "playwright test -c apps/aurum/playwright.config.ts",
+    "test:e2e:aurum:headed": "playwright test -c apps/aurum/playwright.config.ts --headed",
+    "test:e2e:aurum:report": "playwright show-report .playwright/aurum/playwright-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0"
   }
 }

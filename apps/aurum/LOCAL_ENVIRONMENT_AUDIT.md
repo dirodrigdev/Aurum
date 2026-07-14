@@ -196,3 +196,17 @@ Estado Git al cierre de esta auditoria:
 ```
 
 No hay archivos staged, no se hizo commit y no se realizo deploy.
+
+## Pruebas E2E no autenticadas
+
+La primera fase E2E usa `@playwright/test` declarado en la raiz del monorepo y una configuracion aislada en `apps/aurum/playwright.config.ts`; no depende de la instalacion de MIDAS. Los comandos desde la raiz son `npm run test:e2e:aurum`, `npm run test:e2e:aurum:headed` y `npm run test:e2e:aurum:report`.
+
+La configuracion inicia Vite automaticamente en `http://127.0.0.1:3000` o reutiliza el servidor existente. Usa Chromium, un worker, cero reintentos locales, capturas, video y trace solo si falla. Los artefactos quedan bajo `.playwright/aurum/`, fuera del watcher de Vite, y estan ignorados por Git, incluido un futuro directorio de estados autenticados.
+
+El smoke no autenticado solo comprueba el login: respuesta de pagina, montaje React, marca Aurum, texto y boton de Google, ausencia de `auth/invalid-api-key`, de pantalla blanca, `pageerror`, `console.error` y solicitudes fallidas. No pulsa el boton de login ni accede a datos.
+
+Registra metodo, origen y pathname de las solicitudes, sin capturar cabeceras, tokens ni cookies. Falla e interrumpe antes de red si una solicitud local bajo `/api/*` apunta a rutas claramente mutadoras (`publish`, `closure`, `sync`, `delete`, `rollback`, `apply`, `prepare`, `backup`, `undo`, Fintoc, admin e historicos) o si una ruta `/api/*` usa un metodo distinto de GET. No bloquea globalmente POST para no confundir trafico Firebase/Google con una escritura de negocio, ni clasifica los modulos fuente de Vite como rutas de negocio. Filtra solo dos advertencias conocidas y con patrones exactos: el aviso completo de Tailwind CDN y el refresco inicial `APP_BUILD` con `none -> <build>`.
+
+Limitaciones: no automatiza Google, MFA, `storageState`, sesion autenticada, dashboard, Vercel Dev ni APIs. La siguiente fase recomendada es una cuenta Google de pruebas aprobada, una sesion manual supervisada y pruebas de solo lectura con barreras de red conservadas.
+
+Validacion: Chromium de Playwright quedo instalado; `npm run build:aurum` y el smoke headless pasaron con Vite iniciado automaticamente por `webServer`. La variante headed tambien paso en este entorno. Se verificaron temporalmente tres fallos esperados y se retiraron las simulaciones: marca Aurum ausente, `pageerror` inyectado y un `POST` simulado hacia `/api/midas/publish-snapshot`, detectado por la barrera antes de llegar a red. El runner de Node puede avisar que `NO_COLOR` se ignora cuando `FORCE_COLOR` esta definido; es una condicion del entorno de terminal, no un warning de Aurum.
