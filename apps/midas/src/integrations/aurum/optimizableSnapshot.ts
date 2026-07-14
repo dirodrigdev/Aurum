@@ -1,5 +1,10 @@
 import { doc, getDoc, onSnapshot, type FirestoreError } from 'firebase/firestore';
-import { aurumDb, aurumIntegrationConfigured, ensureAurumIntegrationAuthPersistence } from './firebase';
+import {
+  aurumDb,
+  aurumIntegrationConfigured,
+  ensureAurumIntegrationAuthPersistence,
+  isMidasE2EFirebaseEmulatorEnabled,
+} from './firebase';
 import type { AurumOptimizableInvestmentsSnapshot } from './types';
 
 const PUBLISHED_COLLECTION = 'aurum_published';
@@ -43,6 +48,7 @@ const logFxTrace = (stage: string, payload: Record<string, unknown>) => {
 };
 
 export async function loadPublishedOptimizableInvestmentsSnapshot(): Promise<AurumOptimizableInvestmentsSnapshot | null> {
+  if (isMidasE2EFirebaseEmulatorEnabled()) return null;
   if (!aurumIntegrationConfigured || !aurumDb) return null;
 
   await ensureAurumIntegrationAuthPersistence();
@@ -67,6 +73,10 @@ export type PublishedSnapshotListener = {
 };
 
 export function subscribeToPublishedOptimizableInvestmentsSnapshot(listener: PublishedSnapshotListener): () => void {
+  if (isMidasE2EFirebaseEmulatorEnabled()) {
+    listener.onValue(null);
+    return () => {};
+  }
   if (!aurumIntegrationConfigured || !aurumDb) {
     listener.onValue(null);
     return () => {};

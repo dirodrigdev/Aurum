@@ -16,7 +16,11 @@
     "emulators:aurum": "node scripts/run-firebase-e2e.mjs emulators:start --only auth,firestore --project aurum-e2e-local",
     "seed:e2e:aurum": "node scripts/seed-aurum-e2e.mjs",
     "test:e2e:aurum:authenticated": "node scripts/run-firebase-e2e.mjs emulators:exec --only auth,firestore --project aurum-e2e-local \"npm run seed:e2e:aurum && playwright test -c apps/aurum/playwright.authenticated.config.ts\"",
-    "clean:e2e:aurum": "node scripts/clean-aurum-e2e.mjs"
+    "clean:e2e:aurum": "node scripts/clean-aurum-e2e.mjs",
+    "emulators:midas": "node scripts/run-firebase-e2e.mjs --config firebase.midas.e2e.json emulators:start --only auth,firestore --project midas-e2e-local",
+    "seed:e2e:midas": "node scripts/seed-midas-e2e.mjs",
+    "test:e2e:midas:authenticated": "node scripts/run-firebase-e2e.mjs --config firebase.midas.e2e.json emulators:exec --only auth,firestore --project midas-e2e-local \"npm run seed:e2e:midas && playwright test -c apps/midas/playwright.authenticated.config.ts && node scripts/verify-midas-e2e.mjs\"",
+    "clean:e2e:midas": "node scripts/clean-midas-e2e.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",

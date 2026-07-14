@@ -1,17 +1,19 @@
 import { initializeApp } from 'firebase/app';
 import {
   browserLocalPersistence,
+  connectAuthEmulator,
   getAuth,
   getRedirectResult,
   GoogleAuthProvider,
   onAuthStateChanged,
   setPersistence,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signInWithRedirect,
   signOut,
   type User,
 } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 
 const viteEnv = ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {});
 
@@ -59,6 +61,20 @@ const firebaseConfig = {
   appId: viteEnv.VITE_FIREBASE_APP_ID,
 };
 
+const MIDAS_E2E_PROJECT_ID = 'midas-e2e-local';
+const MIDAS_E2E_AUTH_EMAIL = 'midas.e2e@example.test';
+const MIDAS_E2E_AUTH_PASSWORD = 'midas-e2e-only-not-a-secret';
+
+export const isMidasE2EFirebaseEmulatorEnabled = () =>
+  viteEnv.VITE_E2E_USE_FIREBASE_EMULATOR === 'true';
+
+const assertSafeMidasE2EFirebaseConfig = () => {
+  if (!isMidasE2EFirebaseEmulatorEnabled()) return;
+  if (firebaseConfig.projectId !== MIDAS_E2E_PROJECT_ID) {
+    throw new Error(`MIDAS E2E requires the local project ${MIDAS_E2E_PROJECT_ID}.`);
+  }
+};
+
 const isConfigured = () =>
   Boolean(firebaseConfig.projectId && firebaseConfig.apiKey && firebaseConfig.appId);
 
@@ -71,6 +87,13 @@ export const aurumFirebaseEffectiveAuthDomain = firebaseConfig.authDomain ? Stri
 export const aurumDb = app ? getFirestore(app) : null;
 export const aurumAuth = app ? getAuth(app) : null;
 const googleProvider = new GoogleAuthProvider();
+
+if (isMidasE2EFirebaseEmulatorEnabled()) {
+  assertSafeMidasE2EFirebaseConfig();
+  if (!aurumDb || !aurumAuth) throw new Error('MIDAS E2E requires Firebase Auth and Firestore configuration.');
+  connectAuthEmulator(aurumAuth, 'http://127.0.0.1:9199', { disableWarnings: true });
+  connectFirestoreEmulator(aurumDb, '127.0.0.1', 8180);
+}
 
 let persistencePromise: Promise<void> | null = null;
 let persistenceState: 'idle' | 'pending' | 'ready' | 'error' = 'idle';
@@ -299,6 +322,9 @@ export function shouldSignOutAnonymousBeforeGoogle(user: Pick<User, 'isAnonymous
 }
 
 export async function signInToAurumIntegrationWithGoogle(): Promise<void> {
+  if (isMidasE2EFirebaseEmulatorEnabled()) {
+    throw new Error('Google real está deshabilitado en MIDAS E2E local.');
+  }
   if (!aurumIntegrationConfigured || !aurumAuth) return;
   await ensureAurumIntegrationAuthPersistence();
   setSessionValue(CLICKED_GOOGLE_AT_KEY, new Date().toISOString());
@@ -337,6 +363,14 @@ export async function signInToAurumIntegrationWithGoogle(): Promise<void> {
     markRedirectPending();
     await signInWithRedirect(aurumAuth, googleProvider);
   }
+}
+
+async function ensureMidasE2EEmulatorAuthentication(): Promise<void> {
+  if (!isMidasE2EFirebaseEmulatorEnabled()) return;
+  assertSafeMidasE2EFirebaseConfig();
+  if (!aurumAuth) throw new Error('MIDAS E2E no pudo inicializar Auth Emulator.');
+  if (aurumAuth.currentUser) return;
+  await signInWithEmailAndPassword(aurumAuth, MIDAS_E2E_AUTH_EMAIL, MIDAS_E2E_AUTH_PASSWORD);
 }
 
 export async function signOutAurumIntegrationUser(): Promise<void> {
@@ -391,6 +425,7 @@ export async function bootstrapAurumIntegrationAuthSession(): Promise<AurumInteg
   }> = [];
 
   await ensureAurumIntegrationAuthPersistence();
+  await ensureMidasE2EEmulatorAuthentication();
 
   try {
     const redirectResult = await withTimeout(getRedirectResult(aurumAuth), REDIRECT_RESULT_TIMEOUT_MS);
