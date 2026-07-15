@@ -13,4 +13,4 @@ const firebaseArguments = [
   '--only', 'auth,firestore',
   '--project', config.projectId,
 ];
-process.exitCode = runFirebaseCli(firebaseArguments);
+process.exitCode = runFirebaseCli(firebaseArguments, config.repositoryDir);

@@ -12,7 +12,7 @@ const runtimeRoot = configuredRuntimeRoot
   : resolve(homedir(), '.cache/firebase-e2e');
 const legacyRuntimeRoot = resolve(homedir(), '.cache/aurum-e2e');
 const nodeVersion = '22.18.0';
-const firebaseBinary = resolve(repositoryRoot, 'node_modules/firebase-tools/lib/bin/firebase.js');
+const firebaseBinaryFor = (workspaceDir) => resolve(workspaceDir, 'node_modules/firebase-tools/lib/bin/firebase.js');
 const motdLoader = resolve(harnessRoot, 'runtime/firebase-cli-loader.cjs');
 
 const run = (command, args, options = {}) => {
@@ -107,7 +107,8 @@ const resolveJavaBinary = () => {
   return binary;
 };
 
-export const runFirebaseCli = (argumentsForFirebase) => {
+export const runFirebaseCli = (argumentsForFirebase, workspaceDir = repositoryRoot) => {
+  const firebaseBinary = firebaseBinaryFor(workspaceDir);
   if (!existsSync(firebaseBinary)) {
     throw new Error('No encuentro firebase-tools local. Ejecuta npm install desde la raíz del monorepo.');
   }
@@ -115,13 +116,14 @@ export const runFirebaseCli = (argumentsForFirebase) => {
   const javaBinary = resolveJavaBinary();
   const javaHome = resolve(javaBinary, '..', '..');
   const result = spawnSync(nodeBinary, ['-r', motdLoader, firebaseBinary, ...argumentsForFirebase], {
-    cwd: repositoryRoot,
+    cwd: workspaceDir,
     stdio: 'inherit',
     env: {
       ...process.env,
       JAVA_HOME: javaHome,
       PATH: `${resolve(javaHome, 'bin')}:${resolve(nodeBinary, '..')}:${process.env.PATH}`,
       NO_UPDATE_NOTIFIER: '1',
+      E2E_FIREBASE_WORKSPACE_DIR: workspaceDir,
     },
   });
   if (result.error) throw result.error;

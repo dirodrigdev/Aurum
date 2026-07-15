@@ -17,7 +17,7 @@ try {
     '--project', config.projectId,
     command,
   ];
-  exitCode = runFirebaseCli(firebaseArguments);
+  exitCode = runFirebaseCli(firebaseArguments, config.repositoryDir);
 } finally {
   try {
     await assertPortsReleased(config);
