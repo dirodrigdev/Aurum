@@ -5,6 +5,7 @@ import { Button, Card } from '../components/Components';
 import { FreedomTab } from '../components/analysis/FreedomTab';
 import { LabTab } from '../components/analysis/LabTab';
 import { ReturnsTab } from '../components/analysis/ReturnsTab';
+import { GastappMonthlyValidationTab } from '../components/analysis/GastappMonthlyValidationTab';
 import type {
   AggregatedSummary,
   AnalysisTab,
@@ -507,7 +508,7 @@ export const AnalysisAurum: React.FC = () => {
 
   useEffect(() => {
     const requestedTab = (location.state as { analysisTab?: AnalysisTab } | null)?.analysisTab;
-    if (requestedTab === 'returns' || requestedTab === 'freedom' || requestedTab === 'lab') {
+    if (requestedTab === 'returns' || requestedTab === 'gastapp-validation' || requestedTab === 'freedom' || requestedTab === 'lab') {
       setTab((prev) => (prev === requestedTab ? prev : requestedTab));
     }
   }, [location.state]);
@@ -607,6 +608,9 @@ export const AnalysisAurum: React.FC = () => {
           <Button size="sm" variant={tab === 'returns' ? 'primary' : 'secondary'} onClick={() => setTab('returns')}>
             Retornos
           </Button>
+          <Button size="sm" variant={tab === 'gastapp-validation' ? 'primary' : 'secondary'} onClick={() => setTab('gastapp-validation')}>
+            Validación mensual
+          </Button>
           <Button size="sm" variant={tab === 'freedom' ? 'primary' : 'secondary'} onClick={() => setTab('freedom')}>
             Libertad Financiera
           </Button>
@@ -615,7 +619,9 @@ export const AnalysisAurum: React.FC = () => {
           </Button>
         </div>
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-          {tab === 'returns' ? (
+          {tab === 'gastapp-validation' ? (
+            <GastappMonthlyValidationTab closures={closures} currency={currency} includeRiskCapital={includeRiskCapitalInTotals} />
+          ) : tab === 'returns' ? (
             <div className="flex min-w-0 flex-wrap items-center gap-1">
               {(['CLP', 'USD', 'EUR', 'UF'] as WealthCurrency[]).map((item) => (
                 <button

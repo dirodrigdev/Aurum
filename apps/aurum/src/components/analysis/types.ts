@@ -1,7 +1,7 @@
 import type { WealthCurrency, WealthFxRates } from '../../services/wealthStorage';
 import type { GastosContractStatus, GastosMonthDataQuality, GastosMonthSource, GastosMonthStatus } from '../../services/gastosMonthly';
 
-export type AnalysisTab = 'returns' | 'freedom' | 'lab';
+export type AnalysisTab = 'returns' | 'gastapp-validation' | 'freedom' | 'lab';
 
 export type FreedomControlDraft = {
   annualRatePct: string;
