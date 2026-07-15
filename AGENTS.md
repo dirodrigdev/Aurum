@@ -1,5 +1,21 @@
 # AGENTS.md
 
+## Validación obligatoria antes de cerrar cambios
+
+Leer este archivo antes de modificar código. Ejecutar los comandos desde la raíz del monorepo.
+
+Cambios en Aurum: `npm run build:aurum` y `npm run test:e2e:aurum:authenticated`.
+
+Cambios en MIDAS: `npm run build --workspace apps/midas` y `npm run test:e2e:midas:authenticated`.
+
+Al modificar `packages/e2e-harness`, `e2e/apps`, launcher Firebase, runtime Node/Java, orquestación, guardia de red, teardown o adaptadores externos, ejecutar como mínimo las suites autenticadas de Aurum y MIDAS. Si afecta el adaptador externo de GastApp, ejecutar también `npm run test:e2e:gastapp:authenticated` desde GastApp.
+
+Para contratos GastApp -> Aurum, Aurum -> MIDAS, Data Room, snapshots publicados, colecciones o contratos compartidos, ejecutar secuencialmente las suites de todas las aplicaciones afectadas. No ejecutar suites en paralelo hasta que exista soporte validado.
+
+Reglas comunes: nunca ejecutar E2E autenticado contra producción, usar sesiones Google personales, fixtures reales, relajar Firestore Rules, ni permitir fallback silencioso a producción. No versionar `.env`, cookies, tokens, sesiones, `storageState`, `.vercel`, artefactos Playwright ni cachés Node/Java. Conservar y comunicar el primer error real; no ocultarlo con timeouts arbitrarios o filtros amplios. Confirmar teardown y ausencia de procesos Firebase Emulator, Vite y Playwright. No crear el commit final si falla el build o E2E obligatorio.
+
+Matriz: cambio documental no requiere E2E salvo documentación de pruebas; cambio visual aislado requiere build y smoke de la app; cambio funcional, Firebase/Auth/Firestore requiere build y E2E; cambio del arnés requiere suites de todas las consumidoras; contrato cruzado requiere secuencia afectada; cambio no verificable no debe declararse validado. Codex debe identificar aplicación/contrato, ejecutar validaciones existentes, corregir fallos comprobados y crear commit sólo tras pasar. No debe responder que Playwright no pudo usarse sin ejecutar primero el comando existente y entregar el error exacto. Informar siempre build, suite, resultado, projectId ficticio y teardown.
+
 ## Mission
 Work as a careful coding agent on this repository.
 Optimize for low-risk, reversible, well-explained changes.
