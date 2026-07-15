@@ -124,7 +124,7 @@ const CoverageBadge: React.FC<{ item: AggregatedSummary; dark?: boolean }> = ({ 
   );
 };
 
-type ReturnsTabProps = {
+export type ReturnsTabProps = {
   heroSinceStart: AggregatedSummary | null;
   heroLast12: AggregatedSummary | null;
   heroYtd2026: AggregatedSummary | null;
@@ -181,6 +181,7 @@ type ReturnsTabProps = {
   exportMessage: string;
   exportingConsolidatedDataRoom: boolean;
   exportingTransactionalDataRoom: boolean;
+  visualVariant?: 'official' | 'calendar-control';
 };
 
 const estimateMethodLabel = (method: 'avg_12m_closed' | 'avg_6m_closed') =>
@@ -292,6 +293,7 @@ const ReturnRealHero: React.FC<{
   onToggleRiskMode: () => void;
   crpContributionInsight: CrpContributionInsight | null;
   lastConsideredLabel: string | null;
+  visualVariant: 'official' | 'calendar-control';
 }> = ({
   sinceStart,
   last12,
@@ -305,6 +307,7 @@ const ReturnRealHero: React.FC<{
   onToggleRiskMode,
   crpContributionInsight,
   lastConsideredLabel,
+  visualVariant,
 }) => {
   const showRealReturn = currency === 'CLP';
   const rows = [
@@ -333,14 +336,34 @@ const ReturnRealHero: React.FC<{
     (value?.retornoRealAvgDisplay || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300';
 
   return (
-    <Card className="relative overflow-hidden border-slate-200 bg-gradient-to-br from-[#08152f] via-[#0d2146] to-[#0a1730] p-3.5 text-slate-100 shadow-[0_16px_40px_rgba(4,16,40,0.28)]">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(110,231,183,0.14),_transparent_34%),radial-gradient(circle_at_bottom_left,_rgba(96,165,250,0.12),_transparent_38%)]" />
+    <Card className={cn(
+      'relative overflow-hidden border-slate-200 bg-gradient-to-br p-3.5 text-slate-100',
+      visualVariant === 'official'
+        ? 'from-[#08152f] via-[#0d2146] to-[#0a1730] shadow-[0_16px_40px_rgba(4,16,40,0.28)]'
+        : 'from-[#261306] via-[#42250b] to-[#172238] shadow-[0_16px_40px_rgba(50,27,6,0.24)]',
+    )}>
+      <div className={cn(
+        'pointer-events-none absolute inset-0',
+        visualVariant === 'official'
+          ? 'bg-[radial-gradient(circle_at_top_right,_rgba(110,231,183,0.14),_transparent_34%),radial-gradient(circle_at_bottom_left,_rgba(96,165,250,0.12),_transparent_38%)]'
+          : 'bg-[radial-gradient(circle_at_top_right,_rgba(251,191,36,0.17),_transparent_34%),radial-gradient(circle_at_bottom_left,_rgba(56,189,248,0.12),_transparent_38%)]',
+      )} />
       <div className="relative">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Retorno económico</div>
-            <div className="mt-1 text-[11px] text-slate-400">Lectura oficial del período, incluyendo lo que gastaste</div>
-            <div className="mt-1 text-[9px] text-slate-500/70">Gastos desde GastApp (P → mes equivalente)</div>
+            <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">
+              {visualVariant === 'official' ? 'Retorno económico' : 'Retorno económico · control'}
+            </div>
+            <div className="mt-1 text-[11px] text-slate-400">
+              {visualVariant === 'official'
+                ? 'Lectura oficial del período, incluyendo lo que gastaste'
+                : 'Lectura de control con gasto asignado por mes calendario'}
+            </div>
+            <div className="mt-1 text-[9px] text-slate-500/70">
+              {visualVariant === 'official'
+                ? 'Gastos desde GastApp (P → mes equivalente)'
+                : 'Gastos desde GastApp (mes calendario) · no oficial'}
+            </div>
             {showRealReturn ? (
               <div
                 className="mt-1 text-[9px] text-slate-400/90"
@@ -1014,6 +1037,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   exportMessage,
   exportingConsolidatedDataRoom,
   exportingTransactionalDataRoom,
+  visualVariant = 'official',
 }) => {
   const estimatedToggleId = React.useId();
   const [isSpendTrustExpanded, setIsSpendTrustExpanded] = React.useState(false);
@@ -1405,6 +1429,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       onToggleRiskMode={onToggleRiskMode}
       crpContributionInsight={crpContributionInsight}
       lastConsideredLabel={lastConsideredLabel}
+      visualVariant={visualVariant}
     />
 
     {(estimatedToggleEnabled || pendingEstimateDetail) && (

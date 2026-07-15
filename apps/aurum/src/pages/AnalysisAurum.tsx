@@ -4,7 +4,7 @@ import { useLocation } from 'react-router-dom';
 import { Button, Card } from '../components/Components';
 import { FreedomTab } from '../components/analysis/FreedomTab';
 import { LabTab } from '../components/analysis/LabTab';
-import { ReturnsTab } from '../components/analysis/ReturnsTab';
+import { ReturnsTab, type ReturnsTabProps } from '../components/analysis/ReturnsTab';
 import { GastappMonthlyValidationTab } from '../components/analysis/GastappMonthlyValidationTab';
 import type {
   AggregatedSummary,
@@ -601,6 +601,37 @@ export const AnalysisAurum: React.FC = () => {
     heroLastMonth,
   ]);
 
+  const returnsTabProps: ReturnsTabProps = {
+    heroSinceStart,
+    heroLast12,
+    heroYtd2026,
+    heroLastMonth,
+    heroLastMonthPctMonthly,
+    heroLastMonthPctMonthlyReal,
+    currency,
+    includeEstimatedMonth: includeEstimatedMonth && returnsSeriesView.hasEstimatedMonth,
+    hasEstimatedMonth: returnsSeriesView.hasEstimatedMonth,
+    estimatedMonthMeta: returnsSeriesView.pendingEstimate,
+    pendingEstimateDetail: returnsSeriesView.pendingEstimateDetail,
+    officialAvailabilityNotice: returnsSeriesView.officialAvailabilityNotice,
+    onToggleIncludeEstimatedMonth: () => setIncludeEstimatedMonth((prev) => !prev),
+    includeRiskCapitalInTotals,
+    onToggleRiskMode: () => setIncludeRiskCapitalInTotals((prev) => !prev),
+    crpContributionInsight,
+    analysisDiagnostics: { anomalyRaw: analysisDiagnostics.anomalyRaw },
+    fxExcludedMonths: analysisDiagnostics.fxExcludedMonths,
+    officialMonthlyRowsAsc: returnsSeriesView.officialRows,
+    monthlyRowsDesc,
+    periodSummaries,
+    yearlySummaries,
+    wealthEvolutionModel,
+    onExportConsolidatedDataRoom: handleExportDataRoom,
+    onExportTransactionalDataRoom: handleExportDataRoomWithTransactions,
+    exportMessage,
+    exportingConsolidatedDataRoom: exportingDataRoomKind === 'consolidated',
+    exportingTransactionalDataRoom: exportingDataRoomKind === 'transactions',
+  };
+
   return (
     <div className="space-y-3 p-3">
       <Card className="sticky top-[68px] z-20 border-slate-200 bg-white/95 p-2 backdrop-blur">
@@ -619,9 +650,7 @@ export const AnalysisAurum: React.FC = () => {
           </Button>
         </div>
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-          {tab === 'gastapp-validation' ? (
-            <GastappMonthlyValidationTab closures={closures} currency={currency} includeRiskCapital={includeRiskCapitalInTotals} />
-          ) : tab === 'returns' ? (
+          {tab === 'returns' || tab === 'gastapp-validation' ? (
             <div className="flex min-w-0 flex-wrap items-center gap-1">
               {(['CLP', 'USD', 'EUR', 'UF'] as WealthCurrency[]).map((item) => (
                 <button
@@ -683,37 +712,13 @@ export const AnalysisAurum: React.FC = () => {
           withdrawalPlan={financialFreedomWithdrawalPlan}
           coveragePlan={financialFreedomCoveragePlan}
         />
-      ) : (
-        <ReturnsTab
-          heroSinceStart={heroSinceStart}
-          heroLast12={heroLast12}
-          heroYtd2026={heroYtd2026}
-          heroLastMonth={heroLastMonth}
-          heroLastMonthPctMonthly={heroLastMonthPctMonthly}
-          heroLastMonthPctMonthlyReal={heroLastMonthPctMonthlyReal}
-          currency={currency}
-          includeEstimatedMonth={includeEstimatedMonth && returnsSeriesView.hasEstimatedMonth}
-          hasEstimatedMonth={returnsSeriesView.hasEstimatedMonth}
-          estimatedMonthMeta={returnsSeriesView.pendingEstimate}
-          pendingEstimateDetail={returnsSeriesView.pendingEstimateDetail}
-          officialAvailabilityNotice={returnsSeriesView.officialAvailabilityNotice}
-          onToggleIncludeEstimatedMonth={() => setIncludeEstimatedMonth((prev) => !prev)}
-          includeRiskCapitalInTotals={includeRiskCapitalInTotals}
-          onToggleRiskMode={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
-          crpContributionInsight={crpContributionInsight}
-          analysisDiagnostics={{ anomalyRaw: analysisDiagnostics.anomalyRaw }}
-          fxExcludedMonths={analysisDiagnostics.fxExcludedMonths}
-          officialMonthlyRowsAsc={returnsSeriesView.officialRows}
-          monthlyRowsDesc={monthlyRowsDesc}
-          periodSummaries={periodSummaries}
-          yearlySummaries={yearlySummaries}
-          wealthEvolutionModel={wealthEvolutionModel}
-          onExportConsolidatedDataRoom={handleExportDataRoom}
-          onExportTransactionalDataRoom={handleExportDataRoomWithTransactions}
-          exportMessage={exportMessage}
-          exportingConsolidatedDataRoom={exportingDataRoomKind === 'consolidated'}
-          exportingTransactionalDataRoom={exportingDataRoomKind === 'transactions'}
+      ) : tab === 'gastapp-validation' ? (
+        <GastappMonthlyValidationTab
+          officialReturnsProps={returnsTabProps}
+          officialRowsWithoutCrp={monthlyRowsAscWithoutCrp}
         />
+      ) : (
+        <ReturnsTab {...returnsTabProps} />
       )}
 
       {!!errorMessage && (
