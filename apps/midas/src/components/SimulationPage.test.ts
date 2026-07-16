@@ -658,7 +658,9 @@ assert(/const resetSimulationSession[\s\S]*manualImpact:\s*EMPTY_MANUAL_ADJUSTME
 assert(/const resetSimulationSession[\s\S]*startRecalculation\('session-reset',\s*\(\)\s*=>\s*canonicalBase\);/.test(appSource));
 assert(appSource.includes("const LEGACY_TABS = new Set<TabId>(['stress', 'optv0']);"));
 assert(appSource.includes("const resolveProductTab = (tab: TabId): TabId => (LEGACY_TABS.has(tab) ? 'sim' : tab);"));
-assert(appSource.includes('setActiveTab(resolveProductTab(tab));'));
+assert(appSource.includes('const nextTab = resolveProductTab(tab);'));
+assert(appSource.includes('setActiveTab(nextTab);'));
+assert(appSource.includes('syncProductTabRoute(nextTab);'));
 assert(appSource.includes('if (LEGACY_TABS.has(activeTab)) {'));
 assert(appSource.includes("setActiveTab('sim');"));
 assert(!appSource.includes("activeTab === 'stress'"));
@@ -753,7 +755,7 @@ assert(adaptersSource.includes('resolveAurumEurUsdForMidas(fxReference.usdEur).e
 assert(sensitivitySource.includes('Análisis de sensibilidad'));
 assert(sensitivitySource.includes('Calcular sensibilidad'));
 assert(sensitivitySource.includes('Sensibilidad one-variable-at-a-time'));
-assert(sensitivitySource.includes('Para subir +2 pp de éxito'));
+assert(sensitivitySource.includes('Valor requerido para subir +2 pp de éxito'));
 assert(sensitivitySource.includes('House sale aparece solo como métrica resultado.'));
 assert(bottomNavSource.includes("{ id: 'sens', label: 'Sensibilidad' }"));
 assert(bucketLabSource.includes('Laboratorio técnico'));

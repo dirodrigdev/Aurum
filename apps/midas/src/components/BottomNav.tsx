@@ -1,9 +1,17 @@
 import React from 'react';
 import { T } from './theme';
 
-type TabId = 'sim' | 'assist' | 'lab' | 'sens' | 'stress' | 'bucketlab' | 'optv0' | 'opt' | 'settings';
+type TabId = 'dashboard' | 'sim' | 'assist' | 'lab' | 'sens' | 'stress' | 'bucketlab' | 'optv0' | 'opt' | 'settings';
 
 const icons: Record<TabId, JSX.Element> = {
+  dashboard: (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <rect x="3" y="3" width="6" height="6" rx="1.5" fill="currentColor" />
+      <rect x="11" y="3" width="6" height="3.5" rx="1.4" stroke="currentColor" strokeWidth="1.3" />
+      <rect x="3" y="11" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+      <rect x="11" y="8.5" width="6" height="8.5" rx="1.5" fill="currentColor" />
+    </svg>
+  ),
   sim: (
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
       <path d="M6 4.5v11l9-5.5-9-5.5Z" fill="currentColor" />
@@ -70,6 +78,7 @@ export function BottomNav({
   onChange: (tab: TabId) => void;
 }) {
   const items: Array<{ id: TabId; label: string; legacy?: boolean }> = [
+    { id: 'dashboard', label: 'Dashboard' },
     { id: 'sim', label: 'Simulación' },
     { id: 'assist', label: 'Asistida' },
     { id: 'lab', label: 'Laboratorio' },
@@ -79,7 +88,8 @@ export function BottomNav({
     { id: 'settings', label: 'Ajustes' },
   ];
   return (
-    <div
+    <nav
+      aria-label="Navegación principal de MIDAS"
       style={{
         position: 'fixed',
         bottom: 0,
@@ -88,11 +98,15 @@ export function BottomNav({
         height: 'calc(64px + env(safe-area-inset-bottom, 0px))',
         paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         display: 'grid',
-        gridTemplateColumns: `repeat(${items.length}, 1fr)`,
+        gridTemplateColumns: `repeat(${items.length}, minmax(72px, 1fr))`,
         background: T.surface,
         borderTop: `1px solid ${T.border}`,
         zIndex: 20,
         boxShadow: '0 -6px 14px rgba(0,0,0,0.20)',
+        overflowX: 'auto',
+        overflowY: 'hidden',
+        scrollbarWidth: 'none',
+        WebkitOverflowScrolling: 'touch',
       }}
     >
       {items.map((item) => {
@@ -139,7 +153,7 @@ export function BottomNav({
           </button>
         );
       })}
-    </div>
+    </nav>
   );
 }
 

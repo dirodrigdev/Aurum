@@ -194,7 +194,7 @@ const formatSessionMoment = (atMs: number | null) => {
 };
 
 const CANONICAL_HYDRATION_TIMEOUT_MS = 12_000;
-const USER_BIRTH_DATE_ISO = '1978-07-11';
+export const USER_BIRTH_DATE_ISO = '1978-07-11';
 const HYDRATING_CANONICAL_BLOCK_REASONS = new Set([
   'auth_loading',
   'config_loading',

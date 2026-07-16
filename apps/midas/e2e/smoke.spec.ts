@@ -60,6 +60,29 @@ test('simulation home loads in local read-only mode', async ({ page }) => {
   await expect(technicalDetailLine).toBeVisible();
 });
 
+test('privacy-safe Dashboard direct route handles unavailable canonical input', async ({ page }) => {
+  await page.goto('/#/dashboard');
+  await expect(page).toHaveURL(/#\/dashboard$/);
+  await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible();
+
+  const dashboard = page.getByTestId('dashboard-empty-state');
+  await expect(dashboard).toBeVisible({ timeout: 30_000 });
+  await expect(dashboard).toContainText(/Preparando una lectura segura del plan|No pudimos completar la lectura/);
+
+  const dashboardHtml = await dashboard.evaluate((element) => element.outerHTML);
+  const dashboardText = await dashboard.innerText();
+  expect(dashboardHtml).not.toMatch(/(?:CLP|USD|EUR|UF)\s*[\$€]?\s*\d[\d.,]{2,}/i);
+  expect(dashboardHtml).not.toMatch(/(?:\$|€)\s*\d/);
+  expect(dashboardHtml).not.toContain('1401000000');
+  expect(dashboardHtml).not.toContain('6000000');
+  expect(dashboardText).toContain('valores monetarios permanecen ocultos');
+  expect(dashboardText).not.toMatch(/NaN|undefined|\[object Object\]|error boundary/i);
+
+  await page.reload();
+  await expect(page).toHaveURL(/#\/dashboard$/);
+  await expect(page.getByTestId('dashboard-empty-state')).toBeVisible({ timeout: 30_000 });
+});
+
 test.skip('assisted tab loads from the bottom nav', async ({ page }) => {
   await openApp(page);
   await openTab(page, 'Asistida', 'No sincronizado con Simulación principal');
@@ -114,6 +137,18 @@ test.describe('mobile smoke', () => {
       return root.scrollWidth - root.clientWidth > 1;
     });
 
+    expect(hasHorizontalOverflow).toBeFalsy();
+  });
+
+  test('Dashboard remains usable without horizontal page overflow', async ({ page }) => {
+    await page.goto('/#/dashboard');
+    await expect(page.getByTestId('dashboard-empty-state')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('dashboard-empty-state')).toContainText(/Preparando una lectura segura del plan|No pudimos completar la lectura/);
+
+    const hasHorizontalOverflow = await page.evaluate(() => {
+      const root = document.documentElement;
+      return root.scrollWidth - root.clientWidth > 1;
+    });
     expect(hasHorizontalOverflow).toBeFalsy();
   });
 });

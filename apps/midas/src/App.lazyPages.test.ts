@@ -12,17 +12,18 @@ assert.match(
 
 assert.match(
   appSource,
-  /const \[activeTab, setActiveTab\] = useState<TabId>\('sim'\);/,
-  'App must keep Simulación as the initial page',
+  /const \[activeTab, setActiveTab\] = useState<TabId>\(resolveInitialProductTab\);/,
+  'App must resolve the initial page without losing the direct Dashboard route',
 );
 
 assert.match(
   appSource,
-  /import \{ SimulationPage, SimulationOverrides, SimulationPreset \} from '\.\/components\/SimulationPage';/,
+  /SimulationPage,[\s\S]*SimulationOverrides,[\s\S]*SimulationPreset,[\s\S]*from '\.\/components\/SimulationPage';/,
   'SimulationPage must stay eager as the critical home page',
 );
 
 for (const lazyPage of [
+  'DashboardPageLazy',
   'AssistedSimulationPageLazy',
   'ScenarioLabPageLazy',
   'SensitivityPageLazy',
@@ -36,6 +37,18 @@ for (const lazyPage of [
     `${lazyPage} must be lazy-loaded`,
   );
 }
+
+assert.match(
+  appSource,
+  /hashRoute === 'dashboard' \? 'dashboard' : 'sim'/,
+  'The direct Dashboard hash route must resolve safely and default to Simulación',
+);
+
+assert.match(
+  appSource,
+  /productActiveTab === 'dashboard'[\s\S]*No se pudo completar la lectura[\s\S]*Revisa Simulación para consultar el diagnóstico técnico/,
+  'Dashboard must replace raw runtime errors with a privacy-safe message',
+);
 
 assert.match(
   appSource,

@@ -17,7 +17,13 @@ import { normalizeModelSpendingPhases } from './domain/model/spendingPhases';
 import { applyScenarioVariant } from './domain/simulation/engine';
 import { evaluateConcordance } from './domain/simulation/concordance';
 import { BottomNav, TabId } from './components/BottomNav';
-import { SimulationPage, SimulationOverrides, SimulationPreset } from './components/SimulationPage';
+import {
+  SimulationPage,
+  SimulationOverrides,
+  SimulationPreset,
+  USER_BIRTH_DATE_ISO,
+  computeCurrentAgeFromBirthDate,
+} from './components/SimulationPage';
 import { T, css } from './components/theme';
 import { loadInstrumentBaseSnapshot, type OptimizableBaseReference } from './domain/instrumentBase';
 import { loadInstrumentUniverseSnapshot, loadInstrumentUniverseSnapshotMetadata } from './domain/instrumentUniverse';
@@ -107,6 +113,12 @@ import {
   stripManualAdjustmentImpactFromParams,
   type ManualAdjustmentImpact,
 } from './domain/simulation/manualCapitalAdjustments';
+import { buildStrategyDashboardModel } from './domain/dashboard/strategyDashboardModel';
+import type { M8Input } from './domain/simulation/m8.types';
+
+const DashboardPageLazy = React.lazy(() =>
+  import('./components/DashboardPage').then((module) => ({ default: module.DashboardPage })),
+);
 
 const AssistedSimulationPageLazy = React.lazy(() =>
   import('./components/AssistedSimulationPage').then((module) => ({ default: module.AssistedSimulationPage })),
@@ -909,6 +921,19 @@ function persistLastAppliedAurumSnapshotSignature(signature: string | null): voi
 const LEGACY_TABS = new Set<TabId>(['stress', 'optv0']);
 const resolveProductTab = (tab: TabId): TabId => (LEGACY_TABS.has(tab) ? 'sim' : tab);
 
+export const resolveInitialProductTab = (): TabId => {
+  if (typeof window === 'undefined') return 'sim';
+  const hashRoute = window.location.hash.replace(/^#\/?/, '').toLowerCase();
+  return hashRoute === 'dashboard' ? 'dashboard' : 'sim';
+};
+
+const syncProductTabRoute = (tab: TabId) => {
+  if (typeof window === 'undefined') return;
+  const nextHash = tab === 'dashboard' ? '#/dashboard' : '';
+  const nextUrl = `${window.location.pathname}${window.location.search}${nextHash}`;
+  window.history.pushState({ midasTab: tab }, '', nextUrl);
+};
+
 export default function App() {
   const initialDistributionRef = useRef(resolveInitialDistributionState());
   const initialPersistedBaseRef = useRef<ModelParameters | null>(
@@ -934,7 +959,7 @@ export default function App() {
   const [simParams, setSimParams] = useState<ModelParameters>(() =>
     applyActiveDistributionToParams(cloneParams(initialModelParams), initialDistributionRef.current.activeWeights),
   );
-  const [activeTab, setActiveTab] = useState<TabId>('sim');
+  const [activeTab, setActiveTab] = useState<TabId>(resolveInitialProductTab);
   const [simResult, setSimResult] = useState<SimulationResults | null>(null);
   const [lastStableCentral, setLastStableCentral] = useState<SimulationResults | null>(null);
   const [simOverrides, setSimOverrides] = useState<SimulationOverrides | null>(null);
@@ -3710,7 +3735,19 @@ export default function App() {
   }, [markSimulationInteraction, simOverrides, simParams, startRecalculation]);
 
   const handleTabChange = useCallback((tab: TabId) => {
-    setActiveTab(resolveProductTab(tab));
+    const nextTab = resolveProductTab(tab);
+    setActiveTab(nextTab);
+    syncProductTabRoute(nextTab);
+  }, []);
+
+  useEffect(() => {
+    const handleRouteChange = () => setActiveTab(resolveInitialProductTab());
+    window.addEventListener('hashchange', handleRouteChange);
+    window.addEventListener('popstate', handleRouteChange);
+    return () => {
+      window.removeEventListener('hashchange', handleRouteChange);
+      window.removeEventListener('popstate', handleRouteChange);
+    };
   }, []);
 
   useEffect(() => {
@@ -4904,6 +4941,39 @@ export default function App() {
   })();
 
   const productActiveTab = resolveProductTab(activeTab);
+  const dashboardCanonicalError = !canonicalInputReadiness.ready
+    && (
+      canonicalInputReadiness.blockedReason === 'config_error'
+      || canonicalInputReadiness.blockedReason === 'aurum_snapshot_error'
+      || canonicalInputReadiness.blockedReason === 'instrument_universe_error'
+      || canonicalInputReadiness.blockedReason === 'instrument_universe_timeout'
+    )
+    ? 'canonical_source_error'
+    : null;
+  const dashboardModel = useMemo(() => buildStrategyDashboardModel({
+    result: simulationResultDiagnostics.isFinalForCurrentInput ? simResult : null,
+    params: simParams,
+    m8Input: m8InputFingerprint.normalizedInput as unknown as M8Input,
+    currentAge: computeCurrentAgeFromBirthDate(USER_BIRTH_DATE_ISO),
+    scenarioLabel: stateLabel,
+    canonicalInputReady: canonicalInputReadiness.ready,
+    simulationWorking: simWorking || (Boolean(simResult) && !simulationResultDiagnostics.isFinalForCurrentInput),
+    simulationError: simUiError ?? dashboardCanonicalError,
+    riskCapitalEnabled,
+    riskCapitalEffective,
+  }), [
+    canonicalInputReadiness.ready,
+    dashboardCanonicalError,
+    m8InputFingerprint.normalizedInput,
+    riskCapitalEffective,
+    riskCapitalEnabled,
+    simParams,
+    simResult,
+    simUiError,
+    simWorking,
+    stateLabel,
+    simulationResultDiagnostics.isFinalForCurrentInput,
+  ]);
 
   const content = productActiveTab === 'sim' ? (
     <SimulationPage
@@ -4996,7 +5066,14 @@ export default function App() {
     />
   ) : (
     <SectionSuspense>
-      {productActiveTab === 'assist' ? (
+      {productActiveTab === 'dashboard' ? (
+        <DashboardPageLazy
+          model={dashboardModel}
+          onOpenSimulation={() => handleTabChange('sim')}
+          onOpenSensitivity={() => handleTabChange('sens')}
+          onOpenSettings={() => handleTabChange('settings')}
+        />
+      ) : productActiveTab === 'assist' ? (
         <AssistedSimulationPageLazy />
       ) : productActiveTab === 'lab' ? (
         <ScenarioLabPageLazy
@@ -5200,7 +5277,7 @@ export default function App() {
             padding: '12px 16px 90px',
             paddingBottom: 'calc(90px + env(safe-area-inset-bottom, 0px))',
             marginTop: 48,
-            maxWidth: 960,
+            maxWidth: productActiveTab === 'dashboard' ? 1180 : 960,
             marginLeft: 'auto',
             marginRight: 'auto',
           }}
@@ -5218,8 +5295,10 @@ export default function App() {
                 whiteSpace: 'pre-wrap',
               }}
             >
-              <strong>Runtime error</strong>
-              {`\n${runtimeErrors[0]}`}
+              <strong>{productActiveTab === 'dashboard' ? 'No se pudo completar la lectura' : 'Runtime error'}</strong>
+              {productActiveTab === 'dashboard'
+                ? '\nRevisa Simulación para consultar el diagnóstico técnico.'
+                : `\n${runtimeErrors[0]}`}
             </div>
           )}
           {content}
