@@ -19,7 +19,7 @@ export const dashboardTestModel: StrategyDashboardModel = {
     { id: 'ruin', label: 'Agotamiento antes de los 88 años', value: 0.082, unit: '%', tone: 'positive', detail: 'Riesgo complementario al éxito del plan.' },
     { id: 'horizon', label: 'Horizonte evaluado', value: 40, unit: 'años', tone: 'neutral', detail: 'Duración total considerada por el motor.' },
     { id: 'withdrawal-rate', label: 'Tasa inicial de retiro', value: 0.047, unit: '%', tone: 'positive', detail: 'Relación anual inicial.' },
-    { id: 'qol-score', label: 'Índice de calidad de vida', value: 78, unit: 'puntos', tone: 'positive', detail: 'Bueno alto' },
+    { id: 'qol-score', label: 'Índice de calidad de vida', value: 78, unit: 'puntos', tone: 'positive', detail: 'La puntuación y la clasificación son dimensiones relacionadas pero distintas.', category: 'Bueno alto' },
   ],
   currentAge: 48,
   targetAge: 88,
@@ -80,6 +80,9 @@ assert(markup.includes('Capital de riesgo'));
 assert(markup.includes('Mix estratégico considerado'));
 assert(markup.includes('Secuencia de retiro'));
 assert(markup.includes('Calidad de vida'));
+assert(markup.includes('78,0'));
+assert(markup.includes('/100 · Bueno alto'));
+assert(markup.includes('La puntuación y la clasificación son dimensiones relacionadas pero distintas.'));
 assert(markup.includes('Semáforos del plan'));
 assert(markup.includes('Vista de presentación: los valores monetarios permanecen ocultos'));
 assert(markup.includes('Ver ecosistema'));

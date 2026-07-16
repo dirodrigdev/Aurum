@@ -44,7 +44,7 @@ const formatQasr = (value: number | null | undefined): string =>
 const formatScore = (value: number | null | undefined): string =>
   value === null || value === undefined || !Number.isFinite(value)
     ? 'No disponible'
-    : `${Math.round(value)}/100`;
+    : `${value.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}/100`;
 
 const formatRatio = (value: number | null | undefined): string =>
   value === null || value === undefined || !Number.isFinite(value)
@@ -471,10 +471,10 @@ export function QualityOfLifeMetricsBlock({
           />
           <MetricRow
             label="Score preliminar"
-            value={formatScore(midasEvaluation?.cappedScore ?? midasEvaluation?.rawScore)}
+            value={formatScore(midasEvaluation?.rawScore ?? midasEvaluation?.cappedScore)}
             traffic={evaluationTraffic(midasEvaluation?.label)}
-            subtle={midasEvaluation?.rawScore != null && midasEvaluation?.cappedScore != null
-              ? `raw ${formatScore(midasEvaluation.rawScore)}`
+            subtle={midasEvaluation?.label
+              ? `${midasEvaluation.label}. La puntuación y la clasificación son dimensiones relacionadas pero distintas.`
               : undefined}
           />
           <MetricRow

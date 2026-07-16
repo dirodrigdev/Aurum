@@ -36,7 +36,7 @@ const formatPercent = (value: number | null, digits = 1): string =>
 const formatMetric = (metric: DashboardMetric): string => {
   if (metric.value === null) return '—';
   if (metric.unit === '%') return formatPercent(metric.value);
-  if (metric.unit === 'puntos') return Math.round(metric.value).toLocaleString('es-CL');
+  if (metric.unit === 'puntos') return metric.value.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   return Math.round(metric.value).toLocaleString('es-CL');
 };
 
@@ -52,7 +52,7 @@ function MetricCard({ metric }: { metric: DashboardMetric }) {
       <div className="midas-dash-metric-value" style={{ color: toneColor[metric.tone] }}>
         {formatMetric(metric)}
         {metric.value !== null && metric.unit !== '%' && metric.unit !== 'puntos' ? <small>{metric.unit}</small> : null}
-        {metric.value !== null && metric.unit === 'puntos' ? <small>pts</small> : null}
+        {metric.value !== null && metric.unit === 'puntos' ? <small>/100{metric.category ? ` · ${metric.category}` : ''}</small> : null}
       </div>
       <div className="midas-dash-copy">{metric.detail}</div>
     </article>

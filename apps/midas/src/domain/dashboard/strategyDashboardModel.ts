@@ -12,6 +12,7 @@ export type DashboardMetric = {
   unit: '%' | 'años' | 'edad' | 'puntos';
   tone: DashboardTone;
   detail: string;
+  category?: string;
 };
 
 export type DashboardRate = {
@@ -325,6 +326,9 @@ export function buildStrategyDashboardModel(input: BuildStrategyDashboardInput):
         : qualityPrimaryTone === 'warning' && sustainabilityTone === 'positive'
           ? 'Sostenibilidad financiera alta, con calidad de vida que requiere seguimiento.'
           : `${evaluation.label}. ${evaluation.qualityAssessment}`;
+  const qualityScoreDetail = evaluation.label === 'Frágil'
+    ? 'La puntuación mejora, pero la clasificación permanece frágil porque la supervivencia con calidad continúa bajo el umbral requerido.'
+    : 'La puntuación y la clasificación son dimensiones relacionadas pero distintas.';
 
   return {
     status: quality ? 'ready' : 'partial',
@@ -341,7 +345,7 @@ export function buildStrategyDashboardModel(input: BuildStrategyDashboardInput):
       { id: 'ruin', label: `Agotamiento antes de ${targetText}`, value: ruin, unit: '%', tone: ruinTone, detail: 'Complemento de la sostenibilidad en el mismo horizonte.' },
       { id: 'horizon', label: 'Horizonte evaluado', value: horizonYears, unit: 'años', tone: 'neutral', detail: 'Duración total considerada por el motor.' },
       { id: 'withdrawal-rate', label: 'Tasa inicial de retiro', value: withdrawalRate, unit: '%', tone: withdrawalRate === null ? 'neutral' : withdrawalRate <= 0.05 ? 'positive' : withdrawalRate <= 0.07 ? 'warning' : 'negative', detail: 'Relación anual inicial utilizada por el escenario activo.' },
-      { id: 'qol-score', label: 'Índice de calidad de vida', value: finite(evaluation.cappedScore), unit: 'puntos', tone: qualityPrimaryTone, detail: `${evaluation.label} · supuestos actuales` },
+      { id: 'qol-score', label: 'Índice de calidad de vida', value: finite(evaluation.rawScore), unit: 'puntos', tone: qualityPrimaryTone, detail: qualityScoreDetail, category: evaluation.label },
     ],
     currentAge: input.currentAge,
     targetAge,

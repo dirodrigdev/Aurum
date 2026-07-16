@@ -156,7 +156,61 @@ const fragileQualityModel = buildStrategyDashboardModel({
   riskCapitalEffective: true,
 });
 assert.equal(fragileQualityModel.interpretation.qualityOfLife, 'Alta sostenibilidad financiera, con fragilidad relevante en calidad de vida bajo los supuestos actuales.');
-assert.equal(fragileQualityModel.primaryMetrics.find((metric) => metric.id === 'qol-score')?.detail, 'Frágil · supuestos actuales');
+assert.equal(fragileQualityModel.primaryMetrics.find((metric) => metric.id === 'qol-score')?.category, 'Frágil');
+assert.equal(fragileQualityModel.primaryMetrics.find((metric) => metric.id === 'qol-score')?.detail, 'La puntuación mejora, pero la clasificación permanece frágil porque la supervivencia con calidad continúa bajo el umbral requerido.');
+
+const buildRiskCapitalQualityModel = (riskCapitalEnabled: boolean, qualityMetrics: QualityOfLifeMetricsV1) => buildStrategyDashboardModel({
+  result: {
+    ...result,
+    success40: qualityMetrics.classicSuccessRate,
+    probRuin40: qualityMetrics.ruinRate,
+    probRuin: qualityMetrics.ruinRate,
+    qualityOfLifeMetrics: qualityMetrics,
+  } as unknown as SimulationResults,
+  params: structuredClone(DEFAULT_PARAMETERS),
+  m8Input: { ...m8Input, risk_capital_clp: riskCapitalEnabled ? m8Input.risk_capital_clp : 0 },
+  currentAge: 48,
+  scenarioLabel: 'Base',
+  canonicalInputReady: true,
+  simulationWorking: false,
+  simulationError: null,
+  riskCapitalEnabled,
+  riskCapitalEffective: riskCapitalEnabled,
+});
+
+const riskOffModel = buildRiskCapitalQualityModel(false, {
+  ...quality,
+  classicSuccessRate: 0.916,
+  ruinRate: 0.084,
+  qualitySurvivalRate: 0.154,
+  csr85_4: 0.737,
+  qasrStrict: 0.904468228955278,
+  averageEffectiveSpendingRatio: 0.9600833061762758,
+  monthsBelow85: 34.907,
+  maxConsecutiveMonthsBelow85: 22,
+  earlyStressMonths: 0.757,
+  terminalWealthRatio: 2.181401876071786,
+} as QualityOfLifeMetricsV1);
+const riskOnModel = buildRiskCapitalQualityModel(true, {
+  ...quality,
+  classicSuccessRate: 0.947,
+  ruinRate: 0.053,
+  qualitySurvivalRate: 0.17,
+  csr85_4: 0.785,
+  qasrStrict: 0.9343720359631039,
+  averageEffectiveSpendingRatio: 0.9616688501983519,
+  monthsBelow85: 32.067,
+  maxConsecutiveMonthsBelow85: 20.25,
+  earlyStressMonths: 0.757,
+  terminalWealthRatio: 2.8031494493469706,
+} as QualityOfLifeMetricsV1);
+const riskOffScore = riskOffModel.primaryMetrics.find((metric) => metric.id === 'qol-score');
+const riskOnScore = riskOnModel.primaryMetrics.find((metric) => metric.id === 'qol-score');
+assert.equal(riskOffScore?.value, 52.3);
+assert.equal(riskOnScore?.value, 54.5);
+assert.equal(riskOffScore?.category, 'Frágil');
+assert.equal(riskOnScore?.category, 'Frágil');
+assert.ok(Number(riskOnScore?.value) > Number(riskOffScore?.value), 'visible raw score must react to risk capital');
 
 const serialized = JSON.stringify(model);
 for (const privateValue of ['1234567890', '67890123', '4321987', '18765', '39123']) {
