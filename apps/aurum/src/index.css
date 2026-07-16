@@ -1,0 +1,57 @@
+@import '@fontsource/inter/latin-300.css';
+@import '@fontsource/inter/latin-400.css';
+@import '@fontsource/inter/latin-500.css';
+@import '@fontsource/inter/latin-600.css';
+@import '@fontsource/inter/latin-700.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .dashboard-return-value {
+    font-size: clamp(1rem, 6cqw, 2.45rem);
+    white-space: nowrap;
+  }
+
+  .dashboard-position-value {
+    font-size: clamp(0.9rem, 10cqw, 2.3rem);
+    white-space: nowrap;
+  }
+
+  .dashboard-return-card,
+  .dashboard-position-card {
+    container-type: inline-size;
+  }
+
+  .dashboard-position-grid > * {
+    container-type: inline-size;
+  }
+}
+
+body {
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+  background-color: #f8fafc;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+#error-overlay {
+  display: none;
+  padding: 20px;
+  text-align: center;
+  color: #ef4444;
+  position: fixed;
+  top: 0;
+  width: 100%;
+  z-index: 9999;
+  background: white;
+}

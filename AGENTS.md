@@ -16,6 +16,20 @@ Reglas comunes: nunca ejecutar E2E autenticado contra producción, usar sesiones
 
 Matriz: cambio documental no requiere E2E salvo documentación de pruebas; cambio visual aislado requiere build y smoke de la app; cambio funcional, Firebase/Auth/Firestore requiere build y E2E; cambio del arnés requiere suites de todas las consumidoras; contrato cruzado requiere secuencia afectada; cambio no verificable no debe declararse validado. Codex debe identificar aplicación/contrato, ejecutar validaciones existentes, corregir fallos comprobados y crear commit sólo tras pasar. No debe responder que Playwright no pudo usarse sin ejecutar primero el comando existente y entregar el error exacto. Informar siempre build, suite, resultado, projectId ficticio y teardown.
 
+## Validación visual obligatoria para cambios de interfaz
+
+Aplica a cambios que afecten layout, responsive, colores, fondos, contraste, tipografía, tamaños, espaciado, tarjetas, tablas, formularios, botones, navegación, modales, gráficos, ejes, leyendas, etiquetas, cifras o textos visibles, estados vacíos/carga/error, componentes nuevos o la estructura visual de una pantalla.
+
+Codex debe identificar las vistas afectadas, levantar el entorno E2E local aislado existente, abrir cada vista con Playwright y capturar screenshots temporales en escritorio y móvil. Añadir viewport intermedio o portátil cuando haya tablas, columnas, gráficos, dependencia de ancho o una diferencia responsive. Inspeccionar superposiciones, texto/números cortados o montados, overflow, elementos fuera de contenedor o viewport, contraste, fuentes ilegibles, controles ocultos, gráficos con ejes/leyendas/valores solapados, tablas ilegibles en móvil, alineación, espaciado, saltos anómalos y cargas que no desaparecen. Corregir defectos comprobados y repetir la revisión antes del build y E2E obligatorios.
+
+Escritorio y móvil son siempre obligatorios para una tarea con impacto visual; el viewport intermedio también es obligatorio cuando el cambio pueda variar por ancho. El smoke actual de una app puede no incluir aún ambos viewports: en ese caso, Codex debe añadir la comprobación visual temporal necesaria o ampliar el smoke dentro de la tarea, sin declarar la revisión móvil como realizada sin evidencia.
+
+Que un elemento exista en DOM o que un smoke pase no demuestra que se vea correctamente. No pedir screenshots manuales si la vista puede abrirse en E2E. Limitar la revisión a pantallas afectadas; cambios mínimos sin impacto visual y cambios documentales no requieren auditoría visual completa. Usar fixtures deterministas cuando los datos dinámicos dificulten revisar; se pueden desactivar animaciones temporalmente para capturas estables. Screenshots, videos y traces permanecen ignorados por Git, sin datos personales/productivos ni acceso a producción.
+
+No se exige `toHaveScreenshot()` ni regresión pixel a pixel general, baselines masivos o actualizaciones automáticas de baselines. La revisión es visual y contextual sobre capturas E2E temporales. Futuro: incorporar `toHaveScreenshot()` selectivamente en vistas críticas, estables y deterministas, sólo después de aprobar expresamente sus imágenes base.
+
+Para tareas visuales informar vistas y viewports revisados, screenshots generados, defectos encontrados y correcciones, build, E2E, projectId ficticio, teardown y limitaciones. No crear el commit si falla revisión visual, build/E2E, consola crítica o persisten problemas de layout evidentes.
+
 ## Mission
 Work as a careful coding agent on this repository.
 Optimize for low-risk, reversible, well-explained changes.

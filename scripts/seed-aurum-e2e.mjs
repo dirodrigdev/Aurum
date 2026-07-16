@@ -23,71 +23,93 @@ try {
   await auth.createUser({ uid, email, password, emailVerified: true });
 }
 
-const records = [
-  {
-    id: 'e2e-bank-clp',
-    block: 'bank',
-    source: 'e2e_fixture',
-    label: 'Banco local ficticio',
-    amount: 2500000,
-    currency: 'CLP',
-    snapshotDate: '2026-01-15',
-    createdAt: '2026-01-15T12:00:00.000Z',
-  },
-  {
-    id: 'e2e-investment-clp',
-    block: 'investment',
-    source: 'e2e_fixture',
-    label: 'Inversión local ficticia',
-    amount: 7500000,
-    currency: 'CLP',
-    snapshotDate: '2026-01-15',
-    createdAt: '2026-01-15T12:00:00.000Z',
-  },
-  {
-    id: 'e2e-debt-clp',
-    block: 'debt',
-    source: 'e2e_fixture',
-    label: 'Deuda local ficticia',
-    amount: -500000,
-    currency: 'CLP',
-    snapshotDate: '2026-01-15',
-    createdAt: '2026-01-15T12:00:00.000Z',
-  },
-];
+const monthKeys = Array.from({ length: 38 }, (_, index) => {
+  const date = new Date(Date.UTC(2023, 4 + index, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+});
 
-const closure = {
-  id: 'e2e-closure-2025-12',
-  monthKey: '2025-12',
-  closedAt: '2026-01-01T12:00:00.000Z',
-  fxRates: { usdClp: 950, eurClp: 1030, ufClp: 38000 },
-  summary: {
-    netByCurrency: { CLP: 9500000, USD: 0, EUR: 0, UF: 0 },
-    assetsByCurrency: { CLP: 10000000, USD: 0, EUR: 0, UF: 0 },
-    debtsByCurrency: { CLP: -500000, USD: 0, EUR: 0, UF: 0 },
-    netConsolidatedClp: 9500000,
-    byBlock: {
-      bank: { CLP: 2500000, USD: 0, EUR: 0, UF: 0 },
-      investment: { CLP: 7500000, USD: 0, EUR: 0, UF: 0 },
-      real_estate: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
-      debt: { CLP: -500000, USD: 0, EUR: 0, UF: 0 },
-    },
-    investmentClp: 7500000,
-    investmentClpWithRisk: 7500000,
-    netClp: 9500000,
-    netClpWithRisk: 9500000,
-    bankClp: 2500000,
-    nonMortgageDebtClp: -500000,
-  },
-  records,
+const recordsForMonth = (monthKey, index) => {
+  const snapshotDate = `${monthKey}-15`;
+  const createdAt = `${snapshotDate}T12:00:00.000Z`;
+  const wave = Math.round(Math.sin(index / 3) * 1_200_000);
+  return [
+    ['bank', 'Saldo bancos CLP', 30_000_000 + index * 220_000 + wave],
+    ['investment', 'Fondo diversificado ficticio', 86_000_000 + index * 1_450_000 + wave * 2],
+    ['investment', 'Capital de riesgo CLP', 14_000_000 + index * 180_000],
+    ['real_estate', 'Valor propiedad', 110_000_000 + index * 350_000],
+    ['debt', 'Crédito ficticio', 24_000_000 - index * 210_000],
+  ].map(([block, label, amount], recordIndex) => ({
+    id: `e2e-${monthKey}-${recordIndex + 1}`,
+    block,
+    source: 'e2e_fixture',
+    label,
+    amount: Math.max(1_000_000, Number(amount)),
+    currency: 'CLP',
+    snapshotDate,
+    createdAt,
+  }));
 };
+
+const summaryFor = (records) => {
+  const amountFor = (block, label) =>
+    records.find((record) => record.block === block && (!label || record.label === label))?.amount || 0;
+  const bankClp = amountFor('bank');
+  const investmentClp = amountFor('investment', 'Fondo diversificado ficticio');
+  const riskCapitalClp = amountFor('investment', 'Capital de riesgo CLP');
+  const realEstateAssetsClp = amountFor('real_estate');
+  const nonMortgageDebtClp = amountFor('debt');
+  const netClp = bankClp + investmentClp + realEstateAssetsClp - nonMortgageDebtClp;
+  const netClpWithRisk = netClp + riskCapitalClp;
+  return {
+    netByCurrency: { CLP: netClpWithRisk, USD: 0, EUR: 0, UF: 0 },
+    assetsByCurrency: { CLP: netClpWithRisk + nonMortgageDebtClp, USD: 0, EUR: 0, UF: 0 },
+    debtsByCurrency: { CLP: nonMortgageDebtClp, USD: 0, EUR: 0, UF: 0 },
+    netConsolidatedClp: netClpWithRisk,
+    byBlock: {
+      bank: { CLP: bankClp, USD: 0, EUR: 0, UF: 0 },
+      investment: { CLP: investmentClp + riskCapitalClp, USD: 0, EUR: 0, UF: 0 },
+      real_estate: { CLP: realEstateAssetsClp, USD: 0, EUR: 0, UF: 0 },
+      debt: { CLP: nonMortgageDebtClp, USD: 0, EUR: 0, UF: 0 },
+    },
+    investmentClp,
+    riskCapitalClp,
+    investmentClpWithRisk: investmentClp + riskCapitalClp,
+    netClp,
+    netClpWithRisk,
+    bankClp,
+    nonMortgageDebtClp,
+    realEstateNetClp: realEstateAssetsClp,
+    realEstateAssetsClp,
+    mortgageDebtClp: 0,
+  };
+};
+
+const closures = monthKeys.map((monthKey, index) => {
+  const records = recordsForMonth(monthKey, index);
+  const [year, month] = monthKey.split('-').map(Number);
+  return {
+    id: `e2e-closure-${monthKey}`,
+    monthKey,
+    closedAt: new Date(Date.UTC(year, month, 1, 12)).toISOString(),
+    fxRates: {
+      usdClp: 820 + index * 3,
+      eurClp: 900 + index * 4,
+      ufClp: 35_000 + index * 120,
+    },
+    summary: summaryFor(records),
+    records,
+  };
+});
+
+const records = recordsForMonth('2026-07', monthKeys.length);
+const currentSummary = summaryFor(records);
 
 await db.doc(`aurum_wealth/${uid}`).set({
   schemaVersion: 1,
-  updatedAt: '2026-01-15T12:00:00.000Z',
-  fx: { usdClp: 950, eurClp: 1030, ufClp: 38000 },
+  updatedAt: '2026-07-15T12:00:00.000Z',
+  fx: { usdClp: 934, eurClp: 1052, ufClp: 39560 },
   records,
-  closures: [closure],
+  closures,
   closureDeletionTombstones: [],
   instruments: [],
   bankTokens: {},
@@ -95,4 +117,4 @@ await db.doc(`aurum_wealth/${uid}`).set({
   deletedRecordAssetMonthKeys: [],
 });
 
-console.log(`Seed E2E listo para ${projectId}/${uid}.`);
+console.log(`Seed E2E listo para ${projectId}/${uid}: ${closures.length} cierres ficticios, neto actual ${currentSummary.netClpWithRisk}.`);

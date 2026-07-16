@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, renameSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
-import { homedir } from 'node:os';
+import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -107,7 +107,39 @@ const resolveJavaBinary = () => {
   return binary;
 };
 
-export const runFirebaseCli = (argumentsForFirebase, workspaceDir = repositoryRoot) => {
+const descendantPids = (rootPid) => {
+  const output = commandOutput('ps', ['-axo', 'pid=,ppid=']);
+  const childrenByParent = new Map();
+  for (const line of output.split('\n')) {
+    const match = line.trim().match(/^(\d+)\s+(\d+)$/);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const parentPid = Number(match[2]);
+    const children = childrenByParent.get(parentPid) || [];
+    children.push(pid);
+    childrenByParent.set(parentPid, children);
+  }
+  const descendants = [];
+  const pending = [...(childrenByParent.get(rootPid) || [])];
+  while (pending.length) {
+    const pid = pending.pop();
+    descendants.push(pid);
+    pending.push(...(childrenByParent.get(pid) || []));
+  }
+  return descendants.reverse();
+};
+
+const signalOwnedTree = (rootPid, signal) => {
+  for (const pid of [...descendantPids(rootPid), rootPid]) {
+    try {
+      process.kill(pid, signal);
+    } catch (error) {
+      if (error?.code !== 'ESRCH') throw error;
+    }
+  }
+};
+
+export const runFirebaseCli = async (argumentsForFirebase, workspaceDir = repositoryRoot) => {
   const firebaseBinary = firebaseBinaryFor(workspaceDir);
   if (!existsSync(firebaseBinary)) {
     throw new Error('No encuentro firebase-tools local. Ejecuta npm install desde la raíz del monorepo.');
@@ -115,7 +147,7 @@ export const runFirebaseCli = (argumentsForFirebase, workspaceDir = repositoryRo
   const nodeBinary = resolveNodeBinary();
   const javaBinary = resolveJavaBinary();
   const javaHome = resolve(javaBinary, '..', '..');
-  const result = spawnSync(nodeBinary, ['-r', motdLoader, firebaseBinary, ...argumentsForFirebase], {
+  const child = spawn(nodeBinary, ['-r', motdLoader, firebaseBinary, ...argumentsForFirebase], {
     cwd: workspaceDir,
     stdio: 'inherit',
     env: {
@@ -126,6 +158,34 @@ export const runFirebaseCli = (argumentsForFirebase, workspaceDir = repositoryRo
       E2E_FIREBASE_WORKSPACE_DIR: workspaceDir,
     },
   });
-  if (result.error) throw result.error;
-  return result.status ?? 1;
+  let forcedKillTimer;
+  const forwardSignal = (signal) => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    signalOwnedTree(child.pid, signal);
+    forcedKillTimer = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) signalOwnedTree(child.pid, 'SIGKILL');
+    }, 5_000);
+    forcedKillTimer.unref();
+  };
+  const onSigint = () => forwardSignal('SIGINT');
+  const onSigterm = () => forwardSignal('SIGTERM');
+  process.once('SIGINT', onSigint);
+  process.once('SIGTERM', onSigterm);
+  try {
+    return await new Promise((resolveResult, reject) => {
+      child.once('error', reject);
+      child.once('close', (code) => resolveResult(code ?? 1));
+    });
+  } finally {
+    if (forcedKillTimer) clearTimeout(forcedKillTimer);
+    process.removeListener('SIGINT', onSigint);
+    process.removeListener('SIGTERM', onSigterm);
+  }
+};
+
+export const removeEmulatorHubLocator = (projectId) => {
+  if (!/^[a-z][a-z0-9-]*-e2e-local$/.test(String(projectId || ''))) {
+    throw new Error(`No limpiaré un locator de Firebase para un projectId no local: ${projectId}.`);
+  }
+  rmSync(resolve(tmpdir(), `hub-${projectId}.json`), { force: true });
 };

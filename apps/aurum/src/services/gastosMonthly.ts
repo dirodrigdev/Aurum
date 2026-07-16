@@ -107,6 +107,8 @@ export const GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT = 'aurum:gastapp-monthly-sourc
 const GASTAPP_DIAG_PREFIX = '[AURUM][gastapp-monthly][diag]';
 const GASTAPP_MONTHLY_COLLECTION = 'aurum_monthly_from_periods_v1';
 const GASTAPP_DIAG_ENABLED = Boolean(import.meta.env.DEV || import.meta.env.VITE_GASTAPP_DIAG === '1');
+const E2E_GASTAPP_FIXTURE_REASON = 'e2e_gastapp_disabled';
+const USE_E2E_GASTAPP_FIXTURE = import.meta.env.VITE_E2E_USE_FIREBASE_EMULATOR === 'true';
 
 const diagInfo = (message: string) => {
   if (!GASTAPP_DIAG_ENABLED) return;
@@ -128,13 +130,13 @@ const gastappMonthlyRuntime: {
   lastUpdatedAt: string | null;
   configuredProjectId: string;
 } = {
-  status: 'idle',
-  mode: null,
+  status: USE_E2E_GASTAPP_FIXTURE ? 'ready' : 'idle',
+  mode: USE_E2E_GASTAPP_FIXTURE ? 'legacy' : null,
   map: {},
   loadPromise: null,
-  error: null,
-  errorCode: null,
-  lastUpdatedAt: null,
+  error: USE_E2E_GASTAPP_FIXTURE ? E2E_GASTAPP_FIXTURE_REASON : null,
+  errorCode: USE_E2E_GASTAPP_FIXTURE ? 'e2e_fixture' : null,
+  lastUpdatedAt: USE_E2E_GASTAPP_FIXTURE ? new Date().toISOString() : null,
   configuredProjectId: '',
 };
 
@@ -206,6 +208,23 @@ const readNumber = (value: unknown): number | null => {
 // TEMP LEGACY FALLBACK (deprecado): se mantiene solo para transición controlada.
 // Retirar cuando la lectura desde `aurum_monthly_from_periods_v1` esté validada al 100%.
 const resolveFromLegacy = (monthKey: string, now: Date): GastosMonthResolution => {
+  if (gastappMonthlyRuntime.error === E2E_GASTAPP_FIXTURE_REASON) {
+    const parsed = parseMonthKey(monthKey);
+    const monthIndex = parsed ? parsed.year * 12 + parsed.month : 0;
+    return {
+      monthKey,
+      status: 'complete',
+      gastosEur: 2_400 + (monthIndex % 12) * 45,
+      source: 'gastapp_firestore',
+      contractStatus: 'complete',
+      dataQuality: 'ok',
+      isStale: false,
+      staleReason: null,
+      dayToDaySource: 'e2e_fixture',
+      contractSource: 'e2e_fixture',
+    };
+  }
+
   const raw = GASTAPP_TOTALS[monthKey];
   if (Number.isFinite(raw)) {
     return {
@@ -284,9 +303,12 @@ const logSourceModeOnce = () => {
     return;
   }
   if (gastappMonthlyRuntime.mode === 'legacy') {
-    console.error(
-      `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=${gastappMonthlyRuntime.error || 'unknown'} projectId_configured=${configuredProjectIdForLogs()}`,
-    );
+    const message = `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=${gastappMonthlyRuntime.error || 'unknown'} projectId_configured=${configuredProjectIdForLogs()}`;
+    if (gastappMonthlyRuntime.error === E2E_GASTAPP_FIXTURE_REASON) {
+      diagInfo(message);
+    } else {
+      console.error(message);
+    }
     gastappMonthlyDiag.didLogMode = true;
   }
 };
@@ -387,7 +409,10 @@ const loadGastappMonthlyContable = async () => {
     if (firebaseBridge.isE2EFirebaseEmulatorEnabled()) {
       gastappMonthlyRuntime.status = 'ready';
       gastappMonthlyRuntime.mode = 'legacy';
+      gastappMonthlyRuntime.error = E2E_GASTAPP_FIXTURE_REASON;
+      gastappMonthlyRuntime.errorCode = 'e2e_fixture';
       gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
+      logSourceModeOnce();
       emitGastappSourceUpdated();
       return;
     }

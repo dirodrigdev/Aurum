@@ -78,13 +78,13 @@ const ExecutivePositionCard = ({
   subtitleClassName?: string;
   labelClassName?: string;
 }) => (
-  <Card className={cn('relative overflow-hidden rounded-[24px] border border-slate-200/80 bg-white p-3.5 shadow-[0_14px_34px_rgba(15,23,42,0.07)] sm:p-4', className)}>
+  <Card className={cn('relative min-w-0 overflow-hidden rounded-[24px] border border-slate-200/80 bg-white p-3.5 shadow-[0_14px_34px_rgba(15,23,42,0.07)] sm:p-4', className)}>
     <div className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-2xl bg-slate-50 text-slate-500 sm:h-10 sm:w-10">
       <Icon className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
     </div>
     <div className="min-w-0 pr-8 sm:pr-11">
       <div className={cn('min-h-[3.45rem] text-[7px] font-semibold uppercase tracking-[0.16em] text-slate-500 sm:min-h-[3.9rem] sm:text-[8px] sm:tracking-[0.18em]', labelClassName)}>{label}</div>
-      <div className={cn('mt-2 text-[clamp(1.5rem,5vw,2.3rem)] font-semibold leading-none tracking-[-0.06em]', tone === 'neutral' ? 'text-slate-900' : toneClasses[tone], valueClassName)}>{value}</div>
+      <div className={cn('dashboard-position-value mt-2 font-semibold leading-none tracking-[-0.06em]', tone === 'neutral' ? 'text-slate-900' : toneClasses[tone], valueClassName)}>{value}</div>
       <div className={cn('mt-2 text-[12px] leading-tight text-slate-500 sm:text-[13px]', subtitleClassName)}>{subtitle}</div>
     </div>
   </Card>
@@ -111,7 +111,7 @@ const ExecutiveReturnCard = ({
     data-testid={testId}
     data-emphasis={emphasis}
     className={cn(
-      'rounded-[28px] border bg-[radial-gradient(circle_at_top_right,_rgba(99,245,177,0.08),_transparent_28%),linear-gradient(145deg,#071834_0%,#0d2449_52%,#08142d_100%)] p-4 text-white shadow-[0_22px_60px_rgba(3,10,26,0.28)] sm:p-5',
+      'dashboard-return-card min-w-0 rounded-[28px] border bg-[radial-gradient(circle_at_top_right,_rgba(99,245,177,0.08),_transparent_28%),linear-gradient(145deg,#071834_0%,#0d2449_52%,#08142d_100%)] p-4 text-white shadow-[0_22px_60px_rgba(3,10,26,0.28)] sm:p-5',
       emphasis === 'primary'
         ? 'border-emerald-400/30 ring-1 ring-emerald-300/15'
         : 'border-white/10 opacity-[0.94]',
@@ -130,14 +130,14 @@ const ExecutiveReturnCard = ({
         <TrendingUp className="h-[18px] w-[18px] sm:h-5 sm:w-5" />
       </div>
     </div>
-    <div className="mt-4 grid gap-3 sm:grid-cols-2 sm:gap-3.5">
-      <div className="border-b border-white/10 pb-3 sm:border-b-0 sm:border-r sm:pb-0 sm:pr-4">
+    <div className="mt-4 grid min-w-0 grid-cols-2 gap-3 sm:gap-3.5">
+      <div className="min-w-0 border-r border-white/10 pb-3 pr-3">
         <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">USD</div>
-        <div className="mt-2 text-[clamp(1.65rem,6.8vw,2.45rem)] font-semibold leading-none tracking-[-0.06em] text-emerald-300">{usdValue}</div>
+        <div className="dashboard-return-value mt-2 font-semibold leading-none tracking-[-0.06em] text-emerald-300">{usdValue}</div>
       </div>
-      <div>
+      <div className="min-w-0 pb-3">
         <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">UF</div>
-        <div className="mt-2 text-[clamp(1.65rem,6.8vw,2.45rem)] font-semibold leading-none tracking-[-0.06em] text-emerald-300">{ufValue}</div>
+        <div className="dashboard-return-value mt-2 font-semibold leading-none tracking-[-0.06em] text-emerald-300">{ufValue}</div>
       </div>
     </div>
     <div className="mt-4 border-t border-white/10 pt-3 text-[13px] text-slate-300/84">
@@ -607,7 +607,7 @@ export const DashboardAurum: React.FC = () => {
         <div className="px-1">
           <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-500">Tu posición financiera</div>
         </div>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="dashboard-position-grid grid min-w-0 grid-cols-3 gap-3">
         <ExecutivePositionCard
           label={model.cards.sustainable.label}
           value={formatDashboardCompactClp(model.cards.sustainable.valueClp)}
