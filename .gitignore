@@ -12,6 +12,7 @@ build/
 apps/midas/.playwright/
 .playwright/aurum/
 .playwright/aurum-e2e/
+.playwright/aurum-visual-audit/
 .playwright/midas-e2e/
 .firebase/aurum-e2e/
 .firebase/midas-e2e/

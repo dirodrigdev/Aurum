@@ -36,14 +36,14 @@ export const Layout: React.FC = () => {
         </div>
       </header>
 
-      <main className="flex-1 max-w-xl mx-auto w-full pb-20">
+      <main className="flex-1 max-w-xl mx-auto w-full pb-20 md:pb-0">
         {location.pathname.startsWith('/settings') ? (
           <FxSyncStatusBanner onGoSettings={() => navigate('/settings')} />
         ) : null}
         <Outlet />
       </main>
 
-      <nav className="fixed bottom-0 inset-x-0 border-t border-slate-200 bg-white/95 backdrop-blur pb-2 z-50">
+      <nav className="fixed bottom-0 inset-x-0 border-t border-slate-200 bg-white/95 backdrop-blur pb-[calc(0.5rem+env(safe-area-inset-bottom))] z-50 md:static md:order-last">
         <div className="max-w-xl mx-auto flex justify-between px-4 pt-1.5 pb-3">
           {navItems.map((item: any) => {
             if (!('to' in item) && typeof item.onClick === 'function') {

@@ -14,63 +14,12 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="theme-color" content="#0f172a" />
 
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
-
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta
       name="apple-mobile-web-app-status-bar-style"
       content="black-translucent"
     />
 
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            fontFamily: { sans: ['Inter', 'sans-serif'] },
-            colors: {
-              brand: {
-                50: '#eff6ff',
-                100: '#dbeafe',
-                500: '#3b82f6',
-                600: '#2563eb',
-                700: '#1d4ed8',
-                900: '#1e3a8a'
-              }
-            }
-          }
-        }
-      }
-    </script>
-
-    <style>
-      body {
-        -webkit-tap-highlight-color: transparent;
-        overscroll-behavior-y: none;
-        background-color: #f8fafc;
-      }
-      .no-scrollbar::-webkit-scrollbar {
-        display: none;
-      }
-      .no-scrollbar {
-        -ms-overflow-style: none;
-        scrollbar-width: none;
-      }
-      #error-overlay {
-        display: none;
-        padding: 20px;
-        text-align: center;
-        color: #ef4444;
-        position: fixed;
-        top: 0;
-        width: 100%;
-        z-index: 9999;
-        background: white;
-      }
-    </style>
   </head>
   <body>
     <div id="root"></div>

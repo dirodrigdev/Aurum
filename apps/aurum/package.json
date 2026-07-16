@@ -14,6 +14,7 @@
     "test:integration": "RUN_CLOUD_TESTS=1 vitest run tests/**/*.integration.test.ts"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.2.8",
     "clsx": "^2.1.0",
     "firebase": "^10.8.1",
     "firebase-admin": "^12.7.0",

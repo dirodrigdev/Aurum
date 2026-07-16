@@ -1,6 +1,6 @@
 import { loadAppConfig } from './app-config.mjs';
 import { assertPortsAvailable } from '../process/ports.mjs';
-import { runFirebaseCli } from '../runtime/firebase-cli.mjs';
+import { removeEmulatorHubLocator, runFirebaseCli } from '../runtime/firebase-cli.mjs';
 
 const configPath = process.argv[2];
 if (!configPath) throw new Error('Uso: node start-app-emulators.mjs <configuración-e2e>.');
@@ -13,4 +13,8 @@ const firebaseArguments = [
   '--only', 'auth,firestore',
   '--project', config.projectId,
 ];
-process.exitCode = runFirebaseCli(firebaseArguments, config.repositoryDir);
+try {
+  process.exitCode = await runFirebaseCli(firebaseArguments, config.repositoryDir);
+} finally {
+  removeEmulatorHubLocator(config.projectId);
+}

@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import './index.css';
 
 // 🔥 BUMP APP_BUILD:
 // Cada vez que quieras FORZAR que todos refresquen caché (celu incluido),
