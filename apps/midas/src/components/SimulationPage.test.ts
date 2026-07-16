@@ -668,7 +668,7 @@ assert(!appSource.includes("activeTab === 'optv0'"));
 assert(appSource.includes('headerConfidenceLabel'));
 assert(appSource.includes('headerHasOnlyRunResultBlockingReasons'));
 assert(appSource.includes('headerShowsStaleResult'));
-assert(appSource.includes('Resultado anterior:'));
+assert(appSource.includes('Sostenibilidad anterior:'));
 assert(appSource.includes('Recalcular'));
 assert(appSource.includes('<BottomNav active={productActiveTab} onChange={handleTabChange} />'));
 assert(!appSource.includes('ParamSheet'));

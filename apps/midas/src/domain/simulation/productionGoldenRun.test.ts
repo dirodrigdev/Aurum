@@ -322,14 +322,14 @@ const currentMidasEvaluation = buildMidasEvaluation({
 });
 
 assert.equal(fixture.midasEvaluation.label, 'Frágil');
-assert.equal(fixture.midasEvaluation.cappedScore, 52);
+assert.equal(fixture.midasEvaluation.cappedScore, 51.9);
 assert.equal(fixture.midasEvaluation.isComparable, true);
 assert.equal(fixture.midasEvaluation.confidenceBand, 'low');
 assert.ok(fixture.midasEvaluation.warnings.includes('observed_consumption_months_incomplete'));
 assert.ok(fixture.midasEvaluation.warnings.includes('post_ruin_months_present'));
 assert.ok(fixture.midasEvaluation.warnings.includes('source_policy:canonical_with_warnings'));
 assert.equal(currentMidasEvaluation.label, 'Frágil');
-assert.equal(currentMidasEvaluation.cappedScore, 52);
+assert.equal(currentMidasEvaluation.cappedScore, 51.9);
 assert.equal(currentMidasEvaluation.isComparable, true);
 assert.equal(currentMidasEvaluation.confidenceBand, 'low');
 

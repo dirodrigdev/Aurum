@@ -36,6 +36,7 @@ const RISK_E_FLOOR_FRACTION = 0.20;
 const RISK_E_MICRO_FRACTION = 0.05;
 const RISK_E_MAX_LARGE_SELLS = 4;
 const RISK_E_LARGE_SELL_COOLDOWN_MONTHS = 6;
+const RISK_CAPITAL_RANDOM_STREAM_SALT = 0x51f15e5d;
 const RISK_E_BTC_LIKE = {
   realDriftAnnual: 0.20,
   volAnnual: 0.65,
@@ -511,6 +512,9 @@ const pathSeed = (seed: number, pathIndex: number): number => {
   const mixed = base + Math.imul(pathIndex + 1, 0x9e3779b9);
   return mixed >>> 0;
 };
+
+const riskCapitalPathSeed = (seed: number, pathIndex: number): number =>
+  pathSeed((Math.trunc(seed) ^ RISK_CAPITAL_RANDOM_STREAM_SALT) >>> 0, pathIndex);
 
 const resolveRiskCapitalPolicy = (input: M8Input): M8RiskCapitalPolicy =>
   input.risk_capital_policy ?? RISK_CAPITAL_POLICY_DEFAULT;
@@ -1010,6 +1014,7 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
 
   for (let p = 0; p < input.n_paths; p += 1) {
     const rng = new SeededRng(pathSeed(input.seed, p));
+    const riskCapitalRng = new SeededRng(riskCapitalPathSeed(input.seed, p));
     const sleeves: Record<AssetKey, number> = mixToSleeves(runtimeMix, coreStartingCapital);
     let riskReserve = riskReserveInitial;
     let preHouseRiskUsed = 0;
@@ -1133,7 +1138,7 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
         }
       }
       if (isRiskEPolicy(riskPolicy) && riskBtcDriver === 'btc_like_v1') {
-        const riskEReturn = sampleRiskEBtcLikeMonthlyReturn(rng);
+        const riskEReturn = sampleRiskEBtcLikeMonthlyReturn(riskCapitalRng);
         riskEPrice *= Math.max(0.05, 1 + riskEReturn);
         riskReserve *= Math.max(0.05, 1 + riskEReturn);
         riskEPriceHistory.push(riskEPrice);

@@ -902,7 +902,7 @@
     "source": "quality_of_life_metrics_v1",
     "label": "Frágil",
     "rawScore": 52.3,
-    "cappedScore": 52,
+    "cappedScore": 51.9,
     "confidenceBand": "low",
     "noRuinAssessment": "No ruina fuerte.",
     "qualityAssessment": "Calidad frágil.",
