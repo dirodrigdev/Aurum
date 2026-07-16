@@ -7,6 +7,7 @@ import { SettingsAurum } from './pages/SettingsAurum';
 import { ClosingAurum } from './pages/ClosingAurum';
 import { AnalysisAurum } from './pages/AnalysisAurum';
 import { DashboardAurum } from './pages/DashboardAurum';
+import { EcosystemAurum } from './pages/EcosystemAurum';
 import { WEALTH_DELTA_TOAST_TRIGGER_EVENT } from './hooks/useWealthDelta';
 import {
   auth,
@@ -42,6 +43,7 @@ import {
 import { hydrateWealthFromCloudShared } from './services/wealthHydration';
 
 const INCOMPLETE_CLOSURE_PROMPT_DAY_KEY = 'aurum.incomplete-closure.prompt.day.v1';
+const PRESENTATION_ROUTE_EVENT = 'aurum:presentation-route';
 const CLOSING_FOCUS_MONTH_KEY = 'aurum.closing.focus.month.v1';
 
 type FxIndicatorSnapshot = {
@@ -204,6 +206,24 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [loginLoading, setLoginLoading] = useState(false);
   const [incompletePrompt, setIncompletePrompt] = useState<IncompletePrompt | null>(null);
   const [fxIndicatorPrompt, setFxIndicatorPrompt] = useState<FxIndicatorPrompt | null>(null);
+  const [isPresentationRoute, setIsPresentationRoute] = useState(
+    () => window.location.hash.replace(/^#\/?/, '') === 'ecosystem',
+  );
+
+  useEffect(() => {
+    const syncPresentationRoute = () => {
+      setIsPresentationRoute(window.location.hash.replace(/^#\/?/, '') === 'ecosystem');
+    };
+    const syncPresentationEvent = (event: Event) => {
+      setIsPresentationRoute(Boolean((event as CustomEvent<{ active?: boolean }>).detail?.active));
+    };
+    window.addEventListener('hashchange', syncPresentationRoute);
+    window.addEventListener(PRESENTATION_ROUTE_EVENT, syncPresentationEvent);
+    return () => {
+      window.removeEventListener('hashchange', syncPresentationRoute);
+      window.removeEventListener(PRESENTATION_ROUTE_EVENT, syncPresentationEvent);
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -434,7 +454,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return (
     <>
       {children}
-      {!!fxIndicatorPrompt && (
+      {!isPresentationRoute && !!fxIndicatorPrompt && (
         <div className="fixed inset-0 z-[121] bg-black/45 p-4 flex items-center justify-center">
           <div className="w-full max-w-xl rounded-2xl border border-blue-200 bg-white p-5 shadow-2xl">
             <div className="text-lg font-semibold text-slate-900">Actualización de indicadores</div>
@@ -505,7 +525,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           </div>
         </div>
       )}
-      {!fxIndicatorPrompt && !!incompletePrompt && (
+      {!isPresentationRoute && !fxIndicatorPrompt && !!incompletePrompt && (
         <div className="fixed inset-0 z-[120] bg-black/45 p-4 flex items-center justify-center">
           <div className="w-full max-w-md rounded-2xl border border-amber-200 bg-white p-5 shadow-2xl">
             <div className="text-lg font-semibold text-slate-900">Cierre mensual incompleto</div>
@@ -555,6 +575,7 @@ const App: React.FC = () => {
           <Route element={<Layout />}>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<DashboardAurum />} />
+            <Route path="/ecosystem" element={<EcosystemAurum />} />
             <Route path="/patrimonio" element={<Patrimonio />} />
             <Route path="/closing" element={<ClosingAurum />} />
             <Route path="/analysis" element={<AnalysisAurum />} />

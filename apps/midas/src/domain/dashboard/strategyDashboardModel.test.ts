@@ -141,6 +141,22 @@ assert.equal(model.mix.reduce((sum, item) => sum + item.share, 0), 1);
 assert(model.rates.every((rate) => rate.value === null || (rate.value >= 0 && rate.value < 1)));
 assert(model.quality.length >= 4);
 assert(model.signals.length >= 6);
+assert.equal(model.primaryMetrics.find((metric) => metric.id === 'ruin')?.detail, 'Complemento de la sostenibilidad en el mismo horizonte.');
+
+const fragileQualityModel = buildStrategyDashboardModel({
+  result: { ...result, qualityOfLifeMetrics: { ...quality, qualitySurvivalRate: 0.154 } } as unknown as SimulationResults,
+  params: structuredClone(DEFAULT_PARAMETERS),
+  m8Input,
+  currentAge: 48,
+  scenarioLabel: 'Base',
+  canonicalInputReady: true,
+  simulationWorking: false,
+  simulationError: null,
+  riskCapitalEnabled: true,
+  riskCapitalEffective: true,
+});
+assert.equal(fragileQualityModel.interpretation.qualityOfLife, 'Alta sostenibilidad financiera, con fragilidad relevante en calidad de vida bajo los supuestos actuales.');
+assert.equal(fragileQualityModel.primaryMetrics.find((metric) => metric.id === 'qol-score')?.detail, 'Frágil · supuestos actuales');
 
 const serialized = JSON.stringify(model);
 for (const privateValue of ['1234567890', '67890123', '4321987', '18765', '39123']) {

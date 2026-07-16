@@ -13,6 +13,7 @@ type DashboardPageProps = {
   onOpenSimulation: () => void;
   onOpenSensitivity: () => void;
   onOpenSettings: () => void;
+  onOpenEcosystem: () => void;
 };
 
 const toneColor: Record<DashboardTone, string> = {
@@ -92,11 +93,11 @@ function SignalCard({ signal }: { signal: DashboardSignal }) {
   );
 }
 
-function EmptyDashboard({ model, onOpenSimulation }: Pick<DashboardPageProps, 'model' | 'onOpenSimulation'>) {
+function EmptyDashboard({ model, onOpenSimulation, onOpenEcosystem }: Pick<DashboardPageProps, 'model' | 'onOpenSimulation' | 'onOpenEcosystem'>) {
   const loading = model.status === 'loading';
   const errored = model.status === 'error';
   return (
-    <section className="midas-dash-empty" data-testid="dashboard-empty-state">
+    <section className="midas-dash-empty" data-testid="dashboard-empty-state" style={{ minHeight: 560, display: 'grid', justifyItems: 'center', alignContent: 'center', textAlign: 'center', padding: '40px 20px', border: `1px solid ${T.border}`, borderRadius: 30, background: `radial-gradient(circle at center,rgba(91,140,255,.08),transparent 35%),${T.surface}` }}>
       <div className={`midas-dash-empty-orbit${loading ? ' is-loading' : ''}`} aria-hidden="true">
         <span />
       </div>
@@ -104,14 +105,17 @@ function EmptyDashboard({ model, onOpenSimulation }: Pick<DashboardPageProps, 'm
       <h1>{loading ? 'Preparando una lectura segura del plan' : errored ? 'No pudimos completar la lectura' : 'Aún no hay indicadores para presentar'}</h1>
       <p>{model.statusMessage}</p>
       <p className="midas-dash-privacy">Vista de presentación: los valores monetarios permanecen ocultos.</p>
-      {!loading ? <button type="button" className="midas-dash-primary-button" onClick={onOpenSimulation}>Ir a Simulación</button> : null}
+      <div className="midas-dash-actions" style={{ justifyContent: 'center' }}>
+        {!loading ? <button type="button" className="midas-dash-primary-button" onClick={onOpenSimulation}>Ir a Simulación</button> : null}
+        <button type="button" className="midas-dash-secondary-button" style={{ border: `1px solid ${T.border}`, borderRadius: 999, padding: '10px 14px', background: T.surfaceEl, color: '#C7D1E1', fontSize: 11, fontWeight: 800, cursor: 'pointer' }} onClick={onOpenEcosystem}>Ver ecosistema</button>
+      </div>
     </section>
   );
 }
 
-export function DashboardPage({ model, onOpenSimulation, onOpenSensitivity, onOpenSettings }: DashboardPageProps) {
+export function DashboardPage({ model, onOpenSimulation, onOpenSensitivity, onOpenSettings, onOpenEcosystem }: DashboardPageProps) {
   if (model.status === 'loading' || model.status === 'empty' || model.status === 'error') {
-    return <EmptyDashboard model={model} onOpenSimulation={onOpenSimulation} />;
+    return <EmptyDashboard model={model} onOpenSimulation={onOpenSimulation} onOpenEcosystem={onOpenEcosystem} />;
   }
 
   const successMetric = model.primaryMetrics.find((metric) => metric.id === 'success') ?? null;
@@ -317,6 +321,7 @@ export function DashboardPage({ model, onOpenSimulation, onOpenSensitivity, onOp
             <button type="button" className="midas-dash-primary-button" onClick={onOpenSimulation}>Ver Simulación</button>
             <button type="button" className="midas-dash-secondary-button" onClick={onOpenSensitivity}>Abrir Sensibilidad</button>
             <button type="button" className="midas-dash-secondary-button" onClick={onOpenSettings}>Revisar Ajustes</button>
+            <button type="button" className="midas-dash-secondary-button" onClick={onOpenEcosystem}>Ver ecosistema</button>
           </div>
         </div>
         <div className="midas-dash-reading-list">

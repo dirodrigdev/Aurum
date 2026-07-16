@@ -204,4 +204,44 @@ const makeMetrics = (overrides: Partial<QualityOfLifeMetricsV1> = {}): QualityOf
   assert.ok(evaluation.warnings.includes('result_not_comparable_for_decision'));
 }
 
+{
+  const fragile = buildMidasEvaluation({
+    qualityOfLifeMetrics: makeMetrics({
+      classicSuccessRate: 0.922,
+      qualitySurvivalRate: 0.154,
+      qasrStrict: 0.904,
+      averageEffectiveSpendingRatio: 0.96,
+      earlyStressMonths: 0.757,
+      monthsBelow85: 34.9,
+      maxConsecutiveMonthsBelow85: 22,
+      terminalWealthRatio: 2.18,
+    }),
+    inputAuditable: true,
+    canUseForDecision: true,
+    decisionStatus: 'canonical',
+  });
+  assert.equal(fragile.label, 'Frágil');
+  assert.ok((fragile.rawScore ?? 0) > 52);
+  assert.ok((fragile.cappedScore ?? 100) < 52, 'A Fragile score must remain below its displayed category boundary after rounding');
+
+  const improved = buildMidasEvaluation({
+    qualityOfLifeMetrics: makeMetrics({
+      classicSuccessRate: 0.95,
+      qualitySurvivalRate: 0.6,
+      qasrStrict: 0.94,
+      averageEffectiveSpendingRatio: 0.98,
+      earlyStressMonths: 0,
+      monthsBelow85: 18,
+      maxConsecutiveMonthsBelow85: 5,
+      terminalWealthRatio: 0.9,
+    }),
+    inputAuditable: true,
+    canUseForDecision: true,
+    decisionStatus: 'canonical',
+  });
+  assert.ok((improved.rawScore ?? 0) > (fragile.rawScore ?? 0));
+  assert.ok((improved.cappedScore ?? 0) > (fragile.cappedScore ?? 0));
+  assert.ok(['Bueno', 'Bueno alto', 'Muy sólido'].includes(improved.label));
+}
+
 console.log('midasEvaluation tests passed');

@@ -119,6 +119,9 @@ import type { M8Input } from './domain/simulation/m8.types';
 const DashboardPageLazy = React.lazy(() =>
   import('./components/DashboardPage').then((module) => ({ default: module.DashboardPage })),
 );
+const EcosystemPageLazy = React.lazy(() =>
+  import('./components/EcosystemPage').then((module) => ({ default: module.EcosystemPage })),
+);
 
 const AssistedSimulationPageLazy = React.lazy(() =>
   import('./components/AssistedSimulationPage').then((module) => ({ default: module.AssistedSimulationPage })),
@@ -924,12 +927,14 @@ const resolveProductTab = (tab: TabId): TabId => (LEGACY_TABS.has(tab) ? 'sim' :
 export const resolveInitialProductTab = (): TabId => {
   if (typeof window === 'undefined') return 'sim';
   const hashRoute = window.location.hash.replace(/^#\/?/, '').toLowerCase();
-  return hashRoute === 'dashboard' ? 'dashboard' : 'sim';
+  if (hashRoute === 'dashboard') return 'dashboard';
+  if (hashRoute === 'ecosystem') return 'ecosystem';
+  return 'sim';
 };
 
 const syncProductTabRoute = (tab: TabId) => {
   if (typeof window === 'undefined') return;
-  const nextHash = tab === 'dashboard' ? '#/dashboard' : '';
+  const nextHash = tab === 'dashboard' ? '#/dashboard' : tab === 'ecosystem' ? '#/ecosystem' : '';
   const nextUrl = `${window.location.pathname}${window.location.search}${nextHash}`;
   window.history.pushState({ midasTab: tab }, '', nextUrl);
 };
@@ -4682,12 +4687,12 @@ export default function App() {
     ? canonicalInputBlockDisplay.metricText
     : headerShowsStaleResult
     ? headerSuccess40 !== null && Number.isFinite(headerSuccess40)
-      ? `Resultado anterior: ${formatSuccessPct(headerSuccess40)}`
+      ? `Sostenibilidad anterior: ${formatSuccessPct(headerSuccess40)}`
       : 'Pendiente de recalcular'
     : localReadOnlyCloudFallbackEnabled && !headerShowsDefinitiveNumber
       ? 'Modo local'
       : headerShowsDefinitiveNumber
-      ? `Éxito ${formatSuccessPct(headerSuccess40)}`
+      ? `Sostenibilidad ${formatSuccessPct(headerSuccess40)}`
       : 'Calculando…';
   const headerConfidenceLabel = canonicalInputBlockDisplay
     ? canonicalInputBlockDisplay.confidenceLabel
@@ -4974,6 +4979,17 @@ export default function App() {
     stateLabel,
     simulationResultDiagnostics.isFinalForCurrentInput,
   ]);
+  const headerQualityIndicator = dashboardModel.quality.find((item) => item.id === 'qualitySurvivalRate') ?? null;
+  const headerQualityLabel = productActiveTab === 'dashboard' && headerQualityIndicator?.status === 'negative'
+    ? 'Calidad crítica'
+    : productActiveTab === 'dashboard' && headerQualityIndicator?.status === 'warning'
+      ? 'Calidad frágil'
+      : null;
+  const headerDisplayStatusColor = headerQualityIndicator?.status === 'negative'
+    ? T.negative
+    : headerQualityIndicator?.status === 'warning'
+      ? T.warning
+      : headerStatusColor;
 
   const content = productActiveTab === 'sim' ? (
     <SimulationPage
@@ -5072,7 +5088,10 @@ export default function App() {
           onOpenSimulation={() => handleTabChange('sim')}
           onOpenSensitivity={() => handleTabChange('sens')}
           onOpenSettings={() => handleTabChange('settings')}
+          onOpenEcosystem={() => handleTabChange('ecosystem')}
         />
+      ) : productActiveTab === 'ecosystem' ? (
+        <EcosystemPageLazy onBack={() => handleTabChange('dashboard')} />
       ) : productActiveTab === 'assist' ? (
         <AssistedSimulationPageLazy />
       ) : productActiveTab === 'lab' ? (
@@ -5268,14 +5287,15 @@ export default function App() {
           </>
         )}
         <Header
-          statusColor={headerStatusColor}
+          statusColor={headerDisplayStatusColor}
           metricText={headerMetricText}
           confidenceLabel={headerConfidenceLabel}
+          qualityLabel={headerQualityLabel}
         />
         <main
           style={{
             padding: '12px 16px 90px',
-            paddingBottom: 'calc(90px + env(safe-area-inset-bottom, 0px))',
+            paddingBottom: productActiveTab === 'ecosystem' ? 28 : 'calc(90px + env(safe-area-inset-bottom, 0px))',
             marginTop: 48,
             maxWidth: productActiveTab === 'dashboard' ? 1180 : 960,
             marginLeft: 'auto',
@@ -5304,7 +5324,7 @@ export default function App() {
           {content}
         </main>
 
-        <BottomNav active={productActiveTab} onChange={handleTabChange} />
+        {productActiveTab !== 'ecosystem' ? <BottomNav active={productActiveTab} onChange={handleTabChange} /> : null}
       </div>
     </MidasErrorBoundary>
   );
@@ -5314,10 +5334,12 @@ function Header({
   statusColor,
   metricText,
   confidenceLabel,
+  qualityLabel,
 }: {
   statusColor: string;
   metricText: string;
   confidenceLabel: string;
+  qualityLabel: string | null;
 }) {
   return (
     <header
@@ -5336,14 +5358,15 @@ function Header({
         zIndex: 30,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: T.textPrimary, fontWeight: 700 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: T.textPrimary, fontWeight: 700, flex: '0 0 auto' }}>
         <span style={{ color: T.primary }}>◆</span>
         <span>Midas V1.2</span>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-        <span style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>
-          {metricText} · {confidenceLabel}
-        </span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0, flex: '1 1 auto', overflow: 'hidden' }}>
+        <div style={{ minWidth: 0, maxWidth: '100%', textAlign: 'right', lineHeight: 1.15, overflow: 'hidden' }}>
+          <span style={{ display: 'block', overflow: 'hidden', color: T.textPrimary, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{metricText} · {confidenceLabel}</span>
+          {qualityLabel ? <span style={{ display: 'block', marginTop: 2, color: statusColor, fontSize: 10, fontWeight: 750 }}>{qualityLabel}</span> : null}
+        </div>
         <div
           title={confidenceLabel}
           style={{ width: 10, height: 10, borderRadius: '50%', background: statusColor, flex: '0 0 auto' }}

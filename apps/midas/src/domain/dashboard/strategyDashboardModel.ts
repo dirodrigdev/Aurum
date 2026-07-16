@@ -316,6 +316,15 @@ export function buildStrategyDashboardModel(input: BuildStrategyDashboardInput):
     : `La estrategia presenta una probabilidad de sostenibilidad del ${(success * 100).toLocaleString('es-CL', { maximumFractionDigits: 1 })}% hasta ${targetText}.`;
   const strongestSignal = signals.find((signal) => signal.status === 'positive');
   const weakestSignal = signals.find((signal) => signal.status === 'negative') ?? signals.find((signal) => signal.status === 'warning');
+  const qualityOfLifeSummary = !quality
+    ? 'Las métricas de calidad de vida están incompletas.'
+    : evaluation.label === 'Frágil' && success !== null && success >= 0.85
+      ? 'Alta sostenibilidad financiera, con fragilidad relevante en calidad de vida bajo los supuestos actuales.'
+      : evaluation.label === 'Frágil'
+        ? 'Bajo los supuestos actuales, la calidad de vida presenta fragilidad relevante y requiere atención.'
+        : qualityPrimaryTone === 'warning' && sustainabilityTone === 'positive'
+          ? 'Sostenibilidad financiera alta, con calidad de vida que requiere seguimiento.'
+          : `${evaluation.label}. ${evaluation.qualityAssessment}`;
 
   return {
     status: quality ? 'ready' : 'partial',
@@ -329,10 +338,10 @@ export function buildStrategyDashboardModel(input: BuildStrategyDashboardInput):
     },
     primaryMetrics: [
       { id: 'success', label: `Sostenibilidad hasta ${targetText}`, value: success, unit: '%', tone: sustainabilityTone, detail: 'Probabilidad de completar el horizonte sin agotamiento.' },
-      { id: 'ruin', label: `Agotamiento antes de ${targetText}`, value: ruin, unit: '%', tone: ruinTone, detail: 'Riesgo complementario al éxito del plan.' },
+      { id: 'ruin', label: `Agotamiento antes de ${targetText}`, value: ruin, unit: '%', tone: ruinTone, detail: 'Complemento de la sostenibilidad en el mismo horizonte.' },
       { id: 'horizon', label: 'Horizonte evaluado', value: horizonYears, unit: 'años', tone: 'neutral', detail: 'Duración total considerada por el motor.' },
       { id: 'withdrawal-rate', label: 'Tasa inicial de retiro', value: withdrawalRate, unit: '%', tone: withdrawalRate === null ? 'neutral' : withdrawalRate <= 0.05 ? 'positive' : withdrawalRate <= 0.07 ? 'warning' : 'negative', detail: 'Relación anual inicial utilizada por el escenario activo.' },
-      { id: 'qol-score', label: 'Índice de calidad de vida', value: finite(evaluation.cappedScore), unit: 'puntos', tone: qualityPrimaryTone, detail: evaluation.label },
+      { id: 'qol-score', label: 'Índice de calidad de vida', value: finite(evaluation.cappedScore), unit: 'puntos', tone: qualityPrimaryTone, detail: `${evaluation.label} · supuestos actuales` },
     ],
     currentAge: input.currentAge,
     targetAge,
@@ -381,7 +390,7 @@ export function buildStrategyDashboardModel(input: BuildStrategyDashboardInput):
       mainRisk: weakestSignal ? `${weakestSignal.label}: ${weakestSignal.explanation}` : 'No aparece una alerta dominante en los indicadores disponibles.',
       dependence: houseActive && (houseProbability ?? 0) > 0.35 ? 'La venta de vivienda tiene una incidencia relevante en las trayectorias.' : input.riskCapitalEffective && (riskShare ?? 0) > 0.12 ? 'La reserva de riesgo tiene una participación relativa relevante.' : 'No se observa una dependencia extraordinaria dominante.',
       watchVariable: expectedReturn(m8) === null ? 'Revisar la completitud de los supuestos de retorno.' : 'Vigilar retorno real esperado y estabilidad del gasto efectivo.',
-      qualityOfLife: quality ? `${evaluation.label}. ${evaluation.qualityAssessment}` : 'Las métricas de calidad de vida están incompletas.',
+      qualityOfLife: qualityOfLifeSummary,
       generalState: conclusion,
     },
   };

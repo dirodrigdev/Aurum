@@ -253,10 +253,10 @@ export function buildMidasEvaluation(
     ? rawScore
     : ({
       'Muy sólido': Math.max(rawScore, 88),
-      'Bueno alto': clamp(rawScore, 78, 87.99),
-      'Bueno': clamp(rawScore, 68, 77.99),
-      'Exigido': clamp(rawScore, 52, 67.99),
-      'Frágil': clamp(rawScore, 0, 51.99),
+      'Bueno alto': clamp(rawScore, 78, 87.9),
+      'Bueno': clamp(rawScore, 68, 77.9),
+      'Exigido': clamp(rawScore, 52, 67.9),
+      'Frágil': clamp(rawScore, 0, 51.9),
       'No comparable': rawScore,
     } as Record<MidasEvaluationLabel, number>)[label];
 

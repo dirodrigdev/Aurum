@@ -1,7 +1,7 @@
 import React from 'react';
 import { T } from './theme';
 
-type TabId = 'dashboard' | 'sim' | 'assist' | 'lab' | 'sens' | 'stress' | 'bucketlab' | 'optv0' | 'opt' | 'settings';
+type TabId = 'dashboard' | 'ecosystem' | 'sim' | 'assist' | 'lab' | 'sens' | 'stress' | 'bucketlab' | 'optv0' | 'opt' | 'settings';
 
 const icons: Record<TabId, JSX.Element> = {
   dashboard: (
@@ -10,6 +10,14 @@ const icons: Record<TabId, JSX.Element> = {
       <rect x="11" y="3" width="6" height="3.5" rx="1.4" stroke="currentColor" strokeWidth="1.3" />
       <rect x="3" y="11" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
       <rect x="11" y="8.5" width="6" height="8.5" rx="1.5" fill="currentColor" />
+    </svg>
+  ),
+  ecosystem: (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <circle cx="5" cy="10" r="2.2" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="15" cy="5" r="2.2" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="15" cy="15" r="2.2" stroke="currentColor" strokeWidth="1.3" />
+      <path d="m7 9 5.8-3M7 11l5.8 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
     </svg>
   ),
   sim: (

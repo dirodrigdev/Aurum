@@ -12,6 +12,7 @@ export const Layout: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const wealthDelta = useWealthDelta();
+  const isEcosystem = location.pathname === '/ecosystem';
 
   const navItems = useMemo(
     () => [
@@ -36,7 +37,7 @@ export const Layout: React.FC = () => {
         </div>
       </header>
 
-      <main className="flex-1 max-w-xl mx-auto w-full pb-20 md:pb-0">
+      <main className={cn('mx-auto w-full flex-1 pb-20 md:pb-0', isEcosystem ? 'max-w-5xl' : 'max-w-xl')}>
         {location.pathname.startsWith('/settings') ? (
           <FxSyncStatusBanner onGoSettings={() => navigate('/settings')} />
         ) : null}
@@ -94,7 +95,7 @@ export const Layout: React.FC = () => {
           })}
         </div>
       </nav>
-      <WealthDeltaToast visible={wealthDelta.visible} delta={wealthDelta.delta} reason={wealthDelta.reason} />
+      {!isEcosystem ? <WealthDeltaToast visible={wealthDelta.visible} delta={wealthDelta.delta} reason={wealthDelta.reason} /> : null}
     </div>
   );
 };

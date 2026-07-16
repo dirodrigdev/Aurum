@@ -68,7 +68,7 @@ export const dashboardTestModel: StrategyDashboardModel = {
   },
 };
 
-const markup = renderToStaticMarkup(<DashboardPage model={dashboardTestModel} onOpenSimulation={() => {}} onOpenSensitivity={() => {}} onOpenSettings={() => {}} />);
+const markup = renderToStaticMarkup(<DashboardPage model={dashboardTestModel} onOpenSimulation={() => {}} onOpenSensitivity={() => {}} onOpenSettings={() => {}} onOpenEcosystem={() => {}} />);
 
 assert(markup.includes('data-testid="midas-dashboard"'));
 assert(markup.includes('91,8%'));
@@ -82,11 +82,12 @@ assert(markup.includes('Secuencia de retiro'));
 assert(markup.includes('Calidad de vida'));
 assert(markup.includes('Semáforos del plan'));
 assert(markup.includes('Vista de presentación: los valores monetarios permanecen ocultos'));
+assert(markup.includes('Ver ecosistema'));
 assert.equal(markup.includes('title='), false, 'Dashboard must not hide values in native tooltips');
 assert.doesNotMatch(markup, /(?:CLP|USD|EUR|UF)\s*[\$€]?\s*\d[\d.,]{2,}/i);
 assert.doesNotMatch(markup, /(?:\$|€)\s*\d/);
 
-const emptyMarkup = renderToStaticMarkup(<DashboardPage model={{ ...dashboardTestModel, status: 'empty', statusMessage: 'Ejecuta una simulación para generar los indicadores del Dashboard.' }} onOpenSimulation={() => {}} onOpenSensitivity={() => {}} onOpenSettings={() => {}} />);
+const emptyMarkup = renderToStaticMarkup(<DashboardPage model={{ ...dashboardTestModel, status: 'empty', statusMessage: 'Ejecuta una simulación para generar los indicadores del Dashboard.' }} onOpenSimulation={() => {}} onOpenSensitivity={() => {}} onOpenSettings={() => {}} onOpenEcosystem={() => {}} />);
 assert(emptyMarkup.includes('dashboard-empty-state'));
 assert(emptyMarkup.includes('Ejecuta una simulación'));
 assert.equal(emptyMarkup.includes('91,8%'), false);

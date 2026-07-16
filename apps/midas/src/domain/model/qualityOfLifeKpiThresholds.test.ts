@@ -12,23 +12,23 @@ const productionLikeMetrics = {
 
 const csr = resolveQualityOfLifeKpiThreshold('csr85_4', productionLikeMetrics);
 assert.equal(csr.status, 'yellow');
-assert.equal(csr.label, 'Atencion');
+assert.equal(csr.label, 'Atención');
 
 const strictSurvival = resolveQualityOfLifeKpiThreshold('qualitySurvivalRate', productionLikeMetrics);
 assert.equal(strictSurvival.status, 'red');
-assert.equal(strictSurvival.label, 'Critico');
+assert.equal(strictSurvival.label, 'Crítico');
 
 const spending = resolveQualityOfLifeKpiThreshold('averageEffectiveSpendingRatio', productionLikeMetrics);
 assert.equal(spending.status, 'yellow');
-assert.equal(spending.label, 'Atencion');
+assert.equal(spending.label, 'Atención');
 
 const severeCut = resolveQualityOfLifeKpiThreshold('severeCutYearsMean', productionLikeMetrics);
 assert.equal(severeCut.status, 'yellow');
-assert.equal(severeCut.label, 'Atencion');
+assert.equal(severeCut.label, 'Atención');
 
 const terminal = resolveQualityOfLifeKpiThreshold('terminalWealthRatio', productionLikeMetrics);
 assert.equal(terminal.status, 'yellow');
-assert.equal(terminal.label, 'Atencion');
+assert.equal(terminal.label, 'Atención');
 
 const terminalInformational = resolveQualityOfLifeKpiThreshold('terminalWealthRatio', {
   ...productionLikeMetrics,

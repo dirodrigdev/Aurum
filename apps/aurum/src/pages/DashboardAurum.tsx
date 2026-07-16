@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { BrainCircuit, CalendarRange, ChevronRight, Home, Landmark, LineChart, RefreshCcw, Settings, Shield, Sparkles, TrendingUp, Zap } from 'lucide-react';
+import { BrainCircuit, CalendarRange, ChevronRight, Home, Landmark, LineChart, Network, RefreshCcw, Settings, Shield, Sparkles, TrendingUp, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, cn } from '../components/Components';
 import { formatFreedomCompactClp, formatPct } from '../components/analysis/shared';
@@ -749,6 +749,15 @@ export const DashboardAurum: React.FC = () => {
         >
           <RefreshCcw className="mr-1 h-3.5 w-3.5" />
           Actualizar datos
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="mt-1 rounded-full border-emerald-200 bg-emerald-50 px-3 text-emerald-800 shadow-[0_8px_20px_rgba(15,23,42,0.04)] hover:bg-emerald-100"
+          onClick={() => navigate('/ecosystem')}
+        >
+          <Network className="mr-1 h-3.5 w-3.5" />
+          Ver ecosistema
         </Button>
       </section>
     </div>

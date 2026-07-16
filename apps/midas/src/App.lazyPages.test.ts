@@ -24,6 +24,7 @@ assert.match(
 
 for (const lazyPage of [
   'DashboardPageLazy',
+  'EcosystemPageLazy',
   'AssistedSimulationPageLazy',
   'ScenarioLabPageLazy',
   'SensitivityPageLazy',
@@ -40,9 +41,12 @@ for (const lazyPage of [
 
 assert.match(
   appSource,
-  /hashRoute === 'dashboard' \? 'dashboard' : 'sim'/,
-  'The direct Dashboard hash route must resolve safely and default to Simulación',
+  /if \(hashRoute === 'dashboard'\) return 'dashboard';[\s\S]*if \(hashRoute === 'ecosystem'\) return 'ecosystem';[\s\S]*return 'sim';/,
+  'Direct Dashboard and Ecosystem routes must resolve safely and default to Simulación',
 );
+
+assert.match(appSource, /`Sostenibilidad \$\{formatSuccessPct\(headerSuccess40\)\}`/, 'Header must describe no-ruin probability as sustainability');
+assert.doesNotMatch(appSource, /`Éxito \$\{formatSuccessPct\(headerSuccess40\)\}`/, 'Header must not present sustainability as integral success');
 
 assert.match(
   appSource,
