@@ -23,8 +23,8 @@ const GLOBAL_SLEEVES = new Set<AssetKey>(['eq_global', 'fi_global', 'usd_liquidi
 const DEFENSIVE_FILL_ORDER: AssetKey[] = ['usd_liquidity', 'fi_global', 'clp_cash', 'fi_chile'];
 const RISKY_ORDER: AssetKey[] = ['eq_global', 'eq_chile'];
 const M8_STUDENT_T_DF_DEFAULT = 7;
-const DEFAULT_POST_SALE_UPLIFT_PHASE2_CLP = 1_600_000;
-const DEFAULT_POST_SALE_UPLIFT_PHASE3_CLP = 1_600_000;
+export const M8_DEFINED_POST_SALE_RENT_CLP = 1_600_000;
+const M8_HOUSE_PAYOFF_MONTHS = 20 * 12;
 const CUT1_PERSISTENCE_MONTHS = 6;
 const CUT2_PERSISTENCE_MONTHS = 4;
 const RECOVER_TO_WEAK_THRESHOLD = 0.15;
@@ -387,6 +387,15 @@ const estimateHouseSaleEquityClp = (input: M8Input, monthIndex: number, mortgage
   return Math.max((input.house.houseValueUf - mortgageBalanceUf) * currentUfClp(input, monthIndex), 0);
 };
 
+export const isM8HouseSaleEligibleMonth = (monthIndex: number): boolean =>
+  Number.isInteger(monthIndex) && monthIndex > M8_HOUSE_PAYOFF_MONTHS;
+
+export const resolveM8MortgageBalanceUf = (input: M8Input, monthIndex: number): number => {
+  if (!input.house?.include_house) return 0;
+  if (isM8HouseSaleEligibleMonth(monthIndex)) return 0;
+  return Math.max(input.house.mortgageBalanceUfNow, 0);
+};
+
 const phaseOfMonth = (input: M8Input, monthIndex: number): 1 | 2 | 3 | 4 => {
   const yearIndex = Math.floor((monthIndex - 1) / 12) + 1;
   if (yearIndex <= input.phase1EndYear) return 1;
@@ -395,22 +404,17 @@ const phaseOfMonth = (input: M8Input, monthIndex: number): 1 | 2 | 3 | 4 => {
   return 4;
 };
 
-const monthlySpendIfHouseSold = (input: M8Input, monthIndex: number): number => {
-  const phase = phaseOfMonth(input, monthIndex);
-  if (phase === 1) return input.phase1MonthlyClp;
-  if (phase === 2) return input.phase2MonthlyClp + DEFAULT_POST_SALE_UPLIFT_PHASE2_CLP;
-  if (phase === 3) return input.phase3MonthlyClp + DEFAULT_POST_SALE_UPLIFT_PHASE3_CLP;
-  return input.phase4MonthlyClp + DEFAULT_POST_SALE_UPLIFT_PHASE3_CLP;
-};
-
-const baseMonthlySpend = (input: M8Input, monthIndex: number, soldHouse: boolean): number => {
-  if (soldHouse) return monthlySpendIfHouseSold(input, monthIndex);
+const phaseMonthlySpend = (input: M8Input, monthIndex: number): number => {
   const phase = phaseOfMonth(input, monthIndex);
   if (phase === 1) return input.phase1MonthlyClp;
   if (phase === 2) return input.phase2MonthlyClp;
   if (phase === 3) return input.phase3MonthlyClp;
   return input.phase4MonthlyClp;
 };
+
+export const resolveM8HouseMonthlySpend = (input: M8Input, monthIndex: number, soldHouse: boolean): number =>
+  phaseMonthlySpend(input, monthIndex)
+  + (soldHouse && input.house?.include_house ? M8_DEFINED_POST_SALE_RENT_CLP : 0);
 
 const buildGeneratorState = (
   sleeves: M8GeneratorParams['sleeves'],
@@ -1040,7 +1044,7 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
     let bridgeDeficit = 0;
     let regimeState: 'normal' | 'stress' = 'normal';
     let stressMonths = 0;
-    let mortgageBalanceUf = input.house?.mortgageBalanceUfNow ?? 0;
+    let mortgageBalanceUf = resolveM8MortgageBalanceUf(input, 0);
     let ruined = false;
 
     const coreHistory: number[] = [totalCoreWealth(sleeves)];
@@ -1082,25 +1086,29 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
     const houseEquity0 = includeHouse ? estimateHouseSaleEquityClp(input, 0, mortgageBalanceUf) : 0;
     wealthPaths[0][p] = totalCoreWealth(sleeves) + houseEquity0 + riskReserve;
 
+    const executeHouseSale = (monthIndex: number): void => {
+      let houseEquity = estimateHouseSaleEquityClp(input, monthIndex, 0);
+      if (bridgeDeficit > 0) {
+        houseEquity = Math.max(houseEquity - bridgeDeficit, 0);
+        bridgeDeficit = 0;
+      }
+      for (const asset of ASSET_ORDER) {
+        sleeves[asset] += houseEquity * runtimeMix[asset];
+      }
+      soldHouse = true;
+      pendingSale = false;
+      saleMonths.push(monthIndex);
+      houseSaleMonth = monthIndex;
+      liquidWealthAfterHouseSaleClp = totalCoreWealth(sleeves) + riskReserve;
+    };
+
     for (let m = 1; m <= months; m += 1) {
       if (includeHouse && !soldHouse) {
-        mortgageBalanceUf = Math.max(mortgageBalanceUf - (input.house?.monthlyAmortizationUf ?? 0), 0);
+        mortgageBalanceUf = resolveM8MortgageBalanceUf(input, m);
       }
 
       if (pendingSale && saleExecMonth !== null && m >= saleExecMonth) {
-        let houseEquity = estimateHouseSaleEquityClp(input, m, mortgageBalanceUf);
-        if (bridgeDeficit > 0) {
-          houseEquity = Math.max(houseEquity - bridgeDeficit, 0);
-          bridgeDeficit = 0;
-        }
-        for (const asset of ASSET_ORDER) {
-          sleeves[asset] += houseEquity * runtimeMix[asset];
-        }
-        soldHouse = true;
-        pendingSale = false;
-        saleMonths.push(m);
-        houseSaleMonth = m;
-        liquidWealthAfterHouseSaleClp = totalCoreWealth(sleeves) + riskReserve;
+        executeHouseSale(m);
       }
 
       if (returnGenerator === 'two_regime') {
@@ -1193,7 +1201,19 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
         recoverToNormalCount = 0;
       }
 
-      const budget = baseMonthlySpend(input, m, soldHouse);
+      if (includeHouse && !soldHouse && !pendingSale && isM8HouseSaleEligibleMonth(m)) {
+        const triggerBudget = resolveM8HouseMonthlySpend(input, m, true);
+        const yearsCoverIfSold = coreNow / Math.max(triggerBudget * 12, 1);
+        if (yearsCoverIfSold <= input.house!.house_sale_trigger_years_of_spend) {
+          pendingSale = true;
+          saleExecMonth = m + input.house!.house_sale_lag_months;
+          triggerMonth = m;
+          triggerMonths.push(m);
+          if (saleExecMonth === m) executeHouseSale(m);
+        }
+      }
+
+      const budget = resolveM8HouseMonthlySpend(input, m, soldHouse);
       let regularSpend = budget;
       if (cutState === 1) {
         regularSpend *= input.cuts.cut1_floor;
@@ -1209,17 +1229,6 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
         cutSeverityCount += 1;
       }
       const spend = regularSpend + extraOutflowThisMonth;
-
-      if (includeHouse && !soldHouse && !pendingSale) {
-        const triggerBudget = monthlySpendIfHouseSold(input, m);
-        const yearsCoverIfSold = coreNow / Math.max(triggerBudget * 12, 1);
-        if (yearsCoverIfSold <= input.house!.house_sale_trigger_years_of_spend) {
-          pendingSale = true;
-          saleExecMonth = m + input.house!.house_sale_lag_months;
-          triggerMonth = m;
-          triggerMonths.push(m);
-        }
-      }
 
       const bucketTarget = input.bucket.bucket_mode === 'operational_simple'
         ? input.bucket.bucket_months * budget
@@ -1253,36 +1262,38 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
       }
 
       let remaining = drawSpendOperationalSimple(sleeves, spend, bucketTarget);
-      const totalPaid = spend - remaining;
-      const realizedRegularSpend = Math.max(0, Math.min(regularSpend, totalPaid));
-      spentTotal += realizedRegularSpend;
-      budgetTotal += budget;
-      monthlyConsumptionRatios.push(budget > 0 ? realizedRegularSpend / budget : 1);
-      monthlyCutStates.push(cutState);
+      const recordFundedRegularSpend = (): void => {
+        const totalFundedSpend = Math.max(0, Math.min(spend, spend - remaining));
+        const realizedRegularSpend = Math.max(0, Math.min(regularSpend, totalFundedSpend));
+        spentTotal += realizedRegularSpend;
+        budgetTotal += budget;
+        monthlyConsumptionRatios.push(budget > 0 ? realizedRegularSpend / budget : 1);
+        monthlyCutStates.push(cutState);
 
-      const phase = phaseOfMonth(input, m);
-      if (phase === 2) {
-        spentPhase2Total += realizedRegularSpend;
-        budgetPhase2Total += budget;
-      } else if (phase === 3) {
-        spentPhase3Total += realizedRegularSpend;
-        budgetPhase3Total += budget;
-      }
-
-      if (cutState === 0) {
-        spentNoCutTotal += realizedRegularSpend;
-        budgetNoCutTotal += budget;
-      } else {
-        spentCutTotal += realizedRegularSpend;
-        budgetCutTotal += budget;
-        if (cutState === 1) {
-          spentCut1Total += realizedRegularSpend;
-          budgetCut1Total += budget;
-        } else if (cutState === 2) {
-          spentCut2Total += realizedRegularSpend;
-          budgetCut2Total += budget;
+        const phase = phaseOfMonth(input, m);
+        if (phase === 2) {
+          spentPhase2Total += realizedRegularSpend;
+          budgetPhase2Total += budget;
+        } else if (phase === 3) {
+          spentPhase3Total += realizedRegularSpend;
+          budgetPhase3Total += budget;
         }
-      }
+
+        if (cutState === 0) {
+          spentNoCutTotal += realizedRegularSpend;
+          budgetNoCutTotal += budget;
+        } else {
+          spentCutTotal += realizedRegularSpend;
+          budgetCutTotal += budget;
+          if (cutState === 1) {
+            spentCut1Total += realizedRegularSpend;
+            budgetCut1Total += budget;
+          } else if (cutState === 2) {
+            spentCut2Total += realizedRegularSpend;
+            budgetCut2Total += budget;
+          }
+        }
+      };
 
       if (remaining > 1e-8) {
         if (
@@ -1335,6 +1346,8 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
           remaining -= riskDraw;
         }
 
+        recordFundedRegularSpend();
+
         if (remaining > 1e-8) {
           ruined = true;
           pathRuinMonth = m;
@@ -1374,6 +1387,8 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
           }
           break;
         }
+      } else {
+        recordFundedRegularSpend();
       }
 
       const houseEquity = includeHouse && !soldHouse ? estimateHouseSaleEquityClp(input, m, mortgageBalanceUf) : 0;
@@ -1382,7 +1397,8 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
 
     if (!ruined) {
       const finalHouseEquity = includeHouse && !soldHouse ? estimateHouseSaleEquityClp(input, months, mortgageBalanceUf) : 0;
-      const totalTerminal = totalCoreWealth(sleeves) + finalHouseEquity + riskReserve;
+      const outstandingBridgeDebt = soldHouse ? 0 : bridgeDeficit;
+      const totalTerminal = totalCoreWealth(sleeves) + finalHouseEquity + riskReserve - outstandingBridgeDebt;
       successFlags.push(1);
       terminalWealth.push(totalTerminal);
       terminalWealthIfSuccess.push(totalTerminal);

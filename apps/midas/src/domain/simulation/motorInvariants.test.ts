@@ -23,7 +23,13 @@ import { evaluateConcordance } from './concordance';
 import { snapshotToParams, snapshotToSimulationComposition } from '../../integrations/aurum/adapters';
 import { resolveCapital } from './capitalResolver';
 import { fromM8Output, toM8Input, validateM8Preconditions } from './m8Adapter';
-import { runM8 } from './engineM8';
+import {
+  M8_DEFINED_POST_SALE_RENT_CLP,
+  isM8HouseSaleEligibleMonth,
+  resolveM8HouseMonthlySpend,
+  resolveM8MortgageBalanceUf,
+  runM8,
+} from './engineM8';
 import {
   stripManualAdjustmentImpactFromParams,
   type ManualAdjustmentImpact,
@@ -1829,7 +1835,7 @@ test('m8 adapter maps aurum capital, house, cuts and scenario overrides', () => 
   assert.equal(input.scenario_overrides?.rv_chile_annual, 0.11);
   assert.equal(input.house?.houseValueUf, 7_500);
   assert.equal(input.house?.mortgageBalanceUfNow, 3_000);
-  assert.equal(input.house?.monthlyAmortizationUf, 37.5);
+  assert.equal(input.house?.monthlyAmortizationUf, 0);
   assert.equal(input.future_events?.length ?? 0, 0);
 });
 
@@ -2613,6 +2619,226 @@ test('m8 runtime with house includes house equity in the starting wealth', () =>
 
   assert.ok(result.wealthPaths[0][0] > input.capital_initial_clp);
   assert.ok(Number.isFinite(result.HouseSalePct));
+});
+
+test('m8 house contract starts sale eligibility only after 20 complete years', () => {
+  assert.equal(isM8HouseSaleEligibleMonth(239), false);
+  assert.equal(isM8HouseSaleEligibleMonth(240), false);
+  assert.equal(isM8HouseSaleEligibleMonth(241), true);
+});
+
+test('m8 house contract keeps phase spend all-in and adds rent only after sale', () => {
+  const input = makeRuntimeInput({
+    years: 22,
+    phase1MonthlyClp: 1_000_000,
+    phase2MonthlyClp: 2_000_000,
+    phase3MonthlyClp: 3_000_000,
+    phase4MonthlyClp: 4_000_000,
+    phase1EndYear: 3,
+    phase2EndYear: 10,
+    phase3EndYear: 21,
+    house: {
+      include_house: true,
+      houseValueUf: 10_000,
+      mortgageBalanceUfNow: 5_000,
+      monthlyAmortizationUf: 999,
+      ufClpStart: 40_000,
+      house_sale_trigger_years_of_spend: 2,
+      house_sale_lag_months: 0,
+    },
+  });
+
+  assert.equal(resolveM8HouseMonthlySpend(input, 1, false), 1_000_000);
+  assert.equal(resolveM8HouseMonthlySpend(input, 37, false), 2_000_000);
+  assert.equal(resolveM8HouseMonthlySpend(input, 121, false), 3_000_000);
+  assert.equal(resolveM8HouseMonthlySpend(input, 253, false), 4_000_000);
+  assert.equal(resolveM8HouseMonthlySpend(input, 241, true), 3_000_000 + M8_DEFINED_POST_SALE_RENT_CLP);
+  assert.equal(resolveM8HouseMonthlySpend(input, 253, true), 4_000_000 + M8_DEFINED_POST_SALE_RENT_CLP);
+  assert.equal(resolveM8HouseMonthlySpend({ ...input, house: undefined }, 253, true), 4_000_000);
+});
+
+test('m8 house contract blocks early sale and executes zero-lag sale in month 241', () => {
+  const house = {
+    include_house: true,
+    houseValueUf: 10_000,
+    mortgageBalanceUfNow: 5_000,
+    monthlyAmortizationUf: 0,
+    ufClpStart: 40_000,
+    house_sale_trigger_years_of_spend: Number.MAX_SAFE_INTEGER,
+    house_sale_lag_months: 0,
+  } as const;
+  const shared = {
+    n_paths: 1,
+    capital_initial_clp: 5_000_000_000,
+    portfolio_mix: {
+      eq_global: 0,
+      eq_chile: 0,
+      fi_global: 0,
+      fi_chile: 0,
+      usd_liquidity: 0,
+      clp_cash: 1,
+    },
+    generator_type: 'gaussian_iid' as const,
+    generator_params: runtimeFlatGaussianParams,
+    house,
+  };
+  const beforeEligibility = runM8(makeRuntimeInput({
+    ...shared,
+    years: 20,
+    phase1EndYear: 3,
+    phase2EndYear: 10,
+    phase3EndYear: 19,
+  }));
+  const firstEligible = runM8(makeRuntimeInput({
+    ...shared,
+    years: 21,
+    phase1EndYear: 3,
+    phase2EndYear: 10,
+    phase3EndYear: 20,
+  }));
+
+  assert.equal(beforeEligibility.HouseSalePct, 0);
+  assert.equal(Number.isNaN(beforeEligibility.TriggerYearMedian), true);
+  assert.equal(Number.isNaN(beforeEligibility.SaleYearMedian), true);
+  assert.equal(firstEligible.HouseSalePct, 1);
+  assert.equal(firstEligible.TriggerYearMedian, 241 / 12);
+  assert.equal(firstEligible.SaleYearMedian, 241 / 12);
+});
+
+test('m8 house contract treats legacy amortization as inert and debt as paid at eligibility', () => {
+  const base = makeRuntimeInput({
+    years: 21,
+    n_paths: 1,
+    capital_initial_clp: 5_000_000_000,
+    phase1EndYear: 3,
+    phase2EndYear: 10,
+    phase3EndYear: 20,
+    portfolio_mix: {
+      eq_global: 0,
+      eq_chile: 0,
+      fi_global: 0,
+      fi_chile: 0,
+      usd_liquidity: 0,
+      clp_cash: 1,
+    },
+    generator_type: 'gaussian_iid',
+    generator_params: runtimeFlatGaussianParams,
+    house: {
+      include_house: true,
+      houseValueUf: 10_000,
+      mortgageBalanceUfNow: 5_000,
+      monthlyAmortizationUf: 0,
+      ufClpStart: 40_000,
+      house_sale_trigger_years_of_spend: Number.MAX_SAFE_INTEGER,
+      house_sale_lag_months: 0,
+    },
+  });
+  const legacyAmortization = structuredClone(base);
+  legacyAmortization.house!.monthlyAmortizationUf = 50_000;
+
+  assert.equal(resolveM8MortgageBalanceUf(base, 240), 5_000);
+  assert.equal(resolveM8MortgageBalanceUf(base, 241), 0);
+  assert.deepEqual(runM8(legacyAmortization), runM8(base));
+
+  const noMortgage = structuredClone(base);
+  noMortgage.house!.mortgageBalanceUfNow = 0;
+  const withMortgageResult = runM8(base);
+  const noMortgageResult = runM8(noMortgage);
+  assert.notEqual(withMortgageResult.wealthPaths[240][0], noMortgageResult.wealthPaths[240][0]);
+  assert.equal(withMortgageResult.wealthPaths[241][0], noMortgageResult.wealthPaths[241][0]);
+  assert.equal(withMortgageResult.TerminalMedianCLP, noMortgageResult.TerminalMedianCLP);
+});
+
+test('m8 records QoL from regular spending funded after risk reserve draws', () => {
+  const input = makeRuntimeInput({
+    years: 4,
+    n_paths: 1,
+    capital_initial_clp: 24_000_000,
+    risk_capital_clp: 24_000_000,
+    risk_capital_policy: 'reserve_late_full',
+    phase1MonthlyClp: 1_000_000,
+    phase2MonthlyClp: 1_000_000,
+    phase3MonthlyClp: 1_000_000,
+    phase4MonthlyClp: 1_000_000,
+    portfolio_mix: {
+      eq_global: 0,
+      eq_chile: 0,
+      fi_global: 0,
+      fi_chile: 0,
+      usd_liquidity: 0,
+      clp_cash: 1,
+    },
+    generator_type: 'gaussian_iid',
+    generator_params: runtimeFlatGaussianParams,
+    cuts: {
+      ...makeRuntimeInput().cuts,
+      dd15_threshold: 2,
+      dd25_threshold: 3,
+    },
+  });
+
+  const result = runM8(input);
+  assert.ok(result.pathQualityDiagnostics);
+  const path = result.pathQualityDiagnostics.paths[0];
+
+  assert.equal(result.Success40, 1);
+  assert.equal(result.SpendFactorTotal, 1);
+  assert.equal(path.averageConsumptionRatio, 1);
+  assert.equal(path.monthsBelow85, 0);
+  assert.equal(path.maxConsecutiveMonthsBelow85, 0);
+});
+
+test('m8 deducts outstanding house-sale bridge debt from terminal wealth', () => {
+  const input = makeRuntimeInput({
+    years: 21,
+    n_paths: 1,
+    capital_initial_clp: 0,
+    feeAnnual: 0,
+    risk_capital_clp: 240_000_000,
+    risk_capital_policy: 'reserve_late_full',
+    phase1MonthlyClp: 1_000_000,
+    phase2MonthlyClp: 1_000_000,
+    phase3MonthlyClp: 1_000_000,
+    phase4MonthlyClp: 1_000_000,
+    phase1EndYear: 3,
+    phase2EndYear: 10,
+    phase3EndYear: 20,
+    portfolio_mix: {
+      eq_global: 0,
+      eq_chile: 0,
+      fi_global: 0,
+      fi_chile: 0,
+      usd_liquidity: 0,
+      clp_cash: 1,
+    },
+    generator_type: 'gaussian_iid',
+    generator_params: runtimeFlatGaussianParams,
+    cuts: {
+      ...makeRuntimeInput().cuts,
+      dd15_threshold: 2,
+      dd25_threshold: 3,
+    },
+    house: {
+      include_house: true,
+      houseValueUf: 200_000_000,
+      mortgageBalanceUfNow: 0,
+      monthlyAmortizationUf: 0,
+      ufClpStart: 1,
+      house_sale_trigger_years_of_spend: Number.MAX_SAFE_INTEGER,
+      house_sale_lag_months: 24,
+    },
+  });
+
+  const result = runM8(input);
+  const expectedOutstandingBridge = 12_000_000;
+  const expectedTerminal = 200_000_000 - expectedOutstandingBridge;
+
+  assert.equal(result.HouseSalePct, 0);
+  assert.equal(result.TriggerYearMedian, 241 / 12);
+  assert.equal(Number.isNaN(result.SaleYearMedian), true);
+  assert.equal(result.Success40, 1);
+  assert.equal(result.TerminalMedianCLP, expectedTerminal);
+  assert.equal(result.wealthPaths[252][0], expectedTerminal);
 });
 
 test('m8 runtime exposes student_t df 7 explicitly', () => {

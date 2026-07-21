@@ -334,9 +334,8 @@ const resolveHouse = (params: ModelParameters, capitalResolution: CapitalResolut
     include_house: true,
     houseValueUf: resolvedHouse.propertyValueCLP / resolvedHouse.ufSnapshotCLP,
     mortgageBalanceUfNow: resolvedHouse.mortgageDebtOutstandingCLP / resolvedHouse.ufSnapshotCLP,
-    monthlyAmortizationUf: resolvedHouse.monthlyMortgagePaymentCLP
-      ? resolvedHouse.monthlyMortgagePaymentCLP / resolvedHouse.ufSnapshotCLP
-      : 0,
+    // F1-F4 already include the full mortgage payment. The payment is not principal.
+    monthlyAmortizationUf: 0,
     ufClpStart: resolvedHouse.ufSnapshotCLP,
     house_sale_trigger_years_of_spend: params.realEstatePolicy.triggerRunwayMonths / 12,
     house_sale_lag_months: params.realEstatePolicy.saleDelayMonths,

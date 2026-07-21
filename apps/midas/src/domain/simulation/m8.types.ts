@@ -107,6 +107,7 @@ export interface M8HouseInput {
   include_house: boolean;
   houseValueUf: number;
   mortgageBalanceUfNow: number;
+  /** Legacy compatibility only. M8 must not interpret a mortgage payment as principal. */
   monthlyAmortizationUf: number;
   ufClpStart: number;
   house_sale_trigger_years_of_spend: number;

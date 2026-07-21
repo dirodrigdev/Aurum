@@ -115,7 +115,7 @@ const FIXTURE_PATH = new URL('./__fixtures__/productionGoldenRun.v1.json', impor
 const fixture = JSON.parse(readFileSync(FIXTURE_PATH, 'utf8')) as ProductionGoldenFixture;
 
 const EXPECTED_FINGERPRINT = 'fnv1a-959dded4';
-const EXPECTED_RESULT_DIGEST = 'be5994b1164d990a0790f22a269d9e23e63475b5047e32d8c5685e002990d607';
+const EXPECTED_RESULT_DIGEST = 'b0c9e8da6ae590f0bcd327c3b2b5d202d7d52cf118a98f829bd09007d292baba';
 
 function sourceEntry(id: string) {
   return fixture.sourcePolicy.sources.find((entry) => entry.id === id) ?? null;
@@ -276,21 +276,21 @@ assert.deepEqual(secondRuntime, firstRuntime, 'production normalizedInput must b
 
 const { result, qualityOfLifeMetrics, simulationResultDiagnostics, resultConfidence } = buildDerivedArtifacts(firstRuntime);
 
-assertClose(result.success40, 0.916, 1e-12, 'success40');
-assertClose(result.probRuin40, 0.084, 1e-12, 'probRuin40');
-assert.equal(result.nRuin, 84);
-assertClose(result.houseSalePct, 0.246, 1e-12, 'houseSalePct');
-assertClose(result.saleYearMedian, 24.708333333333336, 1e-12, 'houseSaleYearMedian');
-assertClose(qualityOfLifeMetrics.terminalWealthP25, 1030503112.3702545, 1e-3, 'terminalWealthP25');
-assertClose(qualityOfLifeMetrics.terminalWealthP50, 3374316532.767579, 1e-3, 'terminalWealthP50');
-assertClose(qualityOfLifeMetrics.terminalWealthRatio, 2.181401876071787, 1e-12, 'terminalWealthRatio');
-assertClose(qualityOfLifeMetrics.monthsBelow85, 34.907, 1e-12, 'monthsBelow85');
-assert.equal(qualityOfLifeMetrics.maxConsecutiveMonthsBelow85, 22);
-assertClose(qualityOfLifeMetrics.qualitySurvivalRate, 0.154, 1e-12, 'qualitySurvivalRate');
-assertClose(qualityOfLifeMetrics.csr85_4, 0.737, 1e-12, 'csr85_4');
-assertClose(qualityOfLifeMetrics.qasrStrict, 0.904468228955278, 1e-12, 'qasrStrict');
-assertClose(qualityOfLifeMetrics.averageEffectiveSpendingRatio, 0.9600833061762758, 1e-12, 'averageEffectiveSpendingRatio');
-assertClose(qualityOfLifeMetrics.severeCutYearsMean, 2.9089166666666646, 1e-12, 'severeCutYearsMean');
+assertClose(result.success40, 0.91, 1e-12, 'success40');
+assertClose(result.probRuin40, 0.09, 1e-12, 'probRuin40');
+assert.equal(result.nRuin, 90);
+assertClose(result.houseSalePct, 0.217, 1e-12, 'houseSalePct');
+assertClose(result.saleYearMedian, 27, 1e-12, 'houseSaleYearMedian');
+assertClose(qualityOfLifeMetrics.terminalWealthP25, 997341679.0395597, 1e-3, 'terminalWealthP25');
+assertClose(qualityOfLifeMetrics.terminalWealthP50, 3357104872.753105, 1e-3, 'terminalWealthP50');
+assertClose(qualityOfLifeMetrics.terminalWealthRatio, 2.1702750161339943, 1e-12, 'terminalWealthRatio');
+assertClose(qualityOfLifeMetrics.monthsBelow85, 35.762, 1e-12, 'monthsBelow85');
+assert.equal(qualityOfLifeMetrics.maxConsecutiveMonthsBelow85, 23);
+assertClose(qualityOfLifeMetrics.qualitySurvivalRate, 0.153, 1e-12, 'qualitySurvivalRate');
+assertClose(qualityOfLifeMetrics.csr85_4, 0.732, 1e-12, 'csr85_4');
+assertClose(qualityOfLifeMetrics.qasrStrict, 0.898479199798155, 1e-12, 'qasrStrict');
+assertClose(qualityOfLifeMetrics.averageEffectiveSpendingRatio, 0.9592675084884893, 1e-12, 'averageEffectiveSpendingRatio');
+assertClose(qualityOfLifeMetrics.severeCutYearsMean, 2.980166666666666, 1e-12, 'severeCutYearsMean');
 
 assert.equal(simulationResultDiagnostics.resultDigest, EXPECTED_RESULT_DIGEST);
 assert.equal(fixture.simulationResultDiagnostics.resultDigest, EXPECTED_RESULT_DIGEST);
