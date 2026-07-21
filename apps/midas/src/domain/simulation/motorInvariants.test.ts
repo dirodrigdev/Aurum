@@ -2590,6 +2590,77 @@ test('m8 runtime smoke runs and returns canonical outputs', () => {
   assert.ok((result.fanChart?.length ?? 0) > 0);
 });
 
+test('zero-volatility sleeves are deterministic across seeds and paths', () => {
+  const input = makeRuntimeInput({
+    years: 4,
+    n_paths: 4,
+    seed: 11,
+    feeAnnual: 0,
+    capital_initial_clp: 200_000_000,
+    phase1MonthlyClp: 1_000_000,
+    phase2MonthlyClp: 1_000_000,
+    phase3MonthlyClp: 1_000_000,
+    phase4MonthlyClp: 1_000_000,
+    portfolio_mix: {
+      eq_global: 0,
+      eq_chile: 0,
+      fi_global: 0,
+      fi_chile: 0,
+      usd_liquidity: 0,
+      clp_cash: 1,
+    },
+    generator_type: 'gaussian_iid',
+    generator_params: runtimeFlatGaussianParams,
+  });
+  const seedA = runM8(input);
+  const seedB = runM8({ ...input, seed: 987_654 });
+
+  assert.deepEqual(seedB, seedA);
+  for (const month of seedA.wealthPaths) {
+    assert.ok(month.every((value) => value === month[0]));
+    assert.ok(month.every(Number.isFinite));
+  }
+});
+
+test('mixed portfolios keep zero-volatility sleeves deterministic while positive volatility remains stochastic', () => {
+  const mixedGenerator: M8Input['generator_params'] = {
+    distribution: 'gaussian_iid',
+    sleeves: {
+      ...runtimeFlatGaussianParams.sleeves,
+      eq_global: { mean_annual: 0.05, vol_annual: 0.2 },
+      clp_cash: { mean_annual: 0.02, vol_annual: 0 },
+    },
+    correlation_matrix: runtimeIdentity6(),
+  };
+  const common = {
+    years: 4,
+    n_paths: 4,
+    feeAnnual: 0,
+    capital_initial_clp: 200_000_000,
+    phase1MonthlyClp: 1_000_000,
+    phase2MonthlyClp: 1_000_000,
+    phase3MonthlyClp: 1_000_000,
+    phase4MonthlyClp: 1_000_000,
+    portfolio_mix: {
+      eq_global: 0.5,
+      eq_chile: 0,
+      fi_global: 0,
+      fi_chile: 0,
+      usd_liquidity: 0,
+      clp_cash: 0.5,
+    },
+    generator_type: 'gaussian_iid' as const,
+    generator_params: mixedGenerator,
+  };
+  const seedA = runM8(makeRuntimeInput({ ...common, seed: 101 }));
+  const seedB = runM8(makeRuntimeInput({ ...common, seed: 202 }));
+
+  assert.notDeepEqual(seedA.wealthPaths, seedB.wealthPaths);
+  assert.ok(seedA.wealthPaths[12].some((value) => value !== seedA.wealthPaths[12][0]));
+  assert.ok(seedA.wealthPaths.flat().every(Number.isFinite));
+  assert.ok(seedB.wealthPaths.flat().every(Number.isFinite));
+});
+
 test('m8 runtime counts future inflow and outflow totals', () => {
   const input = makeRuntimeInput({
     future_events: [

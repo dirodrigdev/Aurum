@@ -125,6 +125,7 @@ export interface M8RuntimeResult extends M8Output {
 type GeneratorState = {
   muMonthly: number[];
   chol: number[][];
+  stochasticIndices: number[];
   fxMuMonthly: number;
   fxVolMonthly: number;
 };
@@ -316,9 +317,23 @@ const cholesky = (matrix: number[][]): number[][] => {
   return lower;
 };
 
-const buildCovarianceCholesky = (volMonthly: number[], corr: number[][]): number[][] => {
-  const covariance = volMonthly.map((rowVol, i) =>
-    volMonthly.map((colVol, j) => rowVol * colVol * corr[i][j]));
+const buildCovarianceCholesky = (volMonthly: number[], corr: number[][]): {
+  chol: number[][];
+  stochasticIndices: number[];
+} => {
+  // A zero-volatility sleeve is economically deterministic. Excluding it before
+  // factorization prevents numerical jitter from becoming an artificial shock.
+  const stochasticIndices = volMonthly
+    .map((volatility, index) => (volatility > 0 ? index : -1))
+    .filter((index) => index >= 0);
+  if (stochasticIndices.length === 0) {
+    return { chol: [], stochasticIndices };
+  }
+
+  const covariance = stochasticIndices.map((rowIndex) =>
+    stochasticIndices.map((colIndex) => (
+      volMonthly[rowIndex] * volMonthly[colIndex] * corr[rowIndex][colIndex]
+    )));
 
   const jitters = [0, 1e-12, 1e-10, 1e-8];
   let lastError: unknown = null;
@@ -326,7 +341,7 @@ const buildCovarianceCholesky = (volMonthly: number[], corr: number[][]): number
     try {
       const candidate = covariance.map((row, i) =>
         row.map((value, j) => value + (i === j ? jitter : 0)));
-      return cholesky(candidate);
+      return { chol: cholesky(candidate), stochasticIndices };
     } catch (error) {
       lastError = error;
     }
@@ -425,11 +440,12 @@ const buildGeneratorState = (
   const volAnnual = ASSET_ORDER.map((asset) => sleeves[asset].vol_annual);
   const muMonthly = muAnnual.map(annualToMonthlyMean);
   const volMonthly = volAnnual.map(annualToMonthlyVol);
-  const chol = buildCovarianceCholesky(volMonthly, corrMatrix);
+  const { chol, stochasticIndices } = buildCovarianceCholesky(volMonthly, corrMatrix);
   const fxConfig = SCENARIO_RUNTIME[scenarioKey];
   return {
     muMonthly,
     chol,
+    stochasticIndices,
     fxMuMonthly: annualToMonthlyMean(fxConfig.fxRealMuAnnual),
     fxVolMonthly: annualToMonthlyVol(fxConfig.fxRealVolAnnual),
   };
@@ -494,6 +510,17 @@ const multiplyLowerTriangularVector = (chol: number[][], vector: number[]): numb
     result[i] = sum;
   }
   return result;
+};
+
+const sampleSleeveShocks = (state: GeneratorState, rng: SeededRng): number[] => {
+  const shocks = new Array(ASSET_ORDER.length).fill(0);
+  if (state.stochasticIndices.length === 0) return shocks;
+  const z = state.stochasticIndices.map(() => rng.normal());
+  const stochasticShocks = multiplyLowerTriangularVector(state.chol, z);
+  for (const [position, assetIndex] of state.stochasticIndices.entries()) {
+    shocks[assetIndex] = stochasticShocks[position];
+  }
+  return shocks;
 };
 
 const percentile = (values: number[], p: number): number => {
@@ -1122,9 +1149,8 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
       }
 
       const activeState = regimeState === 'stress' && states.stress ? states.stress : states.normal;
-      const z = ASSET_ORDER.map(() => rng.normal());
-      let shock = multiplyLowerTriangularVector(activeState.chol, z);
-      if (returnGenerator === 'student_t') {
+      let shock = sampleSleeveShocks(activeState, rng);
+      if (returnGenerator === 'student_t' && activeState.stochasticIndices.length > 0) {
         const df = studentTDF ?? M8_STUDENT_T_DF_DEFAULT;
         const chi2 = rng.chisquare(df);
         const scale = chi2 > 0 ? Math.sqrt((df - 2.0) / chi2) : 1.0;
