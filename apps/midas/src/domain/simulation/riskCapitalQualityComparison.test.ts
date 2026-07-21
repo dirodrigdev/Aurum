@@ -82,19 +82,19 @@ assert.deepEqual(
 );
 
 assertNear(off.quality.classicSuccessRate, 0.91, 1e-12, 'OFF sustainability');
-assertNear(on.quality.classicSuccessRate, 0.944, 1e-12, 'ON sustainability');
+assertNear(on.quality.classicSuccessRate, 0.946, 1e-12, 'ON sustainability');
 assertNear(off.quality.qualitySurvivalRate, 0.153, 1e-12, 'OFF quality survival');
 assertNear(on.quality.qualitySurvivalRate, 0.169, 1e-12, 'ON quality survival');
 assertNear(off.quality.csr85_4, 0.732, 1e-12, 'OFF CSR 85/4');
 assertNear(on.quality.csr85_4, 0.776, 1e-12, 'ON CSR 85/4');
 assertNear(off.quality.averageEffectiveSpendingRatio, 0.9592675084884893, 1e-12, 'OFF effective spending');
-assertNear(on.quality.averageEffectiveSpendingRatio, 0.9622201373304615, 1e-12, 'ON effective spending');
+assertNear(on.quality.averageEffectiveSpendingRatio, 0.9622214298510287, 1e-12, 'ON effective spending');
 assertNear(off.quality.monthsBelow85, 35.762, 1e-12, 'OFF months below 85%');
-assertNear(on.quality.monthsBelow85, 32.966, 1e-12, 'ON months below 85%');
+assertNear(on.quality.monthsBelow85, 32.988, 1e-12, 'ON months below 85%');
 assertNear(off.quality.maxConsecutiveMonthsBelow85, 23, 1e-12, 'OFF max streak below 85%');
 assertNear(on.quality.maxConsecutiveMonthsBelow85, 21, 1e-12, 'ON max streak below 85%');
 assertNear(off.quality.severeCutYearsMean, 2.980166666666666, 1e-12, 'OFF severe-cut years');
-assertNear(on.quality.severeCutYearsMean, 2.7471666666666628, 1e-12, 'ON severe-cut years');
+assertNear(on.quality.severeCutYearsMean, 2.748999999999996, 1e-12, 'ON severe-cut years');
 assertNear(off.quality.terminalWealthP50, 3357104872.753105, 1e-3, 'OFF terminal wealth P50');
 assertNear(on.quality.terminalWealthP50, 4323207884.4991255, 1e-3, 'ON terminal wealth P50');
 
@@ -115,7 +115,7 @@ const noLongerQualityPassingPaths = off.diagnostics.paths.filter((path) => {
   return qualifiesForQualitySurvival(path) && Boolean(current) && !qualifiesForQualitySurvival(current!);
 });
 
-assert.equal(rescuedPaths.length, 34, 'risk capital must rescue the expected paired paths');
+assert.equal(rescuedPaths.length, 36, 'risk capital must rescue the expected paired paths');
 assert.equal(regressedPaths.length, 0, 'additional risk capital must not ruin a previously surviving paired path');
 assert.equal(
   rescuedPaths.filter(qualifiesForQualitySurvival).length,
@@ -124,12 +124,12 @@ assert.equal(
 );
 assert.equal(
   rescuedPaths.filter((path) => (path.maxConsecutiveMonthsBelow85 ?? 0) > 6).length,
-  34,
+  36,
   'all rescued paths still exceed the allowed low-consumption streak',
 );
 assert.equal(
   rescuedPaths.filter((path) => (path.monthsBelow85 ?? 0) > 24).length,
-  34,
+  36,
   'all rescued paths still exceed the allowed total months below 85%',
 );
 assert.equal(

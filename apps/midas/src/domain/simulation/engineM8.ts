@@ -582,6 +582,9 @@ const riskDrawdownAndTrendOk = (
   };
 };
 
+export const resolveRiskEFloorAvailable = (riskReserve: number, protectedFloor: number): number =>
+  Math.max(0, Math.min(riskReserve, protectedFloor));
+
 const allocateToDefensiveBucket = (
   sleeves: Record<AssetKey, number>,
   runtimeMix: Record<AssetKey, number>,
@@ -1067,7 +1070,6 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
     const riskEMicroTranche = riskReserveInitial * RISK_E_MICRO_FRACTION;
     let riskELargeSellCount = 0;
     let riskELastLargeSellMonth = -999;
-    let riskEFloorSold = 0;
     let riskEFirstLargeSellMonth: number | null = null;
     let riskESecondLargeSellMonth: number | null = null;
     const riskELargeSellMonthsPerPath: number[] = [];
@@ -1367,11 +1369,12 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
             if (nonFloorAvailable > 0) {
               riskDraw = Math.min(nonFloorAvailable, remaining);
             } else if (canUseFloor) {
-              const floorAvailable = Math.max(0, Math.min(riskReserve, riskEFloorInitial) - riskEFloorSold);
+            // riskReserve already reflects prior micro-sales. The floor limits the
+            // current saleable balance; it is not a second deduction ledger.
+            const floorAvailable = resolveRiskEFloorAvailable(riskReserve, riskEFloorInitial);
               const microDraw = Math.min(riskEMicroTranche, floorAvailable, remaining);
               riskDraw = microDraw;
               if (microDraw > 0) {
-                riskEFloorSold += microDraw;
                 riskEMicroCount += 1;
                 if (riskEMicroFirstMonth === null) riskEMicroFirstMonth = m;
                 riskEMicroLastMonth = m;

@@ -26,6 +26,7 @@ import { fromM8Output, toM8Input, validateM8Preconditions } from './m8Adapter';
 import {
   M8_DEFINED_POST_SALE_RENT_CLP,
   isM8HouseSaleEligibleMonth,
+  resolveRiskEFloorAvailable,
   resolveM8HouseMonthlySpend,
   resolveM8MortgageBalanceUf,
   runM8,
@@ -2749,6 +2750,26 @@ test('m8 future UF events use UF/CLP and reject USD events without an FX source'
     })),
     /usdClpStart valido/,
   );
+});
+
+test('risk E floor availability does not double-deduct prior micro-sales', () => {
+  const protectedFloor = 20;
+  let reserve = 20;
+  const microSale = 5;
+  let sales = 0;
+
+  while (resolveRiskEFloorAvailable(reserve, protectedFloor) > 0) {
+    const sale = Math.min(microSale, resolveRiskEFloorAvailable(reserve, protectedFloor));
+    reserve -= sale;
+    sales += sale;
+  }
+
+  assert.equal(sales, 20);
+  assert.equal(reserve, 0);
+  assert.equal(sales + reserve, 20);
+  assert.equal(resolveRiskEFloorAvailable(100, protectedFloor), protectedFloor);
+  assert.equal(resolveRiskEFloorAvailable(15, protectedFloor), 15);
+  assert.equal(resolveRiskEFloorAvailable(0, protectedFloor), 0);
 });
 
 test('m8 runtime with house includes house equity in the starting wealth', () => {
