@@ -240,6 +240,7 @@ const makeRuntimeInput = (overrides: Partial<M8Input> = {}): M8Input => {
     simulation_frequency: 'monthly',
     use_real_terms: true,
     simulation_base_month: '2026-03',
+    usdClpStart: 900,
     capital_initial_clp: 120_000_000,
     capital_source: 'manual',
     capital_source_label: 'manual',
@@ -2672,6 +2673,82 @@ test('m8 runtime counts future inflow and outflow totals', () => {
 
   assert.equal(result.FutureInflowTotalCLP, 5_000_000);
   assert.equal(result.FutureOutflowTotalCLP, 2_000_000);
+});
+
+test('m8 future USD events use USD/CLP rather than UF/CLP', () => {
+  const common = {
+    years: 4,
+    n_paths: 1,
+    feeAnnual: 0,
+    capital_initial_clp: 1_000_000_000,
+    portfolio_mix: { eq_global: 0, eq_chile: 0, fi_global: 0, fi_chile: 0, usd_liquidity: 0, clp_cash: 1 },
+    generator_type: 'gaussian_iid' as const,
+    generator_params: runtimeFlatGaussianParams,
+    house: {
+      include_house: true,
+      houseValueUf: 1,
+      mortgageBalanceUfNow: 0,
+      monthlyAmortizationUf: 0,
+      ufClpStart: 40_000,
+      house_sale_trigger_years_of_spend: Number.MAX_SAFE_INTEGER,
+      house_sale_lag_months: 0,
+    },
+    future_events: [{ id: 'usd', type: 'inflow' as const, amount: 100, currency: 'USD' as const, effective_month: 1 }],
+  };
+  const at800 = runM8(makeRuntimeInput({ ...common, usdClpStart: 800 }));
+  const at800DifferentUf = runM8(makeRuntimeInput({
+    ...common,
+    usdClpStart: 800,
+    house: { ...common.house, ufClpStart: 55_000 },
+  }));
+  const at900 = runM8(makeRuntimeInput({ ...common, usdClpStart: 900 }));
+
+  assert.equal(at800.FutureInflowTotalCLP, 80_000);
+  assert.equal(at800DifferentUf.FutureInflowTotalCLP, 80_000);
+  assert.equal(at900.FutureInflowTotalCLP, 90_000);
+  assert.equal(at900.TerminalMedianCLP - at800.TerminalMedianCLP, 10_000);
+});
+
+test('m8 future UF events use UF/CLP and reject USD events without an FX source', () => {
+  const common = {
+    years: 4,
+    n_paths: 1,
+    feeAnnual: 0,
+    capital_initial_clp: 1_000_000_000,
+    portfolio_mix: { eq_global: 0, eq_chile: 0, fi_global: 0, fi_chile: 0, usd_liquidity: 0, clp_cash: 1 },
+    generator_type: 'gaussian_iid' as const,
+    generator_params: runtimeFlatGaussianParams,
+    house: {
+      include_house: true,
+      houseValueUf: 1,
+      mortgageBalanceUfNow: 0,
+      monthlyAmortizationUf: 0,
+      ufClpStart: 40_000,
+      house_sale_trigger_years_of_spend: Number.MAX_SAFE_INTEGER,
+      house_sale_lag_months: 0,
+    },
+  };
+  const uf = runM8(makeRuntimeInput({
+    ...common,
+    usdClpStart: 800,
+    future_events: [{ id: 'uf', type: 'inflow', amount: 2, currency: 'UF', effective_month: 1 }],
+  }));
+  const ufDifferentUsd = runM8(makeRuntimeInput({
+    ...common,
+    usdClpStart: 1_200,
+    future_events: [{ id: 'uf', type: 'inflow', amount: 2, currency: 'UF', effective_month: 1 }],
+  }));
+
+  assert.equal(uf.FutureInflowTotalCLP, 80_000);
+  assert.equal(ufDifferentUsd.FutureInflowTotalCLP, 80_000);
+  assert.throws(
+    () => runM8(makeRuntimeInput({
+      ...common,
+      usdClpStart: undefined,
+      future_events: [{ id: 'usd', type: 'inflow', amount: 1, currency: 'USD', effective_month: 1 }],
+    })),
+    /usdClpStart valido/,
+  );
 });
 
 test('m8 runtime with house includes house equity in the starting wealth', () => {

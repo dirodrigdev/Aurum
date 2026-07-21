@@ -811,6 +811,12 @@ export const validateM8Input = (input: M8Input): string[] => {
       if (event.type !== 'inflow' && event.type !== 'outflow') errors.push(`future_events[${event.id ?? '?'}].type invalido`);
       if (!isFiniteNumber(event.amount) || event.amount <= 0) errors.push(`future_events[${event.id ?? '?'}].amount debe ser > 0`);
       if (event.currency !== 'CLP' && event.currency !== 'USD' && event.currency !== 'UF') errors.push(`future_events[${event.id ?? '?'}].currency invalida`);
+      if (event.currency === 'USD' && (!isFiniteNumber(input.usdClpStart) || input.usdClpStart <= 0)) {
+        errors.push(`future_events[${event.id ?? '?'}] en USD requieren usdClpStart valido`);
+      }
+      if (event.currency === 'UF' && (!isFiniteNumber(input.house?.ufClpStart) || (input.house?.ufClpStart ?? 0) <= 0)) {
+        errors.push(`future_events[${event.id ?? '?'}] en UF requieren house.ufClpStart valido`);
+      }
       if (!Number.isInteger(event.effective_month) || event.effective_month < 1 || event.effective_month > input.years * 12) {
         errors.push(`future_events[${event.id ?? '?'}].effective_month fuera de horizonte`);
       }
@@ -820,9 +826,15 @@ export const validateM8Input = (input: M8Input): string[] => {
   return errors;
 };
 
-const eventAmountToClp = (event: M8FutureEvent, input: M8Input, fxRealLevel: number): number => {
+const eventAmountToClp = (event: M8FutureEvent, input: M8Input): number => {
   if (event.currency === 'CLP') return event.amount;
-  if (event.currency === 'USD') return event.amount * fxRealLevel;
+  if (event.currency === 'USD') {
+    const usdRate = input.usdClpStart;
+    if (!usdRate || usdRate <= 0) {
+      throw new Error('future_events en USD requieren usdClpStart para conversión');
+    }
+    return event.amount * usdRate;
+  }
   const ufRate = input.house?.ufClpStart;
   if (!ufRate || ufRate <= 0) {
     throw new Error('future_events en UF requieren house.ufClpStart para conversión');
@@ -1183,7 +1195,7 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
       let extraOutflowThisMonth = 0;
       const monthEvents = eventsMap.get(m) ?? [];
       for (const event of monthEvents) {
-        const eventAmountClp = eventAmountToClp(event, input, (input.house?.ufClpStart ?? 0) || 1);
+        const eventAmountClp = eventAmountToClp(event, input);
         if (event.type === 'inflow') {
           inflowTotalClp += eventAmountClp;
           applyInflowsProportionally(sleeves, runtimeMix, eventAmountClp);

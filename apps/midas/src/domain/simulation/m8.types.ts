@@ -159,6 +159,8 @@ export interface M8Input {
   simulation_frequency: 'monthly';
   use_real_terms: true;
   simulation_base_month?: string;
+  /** Canonical USD/CLP spot used only to materialize USD future events. */
+  usdClpStart?: number;
   capital_initial_clp: number;
   capital_source: CapitalSource;
   capital_source_label?: string;

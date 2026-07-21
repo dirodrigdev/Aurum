@@ -450,6 +450,7 @@ export const toM8Input = (
       effective_month: toM8Month(event.effectiveDate, simulationBaseMonth, horizonMonths),
       description: event.description,
     })) ?? [];
+  const hasUsdFutureEvent = futureEvents.some((event) => event.currency === 'USD');
 
   return {
     years,
@@ -458,6 +459,7 @@ export const toM8Input = (
     simulation_frequency: 'monthly',
     use_real_terms: true,
     ...(simulationBaseMonth ? { simulation_base_month: simulationBaseMonth } : {}),
+    ...(hasUsdFutureEvent ? { usdClpStart: params.fx.clpUsdInitial } : {}),
     capital_initial_clp: Math.max(0, coreCapitalClp),
     capital_source: (params.capitalSource ?? 'aurum') as CapitalSource,
     capital_source_label: capitalResolution.sourceLabel,
