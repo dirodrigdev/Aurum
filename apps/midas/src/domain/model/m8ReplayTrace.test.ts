@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { buildM8ReplayTrace } from './m8ReplayTrace';
 
-const base = () => buildM8ReplayTrace({
+const FIXED_NOW_MS = Date.parse('2026-07-22T12:00:00.000Z');
+
+const base = () => {
+  const originalNow = Date.now;
+  Date.now = () => FIXED_NOW_MS;
+  try {
+    return buildM8ReplayTrace({
   paramsLabel: 'Desde Aurum · abril 2026',
   effectiveEngineInput: {
     years: 40,
@@ -97,8 +103,12 @@ const base = () => buildM8ReplayTrace({
     manualAdjustmentsCount: 0,
     manualLocalAdjustmentsAffectEngine: false,
   },
-  warnings: [],
-});
+      warnings: [],
+    });
+  } finally {
+    Date.now = originalNow;
+  }
+};
 
 (() => {
   const first = base();

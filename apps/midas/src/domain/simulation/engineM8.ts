@@ -6,6 +6,7 @@ import type {
   M8GaussianIIDGeneratorParams,
   M8StudentTGeneratorParams,
   M8TwoRegimeGeneratorParams,
+  M8GeneratorSleeveStats,
   M8ScenarioOverrides,
   M8RiskCapitalPolicy,
   M8RiskCapitalBtcDriver,
@@ -280,20 +281,69 @@ const buildEffectiveNormalSleeves = (
   };
 };
 
-const validateSquareMatrix = (matrix: number[][], expectedSize: number, label: string): void => {
+const validateSquareMatrix = (matrix: unknown, expectedSize: number, label: string): string[] => {
+  const errors: string[] = [];
   if (!Array.isArray(matrix) || matrix.length !== expectedSize) {
-    throw new Error(`${label} debe ser una matriz cuadrada de tamaño ${expectedSize}`);
+    return [`${label} debe ser una matriz cuadrada de tamaño ${expectedSize}`];
   }
   for (const [idx, row] of matrix.entries()) {
     if (!Array.isArray(row) || row.length !== expectedSize) {
-      throw new Error(`${label}[${idx}] debe tener longitud ${expectedSize}`);
+      errors.push(`${label}[${idx}] debe tener longitud ${expectedSize}`);
+      continue;
     }
     for (const [jdx, value] of row.entries()) {
       if (!isFiniteNumber(value)) {
-        throw new Error(`${label}[${idx}][${jdx}] debe ser un numero finito`);
+        errors.push(`${label}[${idx}][${jdx}] debe ser un numero finito`);
       }
     }
   }
+  return errors;
+};
+
+const validateCorrelationMatrix = (matrix: unknown, label: string): string[] => {
+  const errors = validateSquareMatrix(matrix, ASSET_ORDER.length, label);
+  if (errors.length > 0 || !Array.isArray(matrix)) return errors;
+
+  const tolerance = 1e-9;
+  for (let i = 0; i < matrix.length; i += 1) {
+    const row = matrix[i];
+    if (!Array.isArray(row) || row.length !== matrix.length) continue;
+    if (Math.abs(row[i] - 1) > tolerance) {
+      errors.push(`${label}[${i}][${i}] debe ser 1`);
+    }
+    for (let j = i + 1; j < matrix.length; j += 1) {
+      if (Math.abs(row[j] - matrix[j][i]) > tolerance) {
+        errors.push(`${label} debe ser simetrica: [${i}][${j}] != [${j}][${i}]`);
+      }
+      if (row[j] < -1 || row[j] > 1 || matrix[j][i] < -1 || matrix[j][i] > 1) {
+        errors.push(`${label}[${i}][${j}] debe estar en [-1, 1]`);
+      }
+    }
+    if (row[i] < -1 || row[i] > 1) {
+      errors.push(`${label}[${i}][${i}] debe estar en [-1, 1]`);
+    }
+  }
+
+  if (errors.length > 0) return errors;
+
+  // Accept valid singular and near-singular correlation matrices. The small
+  // diagonal regularization is numerical only; zero-volatility sleeves remain
+  // excluded from the runtime factorization below.
+  const numericMatrix = matrix as number[][];
+  let positiveSemidefinite = false;
+  for (const jitter of [0, 1e-12, 1e-10, 1e-8]) {
+    try {
+      cholesky(numericMatrix.map((row, i) => row.map((value, j) => value + (i === j ? jitter : 0))));
+      positiveSemidefinite = true;
+      break;
+    } catch {
+      // Try the next numerical tolerance without changing the economic input.
+    }
+  }
+  if (!positiveSemidefinite) {
+    errors.push(`${label} no es semidefinida positiva`);
+  }
+  return errors;
 };
 
 const cholesky = (matrix: number[][]): number[][] => {
@@ -654,6 +704,9 @@ const computeMaxDrawdownPercentiles = (wealthPaths: number[][]): Record<number, 
 };
 
 export const validateM8Input = (input: M8Input): string[] => {
+  if (!input || typeof input !== 'object') {
+    return ['input M8 es obligatorio'];
+  }
   const errors: string[] = [];
 
   if (!Number.isInteger(input.years) || input.years <= 0) {
@@ -668,8 +721,8 @@ export const validateM8Input = (input: M8Input): string[] => {
   if (input.use_real_terms !== true) {
     errors.push('use_real_terms debe ser true');
   }
-  if (!isFiniteNumber(input.seed)) {
-    errors.push('seed debe ser un numero finito');
+  if (!Number.isSafeInteger(input.seed) || input.seed <= 0 || input.seed > 0xffffffff) {
+    errors.push('seed debe ser entero positivo dentro del dominio uint32 del RNG');
   }
   if (!isFiniteNumber(input.capital_initial_clp) || input.capital_initial_clp < 0) {
     errors.push('capital_initial_clp debe ser >= 0');
@@ -702,6 +755,16 @@ export const validateM8Input = (input: M8Input): string[] => {
   }
   const mix = input.portfolio_mix;
   if (mix) {
+    for (const key of Object.keys(mix)) {
+      if (!ASSET_ORDER.includes(key as AssetKey)) {
+        errors.push(`portfolio_mix contiene sleeve desconocida: ${key}`);
+      }
+    }
+    for (const asset of ASSET_ORDER) {
+      if (!isFiniteNumber(mix[asset]) || mix[asset] < 0) {
+        errors.push(`portfolio_mix.${asset} debe ser finito y >= 0`);
+      }
+    }
     const total = ASSET_ORDER.reduce((acc, asset) => acc + (isFiniteNumber(mix[asset]) ? mix[asset] : Number.NaN), 0);
     if (!Number.isFinite(total) || total <= 0) {
       errors.push('portfolio_mix debe sumar algo mayor que 0');
@@ -742,36 +805,80 @@ export const validateM8Input = (input: M8Input): string[] => {
 
   if (!input.return_assumptions) {
     errors.push('return_assumptions es obligatorio');
+  } else {
+    for (const [label, value] of Object.entries(input.return_assumptions)) {
+      if (!isFiniteNumber(value)) errors.push(`return_assumptions.${label} debe ser finito`);
+      if (isFiniteNumber(value) && value < -1) errors.push(`return_assumptions.${label} no puede ser menor que -100%`);
+    }
   }
   if (!input.generator_params) {
     errors.push('generator_params es obligatorio');
+    return errors;
   }
   if (!input.cuts) {
     errors.push('cuts es obligatorio');
   } else {
-    if (!isFiniteNumber(input.cuts.cut1_floor) || !isFiniteNumber(input.cuts.cut2_floor)) {
-      errors.push('cuts.cut1_floor y cuts.cut2_floor deben ser numeros finitos');
+    const cutFields = [
+      'cut1_floor', 'cut2_floor', 'recovery_cut2_to_cut1_months',
+      'recovery_cut1_to_normal_months', 'adjustment_alpha', 'dd15_threshold',
+      'dd25_threshold', 'consecutive_months',
+    ] as const;
+    for (const field of cutFields) {
+      if (!isFiniteNumber(input.cuts[field])) errors.push(`cuts.${field} debe ser finito`);
+    }
+    for (const field of ['cut1_floor', 'cut2_floor', 'adjustment_alpha'] as const) {
+      if (isFiniteNumber(input.cuts[field]) && (input.cuts[field] < 0 || input.cuts[field] > 1)) {
+        errors.push(`cuts.${field} debe estar en [0, 1]`);
+      }
+    }
+    for (const field of ['recovery_cut2_to_cut1_months', 'recovery_cut1_to_normal_months', 'consecutive_months'] as const) {
+      if (!Number.isInteger(input.cuts[field]) || input.cuts[field] < 0) {
+        errors.push(`cuts.${field} debe ser entero >= 0`);
+      }
     }
     if (input.cuts.cut1_floor <= input.cuts.cut2_floor) {
       errors.push('cuts.cut1_floor debe ser mayor que cuts.cut2_floor');
     }
   }
 
+  if (input.scenario_overrides) {
+    if (input.scenario_overrides.scenario_id !== 'base' && input.scenario_overrides.scenario_id !== 'optimistic' && input.scenario_overrides.scenario_id !== 'pessimistic') {
+      errors.push('scenario_overrides.scenario_id invalido');
+    }
+    for (const [key, value] of Object.entries(input.scenario_overrides)) {
+      if (key !== 'scenario_id' && !isFiniteNumber(value)) errors.push(`scenario_overrides.${key} debe ser finito`);
+    }
+  }
+
   const generatorType = input.generator_type;
   const generatorParams = input.generator_params;
+  if (generatorType !== 'gaussian_iid' && generatorType !== 'student_t' && generatorType !== 'two_regime') {
+    errors.push('generator_type invalido');
+  }
   if (generatorType !== generatorParams.distribution) {
     errors.push('generator_type debe coincidir con generator_params.distribution');
   }
-  validateSquareMatrix(generatorParams.correlation_matrix, ASSET_ORDER.length, 'generator_params.correlation_matrix');
-  for (const asset of ASSET_ORDER) {
-    const stats = generatorParams.sleeves[asset];
-    if (!stats || !isFiniteNumber(stats.mean_annual) || !isFiniteNumber(stats.vol_annual)) {
-      errors.push(`generator_params.sleeves.${asset} debe tener mean_annual y vol_annual finitos`);
+  errors.push(...validateCorrelationMatrix(generatorParams.correlation_matrix, 'generator_params.correlation_matrix'));
+
+  const validateSleeves = (sleeves: unknown, label: string) => {
+    if (!sleeves || typeof sleeves !== 'object') {
+      errors.push(`${label} es obligatorio`);
+      return;
     }
-    if (stats.vol_annual < 0) {
-      errors.push(`generator_params.sleeves.${asset}.vol_annual debe ser >= 0`);
+    for (const key of Object.keys(sleeves as Record<string, unknown>)) {
+      if (!ASSET_ORDER.includes(key as AssetKey)) errors.push(`${label} contiene sleeve desconocida: ${key}`);
     }
-  }
+    for (const asset of ASSET_ORDER) {
+      const stats = (sleeves as Record<AssetKey, M8GeneratorSleeveStats>)[asset];
+      if (!stats || !isFiniteNumber(stats.mean_annual) || !isFiniteNumber(stats.vol_annual)) {
+        errors.push(`${label}.${asset} debe tener mean_annual y vol_annual finitos`);
+        continue;
+      }
+      if (stats.mean_annual < -1) errors.push(`${label}.${asset}.mean_annual no puede ser menor que -100%`);
+      if (stats.vol_annual < 0) errors.push(`${label}.${asset}.vol_annual debe ser >= 0`);
+    }
+  };
+  validateSleeves(generatorParams.sleeves, 'generator_params.sleeves');
 
   if (generatorType === 'student_t') {
     const df = (generatorParams as M8StudentTGeneratorParams).degrees_of_freedom;
@@ -782,14 +889,29 @@ export const validateM8Input = (input: M8Input): string[] => {
 
   if (generatorType === 'two_regime') {
     const twoRegime = generatorParams as M8TwoRegimeGeneratorParams;
-    validateSquareMatrix([
+    if (!twoRegime.transition_matrix || !twoRegime.regimes) {
+      errors.push('generator_params.two_regime requiere transition_matrix y regimes');
+    } else {
+      errors.push(...validateSquareMatrix([
       [twoRegime.transition_matrix.normal.normal, twoRegime.transition_matrix.normal.stress],
       [twoRegime.transition_matrix.stress.normal, twoRegime.transition_matrix.stress.stress],
-    ], 2, 'generator_params.transition_matrix');
-    const row1 = twoRegime.transition_matrix.normal.normal + twoRegime.transition_matrix.normal.stress;
-    const row2 = twoRegime.transition_matrix.stress.normal + twoRegime.transition_matrix.stress.stress;
-    if (Math.abs(row1 - 1) > 1e-6 || Math.abs(row2 - 1) > 1e-6) {
-      errors.push('generator_params.transition_matrix debe sumar 1 por fila');
+      ], 2, 'generator_params.transition_matrix'));
+      const transitionValues = [
+        twoRegime.transition_matrix.normal.normal,
+        twoRegime.transition_matrix.normal.stress,
+        twoRegime.transition_matrix.stress.normal,
+        twoRegime.transition_matrix.stress.stress,
+      ];
+      if (transitionValues.some((value) => !isFiniteNumber(value) || value < 0 || value > 1)) {
+        errors.push('generator_params.transition_matrix debe contener probabilidades en [0, 1]');
+      }
+      const row1 = twoRegime.transition_matrix.normal.normal + twoRegime.transition_matrix.normal.stress;
+      const row2 = twoRegime.transition_matrix.stress.normal + twoRegime.transition_matrix.stress.stress;
+      if (Math.abs(row1 - 1) > 1e-6 || Math.abs(row2 - 1) > 1e-6) {
+        errors.push('generator_params.transition_matrix debe sumar 1 por fila');
+      }
+      validateSleeves(twoRegime.regimes.normal, 'generator_params.regimes.normal');
+      validateSleeves(twoRegime.regimes.stress, 'generator_params.regimes.stress');
     }
   }
 
@@ -798,23 +920,26 @@ export const validateM8Input = (input: M8Input): string[] => {
     if (!isFiniteNumber(input.house.mortgageBalanceUfNow) || input.house.mortgageBalanceUfNow < 0) errors.push('house.mortgageBalanceUfNow debe ser >= 0');
     if (!isFiniteNumber(input.house.monthlyAmortizationUf) || input.house.monthlyAmortizationUf < 0) errors.push('house.monthlyAmortizationUf debe ser >= 0');
     if (!isFiniteNumber(input.house.ufClpStart) || input.house.ufClpStart <= 0) errors.push('house.ufClpStart debe ser > 0');
-    if (!isFiniteNumber(input.house.house_sale_trigger_years_of_spend)) errors.push('house.house_sale_trigger_years_of_spend debe ser finito');
+    if (!isFiniteNumber(input.house.house_sale_trigger_years_of_spend) || input.house.house_sale_trigger_years_of_spend < 0) errors.push('house.house_sale_trigger_years_of_spend debe ser finito y >= 0');
     if (!Number.isInteger(input.house.house_sale_lag_months) || input.house.house_sale_lag_months < 0) errors.push('house.house_sale_lag_months debe ser entero >= 0');
   }
 
   if (input.future_events?.length) {
-    if (input.future_events.some((event) => event.currency === 'UF') && !(input.house?.ufClpStart && input.house.ufClpStart > 0)) {
+    const eventIds = new Set<string>();
+    if (input.future_events.some((event) => event.currency === 'UF' && event.amount > 0) && !(input.house?.ufClpStart && input.house.ufClpStart > 0)) {
       errors.push('future_events en UF requieren house.ufClpStart > 0');
     }
     for (const event of input.future_events) {
       if (!event.id?.trim()) errors.push('future_events requiere id');
+      if (event.id && eventIds.has(event.id)) errors.push(`future_events[${event.id}] tiene id duplicado`);
+      if (event.id) eventIds.add(event.id);
       if (event.type !== 'inflow' && event.type !== 'outflow') errors.push(`future_events[${event.id ?? '?'}].type invalido`);
-      if (!isFiniteNumber(event.amount) || event.amount <= 0) errors.push(`future_events[${event.id ?? '?'}].amount debe ser > 0`);
+      if (!isFiniteNumber(event.amount) || event.amount < 0) errors.push(`future_events[${event.id ?? '?'}].amount debe ser >= 0`);
       if (event.currency !== 'CLP' && event.currency !== 'USD' && event.currency !== 'UF') errors.push(`future_events[${event.id ?? '?'}].currency invalida`);
-      if (event.currency === 'USD' && (!isFiniteNumber(input.usdClpStart) || input.usdClpStart <= 0)) {
+      if (event.currency === 'USD' && event.amount > 0 && (!isFiniteNumber(input.usdClpStart) || input.usdClpStart <= 0)) {
         errors.push(`future_events[${event.id ?? '?'}] en USD requieren usdClpStart valido`);
       }
-      if (event.currency === 'UF' && (!isFiniteNumber(input.house?.ufClpStart) || (input.house?.ufClpStart ?? 0) <= 0)) {
+      if (event.currency === 'UF' && event.amount > 0 && (!isFiniteNumber(input.house?.ufClpStart) || (input.house?.ufClpStart ?? 0) <= 0)) {
         errors.push(`future_events[${event.id ?? '?'}] en UF requieren house.ufClpStart valido`);
       }
       if (!Number.isInteger(event.effective_month) || event.effective_month < 1 || event.effective_month > input.years * 12) {
@@ -845,6 +970,7 @@ const eventAmountToClp = (event: M8FutureEvent, input: M8Input): number => {
 const buildEventsMap = (input: M8Input): Map<number, M8FutureEvent[]> => {
   const map = new Map<number, M8FutureEvent[]>();
   for (const event of input.future_events ?? []) {
+    if (!event || event.amount === 0) continue;
     if (!event || !Number.isInteger(event.effective_month)) continue;
     if (event.effective_month < 1 || event.effective_month > input.years * 12) continue;
     const existing = map.get(event.effective_month) ?? [];

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { buildM8InputFingerprint } from './m8InputFingerprint';
+import { buildM8InputFingerprint, canonicalizeM8FingerprintValue } from './m8InputFingerprint';
 import type { M8InputFingerprintInput } from './m8InputFingerprint';
 import { DEFAULT_PARAMETERS } from './defaults';
 import type { ModelParameters } from './types';
@@ -85,6 +85,35 @@ const baseInput = (): M8InputFingerprintInput => {
   const first = buildM8InputFingerprint(baseInput());
   const second = buildM8InputFingerprint(baseInput());
   assert.equal(first.effectiveEngineInputHash, second.effectiveEngineInputHash, 'same effective input must produce same hash');
+})();
+
+(() => {
+  assert.deepEqual(
+    canonicalizeM8FingerprintValue({ b: -0, a: 1, scenario_overrides: { scenario_id: 'base', ipc_chile_annual: 0.04, tcreal_lt: 640 } }),
+    { a: 1, b: 0, scenario_overrides: { scenario_id: 'base' } },
+    'canonical serialization must normalize -0 and omit inert scenario metadata',
+  );
+  assert.throws(
+    () => canonicalizeM8FingerprintValue({ invalid: Number.NaN }),
+    /no admite NaN ni Infinity/,
+  );
+})();
+
+(() => {
+  const input = baseInput();
+  (input.effectiveEngineInput as any).scenario_overrides = { scenario_id: 'base' };
+  const original = buildM8InputFingerprint(input);
+  (input.effectiveEngineInput as any).scenario_overrides = {
+    scenario_id: 'base',
+    ipc_chile_annual: 0.04,
+    tcreal_lt: 640,
+  };
+  const withLegacyMetadata = buildM8InputFingerprint(input);
+  assert.equal(
+    original.effectiveEngineInputHash,
+    withLegacyMetadata.effectiveEngineInputHash,
+    'inert IPC/TCREAL scenario metadata must not create false economic staleness',
+  );
 })();
 
 (() => {

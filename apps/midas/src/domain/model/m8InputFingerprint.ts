@@ -55,11 +55,31 @@ export type M8InputFingerprint = {
   createdAt: string;
 };
 
+const INERT_SCENARIO_OVERRIDE_KEYS = new Set(['ipc_chile_annual', 'tcreal_lt']);
+
+export function canonicalizeM8FingerprintValue(value: unknown, parentKey?: string): unknown {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error('M8 fingerprint no admite NaN ni Infinity');
+    return Object.is(value, -0) ? 0 : value;
+  }
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map((item) => canonicalizeM8FingerprintValue(item));
+
+  const result: Record<string, unknown> = {};
+  for (const [key, entryValue] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entryValue === 'undefined') continue;
+    if (parentKey === 'scenario_overrides' && INERT_SCENARIO_OVERRIDE_KEYS.has(key)) continue;
+    result[key] = canonicalizeM8FingerprintValue(entryValue, key);
+  }
+  return result;
+}
+
 function stableSerialize(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map((item) => stableSerialize(item)).join(',')}]`;
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, entryValue]) => typeof entryValue !== 'undefined')
+  const canonical = canonicalizeM8FingerprintValue(value);
+  if (typeof canonical === 'undefined') return 'undefined';
+  if (canonical === null || typeof canonical !== 'object') return JSON.stringify(canonical);
+  if (Array.isArray(canonical)) return `[${canonical.map((item) => stableSerialize(item)).join(',')}]`;
+  const entries = Object.entries(canonical as Record<string, unknown>)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableSerialize(entryValue)}`);
   return `{${entries.join(',')}}`;
@@ -165,7 +185,8 @@ function buildSources(input: M8InputFingerprintInput): M8InputFingerprintSources
 
 export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8InputFingerprint {
   const composition = input.params.simulationComposition;
-  const normalizedInput: Record<string, unknown> = (input.effectiveEngineInput as Record<string, unknown> | null) ?? {
+  const normalizedInput: Record<string, unknown> = canonicalizeM8FingerprintValue(
+    (input.effectiveEngineInput as Record<string, unknown> | null) ?? {
     capitalInitialClp: Number(input.params.capitalInitial ?? 0),
     capitalSource: input.params.capitalSource ?? 'unknown',
     totalNetWorthClp: Number(composition?.totalNetWorthCLP ?? 0),
@@ -247,7 +268,8 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
       instrumentUniverseHash: input.instrumentUniverseHash,
       simulationConfigHash: input.simulationConfigHash,
     },
-  };
+    },
+  ) as Record<string, unknown>;
   const manualLocalAdjustmentsAffectEngine = Boolean(input.capitalDerivationDiagnostics?.manualLocalAdjustmentsAffectEngine);
   const manualCurrentAdjustmentsAffectEngine = Boolean(input.capitalDerivationDiagnostics?.manualCurrentAdjustmentsAffectEngine);
   const manualFutureAdjustmentsAffectEngine = Boolean(input.capitalDerivationDiagnostics?.manualFutureAdjustmentsAffectEngine);

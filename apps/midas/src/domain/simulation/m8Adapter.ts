@@ -52,6 +52,26 @@ const isValidCapitalSource = (value: unknown): value is CapitalSource => value =
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
+const validateCorrelationValues = (matrix: number[][], label: string): string[] => {
+  const errors: string[] = [];
+  const tolerance = 1e-9;
+  for (let i = 0; i < matrix.length; i += 1) {
+    for (let j = 0; j < matrix.length; j += 1) {
+      const value = matrix[i]?.[j];
+      if (!isFiniteNumber(value) || value < -1 || value > 1) {
+        errors.push(`${label}[${i}][${j}] debe ser finito y estar en [-1, 1]`);
+      }
+      if (i === j && isFiniteNumber(value) && Math.abs(value - 1) > tolerance) {
+        errors.push(`${label}[${i}][${j}] debe ser 1`);
+      }
+      if (i < j && isFiniteNumber(value) && isFiniteNumber(matrix[j]?.[i]) && Math.abs(value - matrix[j][i]) > tolerance) {
+        errors.push(`${label} debe ser simetrica: [${i}][${j}] != [${j}][${i}]`);
+      }
+    }
+  }
+  return errors;
+};
+
 const hasOwn = (record: object, key: string): boolean =>
   Object.prototype.hasOwnProperty.call(record, key);
 
@@ -184,8 +204,11 @@ const buildSleeveStats = (meanAnnual: number, volAnnual: number): M8GeneratorSle
 const cloneMatrix = (matrix: readonly (readonly number[])[]): number[][] => matrix.map((row) => row.slice());
 
 const expandCorrelationMatrix = (legacyMatrix: readonly (readonly number[])[]): number[][] => {
-  if (!Array.isArray(legacyMatrix) || legacyMatrix.length === 0) {
+  if (legacyMatrix === undefined || legacyMatrix === null || (Array.isArray(legacyMatrix) && legacyMatrix.length === 0)) {
     return cloneMatrix(M8_CANONICAL_CORRELATION_MATRIX);
+  }
+  if (!Array.isArray(legacyMatrix)) {
+    throw new Error('correlationMatrix invalida: se esperaba un arreglo');
   }
 
   const size = legacyMatrix.length;
@@ -286,13 +309,17 @@ const validateFutureEvents = (
 ): void => {
   if (!events || events.length === 0) return;
 
+  const ids = new Set<string>();
+
   for (const event of events) {
     if (!event.id?.trim()) throw new Error('futureCapitalEvents: id es obligatorio');
+    if (ids.has(event.id)) throw new Error(`futureCapitalEvents[${event.id}].id duplicado`);
+    ids.add(event.id);
     if (event.type !== 'inflow' && event.type !== 'outflow') {
       throw new Error(`futureCapitalEvents[${event.id}].type invalido`);
     }
-    if (!isFiniteNumber(event.amount) || event.amount <= 0) {
-      throw new Error(`futureCapitalEvents[${event.id}].amount debe ser > 0`);
+    if (!isFiniteNumber(event.amount) || event.amount < 0) {
+      throw new Error(`futureCapitalEvents[${event.id}].amount debe ser >= 0`);
     }
     if (event.currency !== 'CLP' && event.currency !== 'USD' && event.currency !== 'UF') {
       throw new Error(`futureCapitalEvents[${event.id}].currency invalida`);
@@ -356,6 +383,15 @@ export const validateM8Preconditions = (
       errors.push('simulation.horizonMonths debe ser multiplo de 12 (no se permite redondeo)');
     }
 
+    const seed = params.simulation.seed;
+    if (!Number.isSafeInteger(seed) || seed <= 0 || seed > 0xffffffff) {
+      errors.push('simulation.seed debe ser entero positivo dentro del dominio uint32 del RNG');
+    }
+    const nSim = params.simulation.nSim;
+    if (nSim !== undefined && (!Number.isSafeInteger(nSim) || nSim <= 0)) {
+      errors.push('simulation.nSim debe ser entero positivo');
+    }
+
     const capitalSource = params.capitalSource ?? 'aurum';
     if (!isValidCapitalSource(capitalSource)) {
       errors.push('capitalSource invalido: debe ser "aurum" o "manual"');
@@ -370,7 +406,45 @@ export const validateM8Preconditions = (
       errors.push('futureCapitalEvents requieren simulationBaseMonth valido para normalizar effectiveDate');
     }
 
-    buildCanonicalM8PortfolioMix(params.weights, operationalWeights);
+    if (!params.weights || typeof params.weights !== 'object') {
+      errors.push('weights es obligatorio');
+    } else {
+      for (const key of Object.keys(params.weights)) {
+        if (!['rvGlobal', 'rfGlobal', 'rvChile', 'rfChile'].includes(key)) {
+          errors.push(`weights contiene campo desconocido: ${key}`);
+        }
+      }
+      for (const [label, value] of Object.entries(params.weights)) {
+        if (!isFiniteNumber(value) || value < 0) errors.push(`weights.${label} debe ser finito y >= 0`);
+      }
+      for (const [label, value] of Object.entries(operationalWeights)) {
+        if (!['usd_liquidity', 'clp_cash'].includes(label)) errors.push(`operationalWeights contiene campo desconocido: ${label}`);
+        if (!isFiniteNumber(value) || value < 0) errors.push(`operationalWeights.${label} debe ser finito y >= 0`);
+      }
+      buildCanonicalM8PortfolioMix(params.weights, operationalWeights);
+    }
+
+    const returnFields = [
+      ['rvGlobalAnnual', params.returns?.rvGlobalAnnual],
+      ['rfGlobalAnnual', params.returns?.rfGlobalAnnual],
+      ['rvChileAnnual', params.returns?.rvChileAnnual],
+      ['rfChileUFAnnual', params.returns?.rfChileUFAnnual],
+      ['rvGlobalVolAnnual', params.returns?.rvGlobalVolAnnual],
+      ['rfGlobalVolAnnual', params.returns?.rfGlobalVolAnnual],
+      ['rvChileVolAnnual', params.returns?.rvChileVolAnnual],
+      ['rfChileVolAnnual', params.returns?.rfChileVolAnnual],
+    ] as const;
+    for (const [label, value] of returnFields) {
+      if (!isFiniteNumber(value)) errors.push(`returns.${label} debe ser finito`);
+      if (label.endsWith('Annual') && !label.includes('Vol') && isFiniteNumber(value) && value < -1) {
+        errors.push(`returns.${label} no puede ser menor que -100%`);
+      }
+      if (label.includes('Vol') && isFiniteNumber(value) && value < 0) {
+        errors.push(`returns.${label} debe ser >= 0`);
+      }
+    }
+    const expandedCorrelation = expandCorrelationMatrix(params.returns?.correlationMatrix ?? []);
+    errors.push(...validateCorrelationValues(expandedCorrelation, 'returns.correlationMatrix'));
 
     buildScenarioOverrides(params);
 
