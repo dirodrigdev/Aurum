@@ -1364,7 +1364,16 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
         recoverToNormalCount = 0;
       }
 
-      if (includeHouse && !soldHouse && !pendingSale && isM8HouseSaleEligibleMonth(m)) {
+      const houseMustRealizeAtHorizon = includeHouse && !soldHouse && m === months && isM8HouseSaleEligibleMonth(m);
+      if (houseMustRealizeAtHorizon) {
+        // A home remains part of the decumulation waterfall. When the horizon reaches
+        // the eligibility window, realize it no later than the final modeled month.
+        if (triggerMonth === null) {
+          triggerMonth = m;
+          triggerMonths.push(m);
+        }
+        executeHouseSale(m);
+      } else if (includeHouse && !soldHouse && !pendingSale && isM8HouseSaleEligibleMonth(m)) {
         const triggerBudget = resolveM8HouseMonthlySpend(input, m, true);
         const yearsCoverIfSold = coreNow / Math.max(triggerBudget * 12, 1);
         if (yearsCoverIfSold <= input.house!.house_sale_trigger_years_of_spend) {
@@ -1378,13 +1387,28 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
 
       const budget = resolveM8HouseMonthlySpend(input, m, soldHouse);
       let regularSpend = budget;
-      if (cutState === 1) {
+      const riskECanFundSpendBeforeCut = (() => {
+        if (riskReserve <= 1e-8) return false;
+        if (!isRiskEPolicy(riskPolicy)) return true;
+
+        const nonFloorAvailable = Math.max(0, riskReserve - riskEFloorInitial);
+        if (nonFloorAvailable > 1e-8) return true;
+
+        const seriousStress = cutState === 2 || (regimeState === 'stress' && cutState >= 1);
+        const latePlan = m >= Math.floor(months * 0.75);
+        const marketGate = riskDrawdownAndTrendOk(riskEPriceHistory, riskEPrice, riskGates);
+        return (seriousStress || latePlan)
+          && (marketGate.safeToSell || latePlan)
+          && resolveRiskEFloorAvailable(riskReserve, riskEFloorInitial) > 1e-8;
+      })();
+
+      if (cutState === 1 && !riskECanFundSpendBeforeCut) {
         regularSpend *= input.cuts.cut1_floor;
         cut1Months += 1;
         if (firstCutMonth === null) firstCutMonth = m;
         cutSeverityAccum += 1 - input.cuts.cut1_floor;
         cutSeverityCount += 1;
-      } else if (cutState === 2) {
+      } else if (cutState === 2 && !riskECanFundSpendBeforeCut) {
         regularSpend *= input.cuts.cut2_floor;
         cut2Months += 1;
         if (firstCutMonth === null) firstCutMonth = m;

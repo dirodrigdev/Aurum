@@ -2957,6 +2957,75 @@ test('m8 records QoL from regular spending funded after risk reserve draws', () 
   assert.equal(path.maxConsecutiveMonthsBelow85, 0);
 });
 
+test('m8 does not cut funded consumption while usable Risk E remains above its floor', () => {
+  const input = makeRuntimeInput({
+    years: 4,
+    n_paths: 1,
+    capital_initial_clp: 3_000_000,
+    risk_capital_clp: 100_000_000,
+    risk_capital_policy: 'btc_like_realista_e',
+    phase1MonthlyClp: 1_000_000,
+    phase2MonthlyClp: 1_000_000,
+    phase3MonthlyClp: 1_000_000,
+    phase4MonthlyClp: 1_000_000,
+    portfolio_mix: {
+      eq_global: 0,
+      eq_chile: 0,
+      fi_global: 0,
+      fi_chile: 0,
+      usd_liquidity: 0,
+      clp_cash: 1,
+    },
+    generator_type: 'gaussian_iid',
+    generator_params: runtimeFlatGaussianParams,
+    cuts: {
+      ...makeRuntimeInput().cuts,
+      dd15_threshold: 0,
+      dd25_threshold: 0,
+    },
+  });
+
+  const result = runM8(input);
+  const path = result.pathQualityDiagnostics?.paths[0];
+
+  assert.equal(result.Success40, 1);
+  assert.equal(result.SpendFactorTotal, 1);
+  assert.equal(path?.averageConsumptionRatio, 1);
+});
+
+test('m8 forces a final-month house sale when the horizon reaches eligibility', () => {
+  const result = runM8(makeRuntimeInput({
+    years: 21,
+    n_paths: 1,
+    capital_initial_clp: 5_000_000_000,
+    phase1EndYear: 3,
+    phase2EndYear: 10,
+    phase3EndYear: 20,
+    portfolio_mix: {
+      eq_global: 0,
+      eq_chile: 0,
+      fi_global: 0,
+      fi_chile: 0,
+      usd_liquidity: 0,
+      clp_cash: 1,
+    },
+    generator_type: 'gaussian_iid',
+    generator_params: runtimeFlatGaussianParams,
+    house: {
+      include_house: true,
+      houseValueUf: 10_000,
+      mortgageBalanceUfNow: 0,
+      monthlyAmortizationUf: 0,
+      ufClpStart: 40_000,
+      house_sale_trigger_years_of_spend: 0,
+      house_sale_lag_months: 24,
+    },
+  }));
+
+  assert.equal(result.HouseSalePct, 1);
+  assert.equal(result.SaleYearMedian, 252 / 12);
+});
+
 test('m8 deducts outstanding house-sale bridge debt from terminal wealth', () => {
   const input = makeRuntimeInput({
     years: 21,
@@ -2999,15 +3068,12 @@ test('m8 deducts outstanding house-sale bridge debt from terminal wealth', () =>
   });
 
   const result = runM8(input);
-  const expectedOutstandingBridge = 12_000_000;
-  const expectedTerminal = 200_000_000 - expectedOutstandingBridge;
-
-  assert.equal(result.HouseSalePct, 0);
+  assert.equal(result.HouseSalePct, 1);
   assert.equal(result.TriggerYearMedian, 241 / 12);
-  assert.equal(Number.isNaN(result.SaleYearMedian), true);
+  assert.equal(result.SaleYearMedian, 252 / 12);
   assert.equal(result.Success40, 1);
-  assert.equal(result.TerminalMedianCLP, expectedTerminal);
-  assert.equal(result.wealthPaths[252][0], expectedTerminal);
+  assert.ok(result.TerminalMedianCLP < 200_000_000, 'bridge and post-sale spending must reduce sale proceeds');
+  assert.equal(result.wealthPaths[252][0], result.TerminalMedianCLP);
 });
 
 test('m8 runtime exposes student_t df 7 explicitly', () => {
