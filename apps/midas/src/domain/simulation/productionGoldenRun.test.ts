@@ -273,6 +273,15 @@ assert.equal(instrumentUniverseSource?.warning, null);
 const firstRuntime = runM8(fixture.normalizedInput);
 const secondRuntime = runM8(fixture.normalizedInput);
 assert.deepEqual(secondRuntime, firstRuntime, 'production normalizedInput must be deterministic');
+const eligibleHousePathsWithoutSale = firstRuntime.pathQualityDiagnostics?.paths.filter((path) => (
+  path.houseSaleMonth === null
+  && (path.ruinMonth === null || path.ruinMonth >= 241)
+)).length ?? 0;
+assert.equal(
+  eligibleHousePathsWithoutSale,
+  0,
+  'every surviving or eligible house path must realize the house within the horizon',
+);
 
 const { result, qualityOfLifeMetrics, simulationResultDiagnostics, resultConfidence } = buildDerivedArtifacts(firstRuntime);
 
