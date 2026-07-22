@@ -88,7 +88,9 @@ export interface M8ScenarioOverrides {
   rf_global_vol_annual?: number;
   rv_chile_vol_annual?: number;
   rf_chile_vol_annual?: number;
+  /** Legacy metadata retained for snapshot compatibility; M8 real-terms runtime does not consume it. */
   ipc_chile_annual?: number;
+  /** Legacy metadata retained for snapshot compatibility; M8 runtime selects FX regime by scenario_id. */
   tcreal_lt?: number;
 }
 

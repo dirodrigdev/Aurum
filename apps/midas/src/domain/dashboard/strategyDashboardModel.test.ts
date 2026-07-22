@@ -142,6 +142,7 @@ assert(model.rates.every((rate) => rate.value === null || (rate.value >= 0 && ra
 assert(model.quality.length >= 4);
 assert(model.signals.length >= 6);
 assert.equal(model.primaryMetrics.find((metric) => metric.id === 'ruin')?.detail, 'Complemento de la sostenibilidad en el mismo horizonte.');
+assert.equal(model.rates.find((rate) => rate.id === 'inflation')?.label, 'IPC declarado (no aplicado por M8)');
 
 const fragileQualityModel = buildStrategyDashboardModel({
   result: { ...result, qualityOfLifeMetrics: { ...quality, qualitySurvivalRate: 0.154 } } as unknown as SimulationResults,

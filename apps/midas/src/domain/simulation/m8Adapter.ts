@@ -86,8 +86,6 @@ const buildScenarioOverrides = (params: ModelParameters): M8ScenarioOverrides =>
     ...(variant.rfGlobalVolAnnual !== undefined ? { rf_global_vol_annual: variant.rfGlobalVolAnnual } : {}),
     ...(variant.rvChileVolAnnual !== undefined ? { rv_chile_vol_annual: variant.rvChileVolAnnual } : {}),
     ...(variant.rfChileVolAnnual !== undefined ? { rf_chile_vol_annual: variant.rfChileVolAnnual } : {}),
-    ...(variant.ipcChileAnnual !== undefined ? { ipc_chile_annual: variant.ipcChileAnnual } : {}),
-    ...(variant.tcrealLT !== undefined ? { tcreal_lt: variant.tcrealLT } : {}),
   };
 };
 

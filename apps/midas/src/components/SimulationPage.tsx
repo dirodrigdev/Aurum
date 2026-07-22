@@ -4669,10 +4669,10 @@ export function SimulationPage({
               </summary>
               <div style={{ marginTop: 6, display: 'grid', gap: 5, color: T.textMuted, fontSize: 10 }}>
                 <div>Generador: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{activeGenerator}</span></div>
-                <div>IPC Chile anual: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{(params.inflation.ipcChileAnnual * 100).toFixed(2)}%</span></div>
+                <div>IPC Chile declarado (no aplicado por M8): <span style={{ color: T.textPrimary, fontWeight: 700 }}>{(params.inflation.ipcChileAnnual * 100).toFixed(2)}%</span></div>
                 <div>HICP Eurozona anual: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{(params.inflation.hipcEurAnnual * 100).toFixed(2)}%</span></div>
-                <div>TCREAL LT: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{Number(params.fx.tcrealLT ?? 0).toLocaleString('es-CL')}</span></div>
-                <div>Nota: TCREAL LT es supuesto estructural; no reemplaza USD/CLP ni EUR/USD operativo.</div>
+                <div>TCREAL LT declarado (no aplicado por M8): <span style={{ color: T.textPrimary, fontWeight: 700 }}>{Number(params.fx.tcrealLT ?? 0).toLocaleString('es-CL')}</span></div>
+                <div>Nota: el M8 activo usa términos reales y selecciona el régimen FX por escenario; estos campos quedan solo para compatibilidad técnica.</div>
               </div>
             </details>
 

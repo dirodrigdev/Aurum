@@ -353,7 +353,7 @@ export function buildStrategyDashboardModel(input: BuildStrategyDashboardInput):
     scenarioLabel: input.scenarioLabel,
     rates: [
       { id: 'expected-return', label: 'Retorno real esperado del mix', value: expectedReturn(m8), detail: 'Promedio ponderado de los supuestos reales por sleeve.' },
-      { id: 'inflation', label: 'Inflación considerada', value: finite(input.params.inflation.ipcChileAnnual), detail: 'Supuesto anual del escenario activo.' },
+      { id: 'inflation', label: 'IPC declarado (no aplicado por M8)', value: finite(input.params.inflation.ipcChileAnnual), detail: 'Referencia técnica heredada; el M8 activo trabaja en términos reales.' },
       { id: 'fee', label: 'Costo anual considerado', value: finite(m8.feeAnnual ?? input.params.feeAnnual), detail: 'Tasa anual aplicada en la configuración vigente.' },
       { id: 'volatility', label: 'Volatilidad ponderada indicativa', value: expectedVolatility(m8), detail: 'Promedio ponderado de volatilidades; no es una proyección.' },
     ],
