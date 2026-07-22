@@ -5,10 +5,24 @@ import {
   ensureAurumIntegrationAuthPersistence,
   isMidasE2EFirebaseEmulatorEnabled,
 } from './firebase';
-import type { AurumOptimizableInvestmentsSnapshot } from './types';
+import type { AurumOptimizableInvestmentsSnapshot, AurumOptimizableInvestmentsSnapshotV2 } from './types';
 
 const PUBLISHED_COLLECTION = 'aurum_published';
 const OPTIMIZABLE_DOC_ID = 'optimizableInvestments';
+
+export type AurumSnapshotResolutionStatus =
+  | 'loading'
+  | 'missing'
+  | 'invalid'
+  | 'pending_apply'
+  | 'applied'
+  | 'permission_error'
+  | 'network_error';
+
+export type PublishedSnapshotResolution =
+  | { status: 'missing' }
+  | { status: 'invalid'; reason: 'missing_investments' | 'missing_snapshot_month' | 'invalid_canonical_fx' }
+  | { status: 'valid'; snapshot: AurumOptimizableInvestmentsSnapshotV2 };
 
 let lastFxTraceSignatureByStage = new Map<string, string>();
 
@@ -109,15 +123,18 @@ export async function loadPublishedOptimizableInvestmentsSnapshot(): Promise<Aur
 
 export type PublishedSnapshotListener = {
   onValue: (snapshot: AurumOptimizableInvestmentsSnapshot | null) => void;
+  onResolution?: (resolution: PublishedSnapshotResolution) => void;
   onError?: (error: unknown) => void;
 };
 
 export function subscribeToPublishedOptimizableInvestmentsSnapshot(listener: PublishedSnapshotListener): () => void {
   if (isMidasE2EFirebaseEmulatorEnabled()) {
+    listener.onResolution?.({ status: 'missing' });
     listener.onValue(null);
     return () => {};
   }
   if (!aurumIntegrationConfigured || !aurumDb) {
+    listener.onResolution?.({ status: 'missing' });
     listener.onValue(null);
     return () => {};
   }
@@ -134,6 +151,7 @@ export function subscribeToPublishedOptimizableInvestmentsSnapshot(listener: Pub
         (snap) => {
           if (cancelled) return;
           if (!snap.exists()) {
+            listener.onResolution?.({ status: 'missing' });
             listener.onValue(null);
             return;
           }
@@ -147,8 +165,9 @@ export function subscribeToPublishedOptimizableInvestmentsSnapshot(listener: Pub
             rawFxReferenceClpUsd: (data as { fxReference?: { clpUsd?: unknown } })?.fxReference?.clpUsd ?? null,
             rawFxReferenceSource: (data as { fxReference?: { source?: unknown } })?.fxReference?.source ?? null,
           });
-          const normalized = normalizeSnapshotData(data);
-          listener.onValue(normalized);
+          const resolution = resolvePublishedSnapshotData(data);
+          listener.onResolution?.(resolution);
+          listener.onValue(resolution.status === 'valid' ? resolution.snapshot : null);
         },
         (error: FirestoreError) => {
           if (cancelled) return;
@@ -167,7 +186,31 @@ export function subscribeToPublishedOptimizableInvestmentsSnapshot(listener: Pub
   };
 }
 
-export function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsSnapshot> | undefined) {
+export function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsSnapshot> | undefined): AurumOptimizableInvestmentsSnapshotV2 | null {
+  const resolution = resolvePublishedSnapshotData(data);
+  return resolution.status === 'valid' ? resolution.snapshot : null;
+}
+
+export function resolvePublishedSnapshotData(
+  data: Partial<AurumOptimizableInvestmentsSnapshot> | undefined,
+): PublishedSnapshotResolution {
+  if (!data) return { status: 'missing' };
+  const optimizable = asFiniteOrNull((data as { optimizableInvestmentsCLP?: unknown }).optimizableInvestmentsCLP);
+  if (optimizable === null) return { status: 'invalid', reason: 'missing_investments' };
+  const snapshotMonth = String((data as { snapshotMonth?: unknown }).snapshotMonth || '');
+  if (!snapshotMonth) return { status: 'invalid', reason: 'missing_snapshot_month' };
+  const canonicalFxReference = normalizeCanonicalFxReference(
+    (data as { fxReference?: unknown }).fxReference,
+    snapshotMonth,
+  );
+  if (!canonicalFxReference) return { status: 'invalid', reason: 'invalid_canonical_fx' };
+  const snapshot = normalizeSnapshotDataUnchecked(data);
+  return snapshot
+    ? { status: 'valid', snapshot: snapshot as AurumOptimizableInvestmentsSnapshotV2 }
+    : { status: 'invalid', reason: 'invalid_canonical_fx' };
+}
+
+function normalizeSnapshotDataUnchecked(data: Partial<AurumOptimizableInvestmentsSnapshot>) {
   if (!data) return null;
   const optimizable = asFiniteOrNull((data as { optimizableInvestmentsCLP?: unknown }).optimizableInvestmentsCLP);
   if (optimizable === null) return null;

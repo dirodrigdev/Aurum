@@ -8,6 +8,8 @@ export type SourcePolicyPhotoStatus =
   | 'current_snapshot'
   | 'recent_snapshot'
   | 'stale_snapshot'
+  | 'pending_snapshot'
+  | 'invalid_snapshot'
   | 'missing_snapshot'
   | 'unknown';
 
@@ -93,6 +95,7 @@ export type BuildSourceFreshnessPolicyInput = {
     label: string | null;
     publishedAt: string | null;
     hash: string | null;
+    resolution?: 'loading' | 'missing' | 'invalid' | 'pending_apply' | 'applied' | 'permission_error' | 'network_error';
   };
   localDiagnostics?: {
     persistedBaseExists?: boolean;
@@ -216,6 +219,8 @@ function resolvePhotoStatus(
   nowMs: number,
   economicAsOf: string | null,
 ): SourcePolicyPhotoStatus {
+  if (input.aurumSnapshot.resolution === 'pending_apply') return 'pending_snapshot';
+  if (input.aurumSnapshot.resolution === 'invalid') return 'invalid_snapshot';
   if (!input.aurumSnapshot.hash && !input.aurumSnapshot.publishedAt && !input.aurumSnapshot.month) return 'missing_snapshot';
   const parsed = parseIso(economicAsOf);
   if (parsed === null) return 'unknown';
@@ -231,6 +236,8 @@ function photoStatusLabel(status: SourcePolicyPhotoStatus, publishedAt: string |
   if (status === 'current_snapshot') return month ? `Foto ${month}` : 'Foto vigente';
   if (status === 'recent_snapshot') return month ? `Foto ${month}` : 'Foto reciente';
   if (status === 'stale_snapshot') return month ? `Foto ${month}` : 'Foto antigua';
+  if (status === 'pending_snapshot') return 'Snapshot Aurum pendiente de aplicar';
+  if (status === 'invalid_snapshot') return 'Snapshot Aurum no aplicable';
   if (status === 'missing_snapshot') return 'Sin foto';
   return 'Foto sin fecha';
 }
@@ -350,7 +357,11 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
       hash: input.aurumSnapshot.hash,
       freshness: snapshotFreshness,
       warning:
-        photoStatus === 'stale_snapshot'
+        photoStatus === 'pending_snapshot'
+          ? 'Snapshot Aurum válido pendiente de aplicar'
+          : photoStatus === 'invalid_snapshot'
+            ? 'Snapshot Aurum encontrado, pero no aplicable'
+            : photoStatus === 'stale_snapshot'
           ? 'Foto Aurum antigua'
           : photoStatus === 'missing_snapshot'
             ? 'Sin snapshot auditable'
@@ -429,6 +440,8 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
       ? 'instrument_universe_defaults_effective'
       : null,
     photoStatus === 'stale_snapshot' ? 'aurum_snapshot_stale' : null,
+    photoStatus === 'pending_snapshot' ? 'aurum_snapshot_pending_apply' : null,
+    photoStatus === 'invalid_snapshot' ? 'aurum_snapshot_invalid' : null,
     photoStatus === 'missing_snapshot' ? 'aurum_snapshot_missing' : null,
     input.simulationActiveV1.legacyGlobalExists ? 'legacy_global_config_detected' : null,
   ]);
@@ -438,6 +451,8 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
     ...effectiveSources
       .map((entry) => buildDecisionWarningNotice(entry)?.code ?? null),
     photoStatus === 'recent_snapshot' ? 'aurum_snapshot_recent_not_current' : null,
+    photoStatus === 'pending_snapshot' ? 'aurum_snapshot_pending_apply' : null,
+    photoStatus === 'invalid_snapshot' ? 'aurum_snapshot_invalid' : null,
     photoStatus === 'unknown' ? 'aurum_snapshot_unknown_age' : null,
   ]).map((code) => {
     if (code === 'aurum_snapshot_recent_not_current') {
@@ -445,6 +460,12 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
     }
     if (code === 'aurum_snapshot_unknown_age') {
       return { code, label: 'Foto Aurum sin fecha · revisar', sourceId: 'aurumSnapshot' };
+    }
+    if (code === 'aurum_snapshot_pending_apply') {
+      return { code, label: 'Snapshot Aurum pendiente de aplicar', sourceId: 'aurumSnapshot' };
+    }
+    if (code === 'aurum_snapshot_invalid') {
+      return { code, label: 'Snapshot Aurum no aplicable · republicar', sourceId: 'aurumSnapshot' };
     }
     return effectiveSources
       .map((entry) => buildDecisionWarningNotice(entry))

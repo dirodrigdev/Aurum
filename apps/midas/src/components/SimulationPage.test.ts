@@ -684,7 +684,8 @@ assert(source.includes('Modo local de revisión: útil para QA visual. Los monto
 assert(source.includes('No disponible en modo local: falta configuración/snapshot cloud.'));
 assert(source.includes('Sin capital de riesgo disponible en modo local; ON/OFF no modifica recursos.'));
 assert(source.includes('const localReadOnlyVisualOnly = localReadOnlyFallbackActive && !workerRecalcActive;'));
-assert(source.includes('const isRecalculating = !localReadOnlyVisualOnly'));
+assert(source.includes('const isRecalculating ='));
+assert(source.includes('runtimeDiagnostics.canonicalInputReady !== false'));
 assert(source.includes("type CanonicalInputDisplayState = 'hydrating' | 'ready' | 'blocked' | 'missingCanonicalConfig' | 'timeout' | 'error';"));
 assert(source.includes('const CANONICAL_HYDRATION_TIMEOUT_MS = 12_000;'));
 assert(source.includes('function resolveCanonicalInputDisplayState'));

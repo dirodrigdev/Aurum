@@ -23,6 +23,7 @@ import type { SourceFreshnessPolicy } from '../domain/model/sourceFreshnessPolic
 import type { SimulationResultDiagnostics } from '../domain/model/simulationResultDigest';
 import type { ResultConfidence } from '../domain/model/resultConfidence';
 import type { AssumptionModeDiagnostics } from '../domain/model/assumptionMode';
+import type { AurumSnapshotResolutionStatus } from '../integrations/aurum/optimizableSnapshot';
 import {
   buildSimulationInputSyncState,
   buildSimulationVisualStatus,
@@ -199,7 +200,7 @@ const HYDRATING_CANONICAL_BLOCK_REASONS = new Set([
   'auth_loading',
   'config_loading',
   'instrument_universe_loading',
-  'aurum_snapshot_missing',
+  'aurum_snapshot_loading',
 ]);
 
 export function computeCurrentAgeFromBirthDate(birthDateIso: string, now: Date = new Date()): number | null {
@@ -639,6 +640,8 @@ export function SimulationPage({
   aurumIntegrationStatus,
   aurumSnapshotLabel,
   aurumSnapshotPublishedAt,
+  aurumSnapshotResolution,
+  aurumSnapshotResolutionReason,
   baseUpdatePending,
   hasPendingSnapshot,
   pendingSnapshotLabel,
@@ -694,6 +697,7 @@ export function SimulationPage({
   localReadOnlyMode,
   applyAurumHarness,
   onApplyPendingSnapshot,
+  onRetryAurumSnapshot,
   onRunApplyAurumHarness,
   onToggleRiskCapital,
   onCommitManualCapitalAdjustments,
@@ -723,6 +727,8 @@ export function SimulationPage({
   aurumIntegrationStatus: 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
   aurumSnapshotLabel: string | null;
   aurumSnapshotPublishedAt: string | null;
+  aurumSnapshotResolution: AurumSnapshotResolutionStatus;
+  aurumSnapshotResolutionReason: string | null;
   baseUpdatePending: boolean;
   hasPendingSnapshot: boolean;
   pendingSnapshotLabel: string | null;
@@ -817,6 +823,7 @@ export function SimulationPage({
     details: string | null;
   };
   onApplyPendingSnapshot: () => void;
+  onRetryAurumSnapshot: () => void;
   onRunApplyAurumHarness: () => void;
   onToggleRiskCapital: () => void;
   onCommitManualCapitalAdjustments: (next: ManualCapitalAdjustment[]) => void;
@@ -965,9 +972,13 @@ export function SimulationPage({
   const localReadOnlyFallbackCopy = 'Modo local de revisión: útil para QA visual. Los montos pueden no coincidir con Aurum productivo.';
   const workerRecalcActive = simWorking || recalcWorkerStatus === 'queued' || recalcWorkerStatus === 'running';
   const localReadOnlyVisualOnly = localReadOnlyFallbackActive && !workerRecalcActive;
-  const isRecalculating = !localReadOnlyVisualOnly && simUiState !== 'error' && (heroPhase === 'boot' || heroPhase === 'stale');
   const runtimeDiagnostics =
     (m8InputFingerprint.diagnosticInput.runtimeDiagnostics as Record<string, unknown> | undefined) ?? {};
+  const isRecalculating =
+    !localReadOnlyVisualOnly &&
+    runtimeDiagnostics.canonicalInputReady !== false &&
+    simUiState !== 'error' &&
+    (heroPhase === 'boot' || heroPhase === 'stale');
   const replayTrace =
     (m8InputFingerprint.diagnosticInput.replayTrace as Record<string, unknown> | undefined) ?? null;
   const instrumentUniverseDiagnostics =
@@ -3090,6 +3101,61 @@ export function SimulationPage({
           >
             {pendingSnapshotApplying ? 'Aplicando Aurum...' : 'Aplicar Aurum'}
           </button>
+        </div>
+      )}
+      {!hasPendingSnapshot && aurumSnapshotResolution !== 'applied' && aurumSnapshotResolution !== 'pending_apply' && (
+        <div
+          data-testid="aurum-snapshot-recovery"
+          role="status"
+          aria-live="polite"
+          style={{
+            order: 3,
+            background: aurumSnapshotResolution === 'invalid' || aurumSnapshotResolution === 'permission_error' || aurumSnapshotResolution === 'network_error'
+              ? 'rgba(255, 105, 97, 0.10)'
+              : 'rgba(242, 184, 74, 0.12)',
+            border: `1px solid ${aurumSnapshotResolution === 'invalid' || aurumSnapshotResolution === 'permission_error' || aurumSnapshotResolution === 'network_error' ? 'rgba(255, 105, 97, 0.45)' : 'rgba(242, 184, 74, 0.45)'}`,
+            borderRadius: 10,
+            padding: isMobileViewport ? '8px' : '9px 10px',
+            color: T.textPrimary,
+            fontSize: isMobileViewport ? 10 : 11,
+            lineHeight: 1.35,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 10,
+            flexWrap: 'wrap',
+          }}
+        >
+          <span>
+            {aurumSnapshotResolution === 'missing'
+              ? 'No existe una publicación Aurum canónica. Publica un cierre confirmado desde Aurum.'
+              : aurumSnapshotResolution === 'invalid'
+                ? `Se encontró una publicación Aurum, pero no puede aplicarse (${aurumSnapshotResolutionReason ?? 'provenance no válida'}). Republica desde Aurum.`
+                : aurumSnapshotResolution === 'permission_error'
+                  ? 'No se pudo leer la publicación Aurum por permisos. Revisa la sesión y reintenta.'
+                  : aurumSnapshotResolution === 'network_error'
+                    ? 'No se pudo leer la publicación Aurum por conexión. Reintenta la lectura.'
+                    : 'Leyendo la publicación Aurum canónica…'}
+          </span>
+          {aurumSnapshotResolution !== 'loading' && aurumSnapshotResolution !== 'missing' && (
+            <button
+              type="button"
+              onClick={onRetryAurumSnapshot}
+              style={{
+                background: T.surface,
+                border: `1px solid ${T.border}`,
+                color: T.textPrimary,
+                borderRadius: 8,
+                padding: '5px 8px',
+                fontSize: 10,
+                fontWeight: 800,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Reintentar lectura
+            </button>
+          )}
         </div>
       )}
       {hasSyncBanner && (

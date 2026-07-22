@@ -386,11 +386,13 @@ function buildProps(mode: 'base' | 'pending' | 'scenario'): Parameters<typeof Si
     aurumIntegrationStatus: 'available',
     aurumSnapshotLabel: fixture.replayTrace.sourceMetadata.aurumSnapshot.label,
     aurumSnapshotPublishedAt: fixture.replayTrace.sourceMetadata.aurumSnapshot.publishedAt,
+    aurumSnapshotResolution: mode === 'pending' ? 'pending_apply' : 'applied',
+    aurumSnapshotResolutionReason: null,
     baseUpdatePending: false,
-    hasPendingSnapshot: false,
-    pendingSnapshotLabel: null,
+    hasPendingSnapshot: mode === 'pending',
+    pendingSnapshotLabel: mode === 'pending' ? '2026-05 cierre' : null,
     pendingSnapshotApplying: false,
-    snapshotApplied: true,
+    snapshotApplied: mode !== 'pending',
     aurumSyncState: 'synced',
     aurumSyncDiff: 0,
     aurumSyncBaseOpt: params.capitalInitial,
@@ -486,6 +488,7 @@ function buildProps(mode: 'base' | 'pending' | 'scenario'): Parameters<typeof Si
       details: null,
     },
     onApplyPendingSnapshot: () => undefined,
+    onRetryAurumSnapshot: () => undefined,
     onRunApplyAurumHarness: () => undefined,
     onToggleRiskCapital: () => undefined,
     onCommitManualCapitalAdjustments: () => undefined,
@@ -532,6 +535,11 @@ assert.equal(pendingHero.includes('Resultado vigente.'), false);
 assert.equal(pendingHero.includes('>Escenario<'), false);
 assertNoVisualGarbage(pendingHero);
 
+const pendingSnapshotMarkup = renderToStaticMarkup(React.createElement(SimulationPage, buildProps('pending')));
+assert(pendingSnapshotMarkup.includes('Nueva base Aurum disponible'));
+assert(pendingSnapshotMarkup.includes('Aplicar Aurum'));
+assert.equal(pendingSnapshotMarkup.includes('No existe una publicación Aurum canónica'), false);
+
 const scenarioHero = renderHeroMarkup('scenario');
 assert(scenarioHero.includes('>Escenario<'));
 assert(scenarioHero.includes('Resultado vigente.'));
@@ -541,5 +549,24 @@ assert.equal(scenarioHero.includes('Resultado usable con salvedades'), false);
 assert.equal(scenarioHero.includes('Hay ajustes locales de capital incorporados'), false);
 assert.equal(scenarioHero.includes('Confirmar o descartar'), false);
 assertNoVisualGarbage(scenarioHero);
+
+const missingSnapshotMarkup = renderToStaticMarkup(React.createElement(SimulationPage, {
+  ...buildProps('base'),
+  aurumSnapshotResolution: 'missing',
+  aurumSnapshotResolutionReason: null,
+}));
+assert(missingSnapshotMarkup.includes('data-testid="aurum-snapshot-recovery"'));
+assert(missingSnapshotMarkup.includes('No existe una publicación Aurum canónica. Publica un cierre confirmado desde Aurum.'));
+assert.equal(missingSnapshotMarkup.includes('Aplicar Aurum'), false);
+assert.equal(missingSnapshotMarkup.includes('Reintentar lectura'), false);
+assert.equal(missingSnapshotMarkup.includes('Recalculando simulación'), false);
+
+const invalidSnapshotMarkup = renderToStaticMarkup(React.createElement(SimulationPage, {
+  ...buildProps('base'),
+  aurumSnapshotResolution: 'invalid',
+  aurumSnapshotResolutionReason: 'invalid_canonical_fx',
+}));
+assert(invalidSnapshotMarkup.includes('Se encontró una publicación Aurum, pero no puede aplicarse (invalid_canonical_fx). Republica desde Aurum.'));
+assert(invalidSnapshotMarkup.includes('Reintentar lectura'));
 
 console.log('SimulationPage smoke tests passed');

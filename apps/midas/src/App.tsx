@@ -50,6 +50,8 @@ import { optimizableSnapshotToReference, snapshotToSimulationComposition } from 
 import { getCanonicalSnapshotEconomicSignature } from './integrations/aurum/canonicalSnapshotIdentity';
 import {
   subscribeToPublishedOptimizableInvestmentsSnapshot,
+  type AurumSnapshotResolutionStatus,
+  type PublishedSnapshotResolution,
 } from './integrations/aurum/optimizableSnapshot';
 import {
   bootstrapAurumIntegrationAuthSession,
@@ -755,11 +757,46 @@ function describeCanonicalInputBlock(blockedReason: SimulationRunBlockedReason |
         explanation: 'Falta Instrument Universe activo o ausencia segura.',
         pendingSource: 'instrument universe',
       };
-    case 'aurum_snapshot_missing':
+    case 'aurum_snapshot_loading':
       return {
         metricText: 'Hidratando Modelo Base…',
         confidenceLabel: 'Esperando input canónico',
-        explanation: 'Esperando snapshot Aurum aplicado o ausencia segura.',
+        explanation: 'Leyendo la publicación Aurum canónica.',
+        pendingSource: 'snapshot Aurum',
+      };
+    case 'aurum_snapshot_missing':
+      return {
+        metricText: 'Falta publicación Aurum',
+        confidenceLabel: 'Publica un cierre desde Aurum',
+        explanation: 'No existe una publicación Aurum canónica disponible. Publica un cierre confirmado desde Aurum.',
+        pendingSource: 'snapshot Aurum',
+      };
+    case 'aurum_snapshot_pending_apply':
+      return {
+        metricText: 'Base Aurum pendiente de aplicar',
+        confidenceLabel: 'Aplicación requerida',
+        explanation: 'Hay una publicación Aurum válida pendiente de aplicar al input canónico.',
+        pendingSource: 'snapshot Aurum',
+      };
+    case 'aurum_snapshot_invalid':
+      return {
+        metricText: 'Publicación Aurum no aplicable',
+        confidenceLabel: 'Republica desde Aurum',
+        explanation: 'Se encontró una publicación Aurum, pero no cumple el schema o la provenance canónica. Republica un cierre confirmado desde Aurum.',
+        pendingSource: 'snapshot Aurum',
+      };
+    case 'aurum_snapshot_permission_error':
+      return {
+        metricText: 'No se pudo leer Aurum',
+        confidenceLabel: 'Permiso de lectura',
+        explanation: 'La sesión no tiene permiso para leer la publicación Aurum canónica. Reintenta después de validar la sesión.',
+        pendingSource: 'snapshot Aurum',
+      };
+    case 'aurum_snapshot_network_error':
+      return {
+        metricText: 'No se pudo leer Aurum',
+        confidenceLabel: 'Error de red',
+        explanation: 'La lectura de la publicación Aurum falló por conexión o disponibilidad. Reintenta.',
         pendingSource: 'snapshot Aurum',
       };
     case 'aurum_snapshot_error':
@@ -801,6 +838,13 @@ function deriveVisibleCapitalFromComposition(
   const total = optimizable + banks + riskCapital;
   if (!Number.isFinite(total)) return null;
   return Math.max(1, total);
+}
+
+function classifyAurumSnapshotError(error: unknown): AurumSnapshotResolutionStatus {
+  const code = String((error as { code?: unknown })?.code ?? '').toLowerCase();
+  if (code.includes('permission-denied') || code.includes('unauthenticated')) return 'permission_error';
+  if (code.includes('unavailable') || code.includes('deadline-exceeded') || code.includes('network')) return 'network_error';
+  return 'network_error';
 }
 
 function withRiskCapitalDetectionState(
@@ -984,6 +1028,10 @@ export default function App() {
   const [pendingSnapshotLabel, setPendingSnapshotLabel] = useState<string | null>(null);
   const [pendingSnapshotSignature, setPendingSnapshotSignature] = useState<string | null>(null);
   const [pendingSnapshotApplying, setPendingSnapshotApplying] = useState(false);
+  const [aurumSnapshotResolution, setAurumSnapshotResolution] = useState<AurumSnapshotResolutionStatus>('loading');
+  const [aurumSnapshotResolutionReason, setAurumSnapshotResolutionReason] = useState<string | null>(null);
+  const aurumSnapshotResolutionRef = useRef<AurumSnapshotResolutionStatus>('loading');
+  const [snapshotHydrationRetryNonce, setSnapshotHydrationRetryNonce] = useState(0);
   const [baseUpdatePending, setBaseUpdatePending] = useState(false);
   const [snapshotApplied, setSnapshotApplied] = useState(false);
   const [aurumIntegrationStatus, setAurumIntegrationStatus] = useState<AurumIntegrationStatus>(
@@ -2608,6 +2656,7 @@ export default function App() {
       simulationConfigSource: 'cloud' | 'local_cache' | 'fallback';
       aurumIntegrationStatus: AurumIntegrationStatus;
       aurumSnapshotAvailable: boolean;
+      aurumSnapshotResolution: AurumSnapshotResolutionStatus;
       cloudUniverseReadStatus: 'loading' | 'loaded' | 'missing' | 'timeout' | 'error';
       universeSourceOrigin: 'firestore' | 'bundled' | 'cache-local' | 'none';
     }>,
@@ -2620,6 +2669,8 @@ export default function App() {
     const resolvedAurumIntegrationStatus = overrides?.aurumIntegrationStatus ?? aurumIntegrationStatus;
     const resolvedAurumSnapshotAvailable =
       overrides?.aurumSnapshotAvailable ?? Boolean(lastAppliedSnapshotSignatureRef.current);
+    const resolvedAurumSnapshotResolution =
+      overrides?.aurumSnapshotResolution ?? aurumSnapshotResolutionRef.current;
     const resolvedCloudUniverseReadStatus = overrides?.cloudUniverseReadStatus ?? cloudUniverseReadStatus;
     const resolvedUniverseSourceOrigin = overrides?.universeSourceOrigin ?? universeSourceOrigin;
     const readiness = evaluateCanonicalInputReadiness({
@@ -2638,6 +2689,7 @@ export default function App() {
       simulationConfigHydrationStatus: resolvedSimulationConfigHydrationStatus,
       aurumIntegrationStatus: resolvedAurumIntegrationStatus,
       aurumSnapshotAvailable: resolvedAurumSnapshotAvailable,
+      aurumSnapshotResolution: resolvedAurumSnapshotResolution,
       cloudUniverseReadStatus: resolvedCloudUniverseReadStatus,
       universeSourceOrigin: resolvedUniverseSourceOrigin,
       effectiveEngineInputHash,
@@ -2646,6 +2698,8 @@ export default function App() {
   }, [
     authResolved,
     aurumIntegrationStatus,
+    aurumSnapshotResolution,
+    aurumSnapshotResolutionReason,
     cloudUniverseReadStatus,
     isCanonicalUserSession,
     simulationConfigHash,
@@ -3029,6 +3083,9 @@ export default function App() {
       }
       setLastAppliedAurumSnapshotSignature(appliedSnapshotSignature);
       lastAppliedSnapshotSignatureRef.current = appliedSnapshotSignature;
+      aurumSnapshotResolutionRef.current = 'applied';
+      setAurumSnapshotResolution('applied');
+      setAurumSnapshotResolutionReason(null);
       setSimulationActive(false);
       setSimulationPreset('base');
       setSimOverrides(null);
@@ -3758,6 +3815,13 @@ export default function App() {
     }
   }, []);
 
+  const handleRetryAurumSnapshot = useCallback(() => {
+    aurumSnapshotResolutionRef.current = 'loading';
+    setAurumSnapshotResolution('loading');
+    setAurumSnapshotResolutionReason(null);
+    setSnapshotHydrationRetryNonce((prev) => prev + 1);
+  }, []);
+
   const activeScenario = resolveScenarioVariantId(simParams.activeScenario);
   const stateLabel = selectVariant(activeScenario).label;
   const isScenarioAdjusted = useMemo(() => {
@@ -3795,11 +3859,17 @@ export default function App() {
 
   useEffect(() => {
     if (!isCanonicalUserSession) {
+      aurumSnapshotResolutionRef.current = aurumIntegrationConfigured ? 'loading' : 'missing';
+      setAurumSnapshotResolution(aurumIntegrationConfigured ? 'loading' : 'missing');
+      setAurumSnapshotResolutionReason(null);
       setAurumIntegrationStatus(aurumIntegrationConfigured ? 'loading' : 'unconfigured');
       return;
     }
     if (!aurumIntegrationConfigured) {
       setAurumIntegrationStatus('unconfigured');
+      aurumSnapshotResolutionRef.current = 'missing';
+      setAurumSnapshotResolution('missing');
+      setAurumSnapshotResolutionReason(null);
       setAurumSnapshotLabel(null);
       setAurumSnapshotPublishedAt(null);
       setSnapshotApplied(false);
@@ -3821,6 +3891,12 @@ export default function App() {
 
     let cancelled = false;
     let hasReceivedFirstSnapshot = false;
+    const initialSnapshotResolution: AurumSnapshotResolutionStatus = lastAppliedSnapshotSignatureRef.current
+      ? 'applied'
+      : 'loading';
+    aurumSnapshotResolutionRef.current = initialSnapshotResolution;
+    setAurumSnapshotResolution(initialSnapshotResolution);
+    setAurumSnapshotResolutionReason(null);
     setSnapshotSubscribeCount((prev) => prev + 1);
     setActiveSnapshotListenersCount((prev) => prev + 1);
 
@@ -3867,7 +3943,15 @@ export default function App() {
       setOptimizableBaseReference(optimizableSnapshotToReference(snapshot));
 
       if (!snapshot) {
-        setAurumIntegrationStatus('missing');
+        const resolvedStatus = aurumSnapshotResolutionRef.current;
+        setAurumSnapshotResolution(resolvedStatus);
+        setAurumIntegrationStatus(
+          resolvedStatus === 'invalid' || resolvedStatus === 'permission_error' || resolvedStatus === 'network_error'
+            ? 'error'
+            : resolvedStatus === 'missing'
+              ? 'missing'
+              : 'loading',
+        );
         setAurumSnapshotLabel(null);
         setAurumSnapshotMonth(null);
         setAurumSnapshotPublishedAt(null);
@@ -3983,6 +4067,9 @@ export default function App() {
           }
         }
         setSnapshotApplied(true);
+        aurumSnapshotResolutionRef.current = 'applied';
+        setAurumSnapshotResolution('applied');
+        setAurumSnapshotResolutionReason(null);
         setPendingSnapshot(null);
         setPendingSnapshotLabel(null);
         setPendingSnapshotSignature(null);
@@ -3999,6 +4086,9 @@ export default function App() {
       setLastSnapshotProcessedAt(new Date().toISOString());
 
       setSnapshotApplied(false);
+      aurumSnapshotResolutionRef.current = 'pending_apply';
+      setAurumSnapshotResolution('pending_apply');
+      setAurumSnapshotResolutionReason(null);
       setPendingSnapshot(snapshot);
       setPendingSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
       setPendingSnapshotSignature(snapshotSignature);
@@ -4006,6 +4096,14 @@ export default function App() {
     };
 
     const unsubscribe = subscribeToPublishedOptimizableInvestmentsSnapshot({
+      onResolution: (resolution: PublishedSnapshotResolution) => {
+        if (cancelled) return;
+        if (resolution.status === 'valid') return;
+        aurumSnapshotResolutionRef.current = resolution.status;
+        setAurumSnapshotResolution(resolution.status);
+        setAurumSnapshotResolutionReason(resolution.status === 'invalid' ? resolution.reason : null);
+        if (resolution.status === 'invalid') setAurumIntegrationStatus('error');
+      },
       onValue: (snapshot) => {
         if (cancelled) return;
         setSnapshotEventCount((prev) => prev + 1);
@@ -4027,8 +4125,12 @@ export default function App() {
         applySnapshot(snapshot, snapshotSignature);
         hasReceivedFirstSnapshot = true;
       },
-      onError: () => {
+      onError: (error) => {
         if (cancelled) return;
+        const resolution = classifyAurumSnapshotError(error);
+        aurumSnapshotResolutionRef.current = resolution;
+        setAurumSnapshotResolution(resolution);
+        setAurumSnapshotResolutionReason(String((error as { code?: unknown })?.code ?? 'read_error'));
         setOptimizableBaseReference({
           amountClp: null,
           asOf: null,
@@ -4051,7 +4153,7 @@ export default function App() {
       setActiveSnapshotListenersCount((prev) => Math.max(0, prev - 1));
       unsubscribe();
     };
-  }, [aurumIntegrationConfigured, getSnapshotSignature, isCanonicalUserSession]);
+  }, [aurumIntegrationConfigured, getSnapshotSignature, isCanonicalUserSession, snapshotHydrationRetryNonce]);
 
   useEffect(() => {
     if (!simulationActive && !simOverrides?.active) {
@@ -4305,6 +4407,8 @@ export default function App() {
     timeoutMs: 60_000,
     timedOut: simulationRunTimedOut,
     aurumRefreshing: aurumIntegrationStatus === 'refreshing',
+    aurumSnapshotResolution,
+    aurumSnapshotResolutionReason,
     aurumSnapshotAvailable: Boolean(lastAppliedAurumSnapshotSignature),
     aurumSnapshotHash: lastAppliedAurumSnapshotSignature,
     aurumRefreshBlocksRun:
@@ -4337,6 +4441,8 @@ export default function App() {
     activeRecalcRequestId,
     activeSnapshotListenersCount,
     aurumIntegrationStatus,
+    aurumSnapshotResolution,
+    aurumSnapshotResolutionReason,
     canonicalInputBlockDisplay,
     canonicalInputBlockedReason,
     canonicalInputReadiness,
@@ -4375,6 +4481,7 @@ export default function App() {
     aurumSnapshotLabel,
     aurumSnapshotPublishedAt,
     aurumSnapshotSignature: lastAppliedAurumSnapshotSignature,
+    aurumSnapshotResolution,
     simulationConfigSource,
     simulationConfigSavedAt,
     simulationConfigHash,
@@ -4498,6 +4605,7 @@ export default function App() {
     aurumSnapshotLabel,
     aurumSnapshotPublishedAt,
     lastAppliedAurumSnapshotSignature,
+    aurumSnapshotResolution,
     simulationConfigSource,
     simulationConfigSavedAt,
     simulationConfigHash,
@@ -4689,6 +4797,7 @@ export default function App() {
       simulationConfigHydrationStatus,
       aurumIntegrationStatus,
       aurumSnapshotAvailable: Boolean(lastAppliedAurumSnapshotSignature),
+      aurumSnapshotResolution,
       cloudUniverseReadStatus,
       universeSourceOrigin,
       simWorking,
@@ -4729,6 +4838,7 @@ export default function App() {
   }, [
     applyBlockedSimulationRunState,
     aurumIntegrationStatus,
+    aurumSnapshotResolution,
     authResolved,
     cloudUniverseReadStatus,
     cloudHydrationReady,
@@ -4977,6 +5087,8 @@ export default function App() {
       aurumIntegrationStatus={aurumIntegrationStatus}
       aurumSnapshotLabel={aurumSnapshotLabel}
       aurumSnapshotPublishedAt={aurumSnapshotPublishedAt}
+      aurumSnapshotResolution={aurumSnapshotResolution}
+      aurumSnapshotResolutionReason={aurumSnapshotResolutionReason}
       baseUpdatePending={baseUpdatePending}
       hasPendingSnapshot={hasPendingSnapshot}
       pendingSnapshotLabel={pendingSnapshotLabel}
@@ -5035,6 +5147,7 @@ export default function App() {
       } : { enabled: false, reason: null }}
       applyAurumHarness={applyAurumHarness}
       onApplyPendingSnapshot={applyPendingSnapshot}
+      onRetryAurumSnapshot={handleRetryAurumSnapshot}
       onRunApplyAurumHarness={runApplyAurumHarness}
       onToggleRiskCapital={toggleRiskCapital}
       onCommitManualCapitalAdjustments={commitManualCapitalAdjustments}
@@ -5330,8 +5443,11 @@ function Header({
         <span style={{ color: T.primary }}>◆</span>
         <span>Midas V1.2</span>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0, flex: '1 1 auto', overflow: 'hidden' }}>
-        <div style={{ minWidth: 0, maxWidth: '100%', textAlign: 'right', lineHeight: 1.15, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0, flex: '1 1 auto', overflow: 'hidden', marginLeft: 12 }}>
+        <div
+          title={`${metricText} · ${confidenceLabel}`}
+          style={{ minWidth: 0, maxWidth: '100%', textAlign: 'right', lineHeight: 1.15, overflow: 'hidden' }}
+        >
           <span style={{ display: 'block', overflow: 'hidden', color: T.textPrimary, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{metricText} · {confidenceLabel}</span>
           {qualityLabel ? <span style={{ display: 'block', marginTop: 2, color: statusColor, fontSize: 10, fontWeight: 750 }}>{qualityLabel}</span> : null}
         </div>

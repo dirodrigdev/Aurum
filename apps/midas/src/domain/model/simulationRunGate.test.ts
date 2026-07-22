@@ -216,4 +216,40 @@ const base = () => ({
   assert.equal(result.status, 'should_run');
 })();
 
+(() => {
+  const result = evaluateCanonicalInputReadiness({
+    ...base(),
+    aurumSnapshotAvailable: false,
+    aurumSnapshotResolution: 'pending_apply',
+  });
+  assert.deepEqual(result, { ready: false, blockedReason: 'aurum_snapshot_pending_apply' });
+})();
+
+(() => {
+  const result = evaluateCanonicalInputReadiness({
+    ...base(),
+    aurumSnapshotAvailable: false,
+    aurumSnapshotResolution: 'invalid',
+  });
+  assert.deepEqual(result, { ready: false, blockedReason: 'aurum_snapshot_invalid' });
+})();
+
+(() => {
+  const result = evaluateCanonicalInputReadiness({
+    ...base(),
+    aurumSnapshotAvailable: false,
+    aurumSnapshotResolution: 'missing',
+  });
+  assert.deepEqual(result, { ready: false, blockedReason: 'aurum_snapshot_missing' });
+})();
+
+(() => {
+  const result = evaluateCanonicalInputReadiness({
+    ...base(),
+    aurumSnapshotAvailable: false,
+    aurumSnapshotResolution: 'permission_error',
+  });
+  assert.deepEqual(result, { ready: false, blockedReason: 'aurum_snapshot_permission_error' });
+})();
+
 console.log('simulationRunGate tests passed');

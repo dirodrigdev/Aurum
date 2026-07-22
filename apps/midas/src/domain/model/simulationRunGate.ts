@@ -1,3 +1,5 @@
+import type { AurumSnapshotResolutionStatus } from '../../integrations/aurum/optimizableSnapshot';
+
 export type SimulationRunBlockedReason =
   | 'effective_input_missing'
   | 'auth_loading'
@@ -5,7 +7,12 @@ export type SimulationRunBlockedReason =
   | 'config_loading'
   | 'config_missing'
   | 'config_error'
+  | 'aurum_snapshot_loading'
   | 'aurum_snapshot_missing'
+  | 'aurum_snapshot_invalid'
+  | 'aurum_snapshot_pending_apply'
+  | 'aurum_snapshot_permission_error'
+  | 'aurum_snapshot_network_error'
   | 'aurum_snapshot_error'
   | 'instrument_universe_loading'
   | 'instrument_universe_timeout'
@@ -21,6 +28,7 @@ export type EvaluateSimulationRunGateInput = {
   simulationConfigHydrationStatus: 'loading' | 'cloud' | 'missing' | 'error';
   aurumIntegrationStatus: 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
   aurumSnapshotAvailable: boolean;
+  aurumSnapshotResolution?: AurumSnapshotResolutionStatus;
   cloudUniverseReadStatus: 'loading' | 'loaded' | 'missing' | 'timeout' | 'error';
   universeSourceOrigin: 'firestore' | 'bundled' | 'cache-local' | 'none';
   simWorking: boolean;
@@ -51,6 +59,7 @@ export function evaluateCanonicalInputReadiness(
     | 'simulationConfigHydrationStatus'
     | 'aurumIntegrationStatus'
     | 'aurumSnapshotAvailable'
+    | 'aurumSnapshotResolution'
     | 'cloudUniverseReadStatus'
     | 'universeSourceOrigin'
     | 'effectiveEngineInputHash'
@@ -75,6 +84,21 @@ export function evaluateCanonicalInputReadiness(
     || (input.cloudUniverseReadStatus === 'missing' && input.universeSourceOrigin !== 'bundled')
   ) {
     return { ready: false, blockedReason: 'instrument_universe_missing' };
+  }
+  if (input.aurumSnapshotResolution === 'loading') {
+    return { ready: false, blockedReason: 'aurum_snapshot_loading' };
+  }
+  if (input.aurumSnapshotResolution === 'pending_apply') {
+    return { ready: false, blockedReason: 'aurum_snapshot_pending_apply' };
+  }
+  if (input.aurumSnapshotResolution === 'invalid') {
+    return { ready: false, blockedReason: 'aurum_snapshot_invalid' };
+  }
+  if (input.aurumSnapshotResolution === 'permission_error') {
+    return { ready: false, blockedReason: 'aurum_snapshot_permission_error' };
+  }
+  if (input.aurumSnapshotResolution === 'network_error') {
+    return { ready: false, blockedReason: 'aurum_snapshot_network_error' };
   }
   if (!input.aurumSnapshotAvailable) {
     if (input.aurumIntegrationStatus === 'error') {

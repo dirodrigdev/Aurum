@@ -28,6 +28,7 @@ export type M8InputFingerprintInput = {
   aurumSnapshotLabel: string | null;
   aurumSnapshotPublishedAt: string | null;
   aurumSnapshotSignature: string | null;
+  aurumSnapshotResolution?: 'loading' | 'missing' | 'invalid' | 'pending_apply' | 'applied' | 'permission_error' | 'network_error';
   simulationConfigSource: 'cloud' | 'local_cache' | 'fallback';
   simulationConfigSavedAt: string | null;
   simulationConfigHash: string | null;
@@ -347,6 +348,7 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
     aurumSnapshotLabel: input.aurumSnapshotLabel,
     aurumSnapshotPublishedAt: input.aurumSnapshotPublishedAt,
     aurumSnapshotSignature: input.aurumSnapshotSignature,
+    aurumSnapshotResolution: input.aurumSnapshotResolution,
     runtimeDiagnostics: input.runtimeDiagnostics,
     fieldSources: input.fieldSources,
     capitalDerivationDiagnostics: input.capitalDerivationDiagnostics,
@@ -374,6 +376,7 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
     aurumSnapshotLabel: input.aurumSnapshotLabel,
     aurumSnapshotPublishedAt: input.aurumSnapshotPublishedAt,
     aurumSnapshotSignature: input.aurumSnapshotSignature,
+    aurumSnapshotResolution: input.aurumSnapshotResolution,
     runtimeDiagnostics: input.runtimeDiagnostics,
     fieldSources: input.fieldSources,
     capitalDerivationDiagnostics: input.capitalDerivationDiagnostics,

@@ -224,6 +224,27 @@ const base = () => ({
 {
   const policy = buildSourceFreshnessPolicy({
     ...base(),
+    aurumSnapshot: { ...base().aurumSnapshot, resolution: 'pending_apply' },
+  });
+  assert.equal(policy.photoStatus, 'pending_snapshot');
+  assert.ok(policy.forbiddenSourcesUsed.includes('aurum_snapshot_pending_apply'));
+  assert.ok(policy.decisionWarnings.some((notice) => notice.code === 'aurum_snapshot_pending_apply'));
+  assert.ok(policy.sources.some((entry) => entry.id === 'aurumSnapshot' && entry.warning === 'Snapshot Aurum válido pendiente de aplicar'));
+}
+
+{
+  const policy = buildSourceFreshnessPolicy({
+    ...base(),
+    aurumSnapshot: { ...base().aurumSnapshot, resolution: 'invalid' },
+  });
+  assert.equal(policy.photoStatus, 'invalid_snapshot');
+  assert.ok(policy.forbiddenSourcesUsed.includes('aurum_snapshot_invalid'));
+  assert.ok(policy.decisionWarnings.some((notice) => notice.code === 'aurum_snapshot_invalid'));
+}
+
+{
+  const policy = buildSourceFreshnessPolicy({
+    ...base(),
     hasReplayTrace: false,
   });
   assert.equal(policy.status, 'not_comparable');

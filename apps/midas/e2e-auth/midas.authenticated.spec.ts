@@ -23,6 +23,12 @@ test('local emulator session loads MIDAS without external traffic', async ({ pag
   await expect(page.getByRole('heading', { name: 'Carga oficial del Instrument Universe' })).toBeVisible();
   await page.getByRole('button', { name: 'Simulación', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Simulación', exact: true })).toBeVisible();
+  const snapshotRecovery = page.getByTestId('aurum-snapshot-recovery');
+  await expect(snapshotRecovery).toBeVisible({ timeout: 30_000 });
+  await expect(snapshotRecovery).toContainText('No existe una publicación Aurum canónica. Publica un cierre confirmado desde Aurum.');
+  await expect(snapshotRecovery.getByRole('button', { name: 'Reintentar lectura', exact: true })).toHaveCount(0);
+  await expect(page.locator('body')).not.toContainText('Recalculando simulación');
+  await page.screenshot({ path: testInfo.outputPath('midas-simulation-missing-desktop.png'), fullPage: true });
 
   await networkGuard.assertClean(testInfo);
   expect(pageErrors, `page errors: ${pageErrors.join(' | ')}`).toEqual([]);
@@ -77,6 +83,17 @@ test('Ecosystem is reachable from MIDAS Dashboard and works on mobile', async ({
   page.on('pageerror', (error) => pageErrors.push(error.message));
   page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()); });
   const networkGuard = await installLocalNetworkGuard(page);
+
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Simulación', exact: true })).toBeVisible({ timeout: 30_000 });
+  const mobileSnapshotRecovery = page.getByTestId('aurum-snapshot-recovery');
+  await expect(mobileSnapshotRecovery).toBeVisible({ timeout: 30_000 });
+  await expect(mobileSnapshotRecovery).toContainText('Publica un cierre confirmado desde Aurum.');
+  await page.screenshot({ path: testInfo.outputPath('midas-simulation-missing-mobile.png'), fullPage: true });
+
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.screenshot({ path: testInfo.outputPath('midas-simulation-missing-intermediate.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
 
   await page.goto('/#/dashboard');
   const ecosystemButton = page.getByRole('button', { name: 'Ver ecosistema', exact: true });

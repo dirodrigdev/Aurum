@@ -47,6 +47,10 @@ test('simulation home loads in local read-only mode', async ({ page }) => {
   const technicalDetailLine = page.getByText(/Bloques fuera del motor:/);
 
   await expectStableSimulationShell(page);
+  const snapshotRecovery = page.getByTestId('aurum-snapshot-recovery');
+  await expect(snapshotRecovery).toBeVisible();
+  await expect(snapshotRecovery).toContainText('No existe una publicación Aurum canónica. Publica un cierre confirmado desde Aurum.');
+  await expect(snapshotRecovery.getByRole('button', { name: 'Reintentar lectura', exact: true })).toHaveCount(0);
   await expect(page.locator('body')).not.toContainText(/Calculando/i);
   await expect(page.getByText(/Fuente de datos/i).last()).toBeVisible();
   await expect(technicalDetailLine).toBeHidden();

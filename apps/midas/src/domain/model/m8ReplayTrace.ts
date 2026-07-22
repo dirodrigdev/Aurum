@@ -20,6 +20,7 @@ export type M8ReplayTraceInput = {
   aurumSnapshotLabel: string | null;
   aurumSnapshotPublishedAt: string | null;
   aurumSnapshotSignature: string | null;
+  aurumSnapshotResolution?: 'loading' | 'missing' | 'invalid' | 'pending_apply' | 'applied' | 'permission_error' | 'network_error';
   runtimeDiagnostics?: Record<string, unknown>;
   fieldSources?: Record<string, unknown>;
   capitalDerivationDiagnostics?: Record<string, unknown>;
@@ -78,6 +79,7 @@ export type M8ReplayTrace = {
       label: string | null;
       publishedAt: string | null;
       hash: string | null;
+      resolution?: 'loading' | 'missing' | 'invalid' | 'pending_apply' | 'applied' | 'permission_error' | 'network_error';
     };
     fieldSources: Record<string, unknown>;
     capitalDerivation: Record<string, unknown>;
@@ -209,6 +211,7 @@ export function buildM8ReplayTrace(input: M8ReplayTraceInput): M8ReplayTrace {
         label: input.aurumSnapshotLabel,
         publishedAt: input.aurumSnapshotPublishedAt,
         hash: input.aurumSnapshotSignature,
+        resolution: input.aurumSnapshotResolution,
       },
       fieldSources: input.fieldSources ?? {},
       capitalDerivation: input.capitalDerivationDiagnostics ?? {},
@@ -273,6 +276,7 @@ export function buildM8ReplayTrace(input: M8ReplayTraceInput): M8ReplayTrace {
         label: input.aurumSnapshotLabel,
         publishedAt: input.aurumSnapshotPublishedAt,
         hash: input.aurumSnapshotSignature,
+        resolution: input.aurumSnapshotResolution,
       },
       localDiagnostics: {
         persistedBaseExists: Boolean(runtime.localPersistedBaseExists),
