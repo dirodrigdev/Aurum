@@ -96,7 +96,15 @@ export interface AurumOptimizableInvestmentsSnapshotV2 {
     clpEur?: number;
     usdEur?: number;
     ufClp?: number;
-    source?: string;
+    source: 'closure_fx_metadata';
+    sourceId: string;
+    asOf: string;
+    fetchedAt?: string;
+    lastSuccessfulRefreshAt?: string;
+    validationStatus: 'valid';
+    schemaVersion: 1;
+    rateOrigin: Record<'usd' | 'eur' | 'uf', string>;
+    rateSource: Record<'usd' | 'eur' | 'uf', string>;
   };
   nonOptimizable?: {
     banksCLP?: number;

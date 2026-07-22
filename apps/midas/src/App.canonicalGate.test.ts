@@ -12,6 +12,12 @@ assert.match(
 
 assert.match(
   appSource,
+  /if \(!snapshot\) \{[\s\S]*?lastAppliedSnapshotSignatureRef\.current = null;[\s\S]*?setLastAppliedAurumSnapshotSignature\(null\);/,
+  'an invalid or missing Aurum snapshot must clear the applied signature so the canonical gate cannot reuse it',
+);
+
+assert.match(
+  appSource,
   /const gate = evaluateSimulationRunGate\(\{[\s\S]*?authResolved,[\s\S]*?cloudUniverseReadStatus,[\s\S]*?universeSourceOrigin,[\s\S]*?\}\);/,
   'App auto-run gate must include auth and instrument universe hydration state',
 );

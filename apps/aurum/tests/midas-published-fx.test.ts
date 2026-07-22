@@ -30,28 +30,59 @@ const makeClosure = (usdClp: number): WealthMonthlyClosure => ({
     eurClp: 1_050,
     ufClp: 38_500,
   },
+  fxMetadata: {
+    economicMonthKey: '2026-03',
+    economicDate: '2026-03-31',
+    usedFxRates: { usdClp, eurClp: 1_050, ufClp: 38_500 },
+    rateOrigin: { usd: 'automatic-final', eur: 'automatic-final', uf: 'automatic-final' },
+    source: { usd: 'BCCh', eur: 'BCCh', uf: 'SII' },
+    retrievedAt: '2026-04-01T09:00:00.000Z',
+  },
   records: [],
 });
 
 describe('midasPublished fxReference source-of-truth', () => {
-  it('uses active FX rates when provided (UI-visible value)', () => {
+  it('uses closure FX provenance instead of device-local active rates', () => {
     const closure = makeClosure(985);
-    const prepared = prepareAurumOptimizableInvestmentsSnapshot([closure], {
+    const deviceA = prepareAurumOptimizableInvestmentsSnapshot([closure], {
       activeFxRates: { usdClp: 886, eurClp: 1_020, ufClp: 38_300 },
     });
-    expect(prepared.ok).toBe(true);
-    if (!prepared.ok) return;
-    expect(prepared.snapshot.fxReference?.clpUsd).toBe(886);
-    expect(prepared.snapshot.fxReference?.source).toBe('active_fx_rates');
+    const deviceB = prepareAurumOptimizableInvestmentsSnapshot([closure], {
+      activeFxRates: { usdClp: 1_321, eurClp: 1_410, ufClp: 41_200 },
+    });
+    expect(deviceA.ok).toBe(true);
+    expect(deviceB.ok).toBe(true);
+    if (!deviceA.ok || !deviceB.ok) return;
+    expect(deviceA.snapshot.fxReference).toEqual(deviceB.snapshot.fxReference);
+    expect(deviceA.snapshot.fxReference?.clpUsd).toBe(985);
+    expect(deviceA.snapshot.fxReference).toMatchObject({
+      source: 'closure_fx_metadata',
+      sourceId: 'c1',
+      asOf: '2026-03-31',
+      validationStatus: 'valid',
+      schemaVersion: 1,
+    });
   });
 
-  it('falls back to closure FX when active FX is absent', () => {
+  it('uses the same canonical closure FX when local FX is absent', () => {
     const closure = makeClosure(985);
     const prepared = prepareAurumOptimizableInvestmentsSnapshot([closure]);
     expect(prepared.ok).toBe(true);
     if (!prepared.ok) return;
     expect(prepared.snapshot.fxReference?.clpUsd).toBe(985);
-    expect(prepared.snapshot.fxReference?.source).toBe('closure_fxRates');
+    expect(prepared.snapshot.fxReference?.source).toBe('closure_fx_metadata');
+  });
+
+  it('blocks publication when the closure lacks canonical FX provenance', () => {
+    const closure = makeClosure(985);
+    delete closure.fxMetadata;
+    const prepared = prepareAurumOptimizableInvestmentsSnapshot([closure], {
+      activeFxRates: { usdClp: 886, eurClp: 1_020, ufClp: 38_300 },
+    });
+    expect(prepared).toEqual({
+      ok: false,
+      reason: 'El cierre 2026-03 no tiene FX canónico completo y trazable para publicar hacia MIDAS.',
+    });
   });
 
   it('uses canonical records for non-optimizable subtotals instead of legacy byBlock when records exist', () => {

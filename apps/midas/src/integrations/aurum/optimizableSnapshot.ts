@@ -17,6 +17,46 @@ const asFiniteOrNull = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const normalizeCanonicalFxReference = (raw: unknown, snapshotMonth: string) => {
+  if (!raw || typeof raw !== 'object') return null;
+  const fx = raw as Record<string, unknown>;
+  const clpUsd = asFiniteOrNull(fx.clpUsd);
+  const clpEur = asFiniteOrNull(fx.clpEur);
+  const usdEur = asFiniteOrNull(fx.usdEur);
+  const ufClp = asFiniteOrNull(fx.ufClp);
+  const source = typeof fx.source === 'string' ? fx.source.trim() : '';
+  const sourceId = typeof fx.sourceId === 'string' ? fx.sourceId.trim() : '';
+  const asOf = typeof fx.asOf === 'string' ? fx.asOf.trim() : '';
+  const validationStatus = typeof fx.validationStatus === 'string' ? fx.validationStatus.trim() : '';
+  const rateOrigin = fx.rateOrigin && typeof fx.rateOrigin === 'object' ? fx.rateOrigin as Record<string, unknown> : null;
+  const rateSource = fx.rateSource && typeof fx.rateSource === 'object' ? fx.rateSource as Record<string, unknown> : null;
+  if (
+    clpUsd === null || clpUsd <= 0 || clpEur === null || clpEur <= 0 ||
+    usdEur === null || usdEur <= 0 || ufClp === null || ufClp <= 0 ||
+    source !== 'closure_fx_metadata' || !sourceId || !asOf.startsWith(`${snapshotMonth}-`) ||
+    validationStatus !== 'valid' || Number(fx.schemaVersion) !== 1 ||
+    !String(rateOrigin?.usd || '').trim() || !String(rateOrigin?.eur || '').trim() || !String(rateOrigin?.uf || '').trim() ||
+    !String(rateSource?.usd || '').trim() || !String(rateSource?.eur || '').trim() || !String(rateSource?.uf || '').trim()
+  ) return null;
+  return {
+    clpUsd,
+    clpEur,
+    usdEur,
+    ufClp,
+    source: 'closure_fx_metadata' as const,
+    sourceId,
+    asOf,
+    ...(typeof fx.fetchedAt === 'string' && fx.fetchedAt.trim() ? { fetchedAt: fx.fetchedAt.trim() } : {}),
+    ...(typeof fx.lastSuccessfulRefreshAt === 'string' && fx.lastSuccessfulRefreshAt.trim()
+      ? { lastSuccessfulRefreshAt: fx.lastSuccessfulRefreshAt.trim() }
+      : {}),
+    validationStatus: 'valid' as const,
+    schemaVersion: 1 as const,
+    rateOrigin: { usd: String(rateOrigin!.usd), eur: String(rateOrigin!.eur), uf: String(rateOrigin!.uf) },
+    rateSource: { usd: String(rateSource!.usd), eur: String(rateSource!.eur), uf: String(rateSource!.uf) },
+  };
+};
+
 const buildFxTraceSignature = (stage: string, payload: Record<string, unknown>) => {
   try {
     return `${stage}:${JSON.stringify(payload)}`;
@@ -132,6 +172,15 @@ export function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsS
   const optimizable = asFiniteOrNull((data as { optimizableInvestmentsCLP?: unknown }).optimizableInvestmentsCLP);
   if (optimizable === null) return null;
 
+  const snapshotMonth = String((data as { snapshotMonth?: unknown }).snapshotMonth || '');
+  const canonicalFxReference = normalizeCanonicalFxReference(
+    (data as { fxReference?: unknown }).fxReference,
+    snapshotMonth,
+  );
+  // Legacy FX and browser caches are intentionally not accepted here: a snapshot
+  // without canonical provenance must block a new MIDAS run.
+  if (!canonicalFxReference) return null;
+
   const version = Number((data as { version?: unknown }).version) === 2 ? 2 : 1;
   const totalNetWorthClp = asFiniteOrNull((data as { totalNetWorthCLP?: unknown }).totalNetWorthCLP);
   const totalNetWorthWithRisk = asFiniteOrNull((data as { totalNetWorthWithRiskCLP?: unknown }).totalNetWorthWithRiskCLP);
@@ -146,37 +195,17 @@ export function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsS
   const riskCapitalUSD = asFiniteOrNull(riskCapitalObj?.usd);
   const riskCapitalUsdSnapshotCLP = asFiniteOrNull(riskCapitalObj?.usdSnapshotCLP);
   const riskCapitalSource = typeof riskCapitalObj?.source === 'string' ? riskCapitalObj.source : undefined;
-  const fxReferenceRaw = (data as { fxReference?: unknown }).fxReference;
-  const fxReferenceObj =
-    fxReferenceRaw && typeof fxReferenceRaw === 'object'
-      ? (fxReferenceRaw as Record<string, unknown>)
-      : null;
-  const legacyFxRaw = (data as { fx?: unknown }).fx;
-  const legacyFxObj =
-    legacyFxRaw && typeof legacyFxRaw === 'object'
-      ? (legacyFxRaw as Record<string, unknown>)
-      : null;
-  const fxClpUsd = asFiniteOrNull(fxReferenceObj?.clpUsd) ?? asFiniteOrNull(legacyFxObj?.usdClp) ?? asFiniteOrNull(legacyFxObj?.clpUsd);
-  const fxClpEur = asFiniteOrNull(fxReferenceObj?.clpEur) ?? asFiniteOrNull(legacyFxObj?.eurClp) ?? asFiniteOrNull(legacyFxObj?.clpEur);
-  const fxUsdEur = asFiniteOrNull(fxReferenceObj?.usdEur) ?? asFiniteOrNull(legacyFxObj?.eurUsd);
-  const fxUfClp = asFiniteOrNull(fxReferenceObj?.ufClp) ?? asFiniteOrNull(legacyFxObj?.ufClp);
-  const fxSource = typeof fxReferenceObj?.source === 'string'
-    ? fxReferenceObj.source
-    : typeof legacyFxObj?.source === 'string'
-      ? legacyFxObj.source
-      : undefined;
   logFxTrace('snapshot_hydration_raw', {
-    rawFxReferenceClpUsd: fxReferenceObj?.clpUsd ?? null,
-    rawFxReferenceSource: fxReferenceObj?.source ?? null,
-    rawLegacyFxUsdClp: legacyFxObj?.usdClp ?? null,
-    normalizedFxClpUsd: fxClpUsd,
-    normalizedFxSource: fxSource ?? null,
+    normalizedFxClpUsd: canonicalFxReference.clpUsd,
+    normalizedFxSource: canonicalFxReference.source,
+    canonicalFxAsOf: canonicalFxReference.asOf,
+    canonicalFxSourceId: canonicalFxReference.sourceId,
   });
 
   const base = {
     version,
     publishedAt: String((data as { publishedAt?: unknown }).publishedAt || ''),
-    snapshotMonth: String((data as { snapshotMonth?: unknown }).snapshotMonth || ''),
+    snapshotMonth,
     snapshotLabel: String((data as { snapshotLabel?: unknown }).snapshotLabel || ''),
     currency: 'CLP' as const,
     totalNetWorthCLP: totalNetWorthClp ?? 0,
@@ -194,17 +223,7 @@ export function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsS
           },
         }
       : {}),
-    ...(fxClpUsd !== null && fxClpUsd > 0
-      ? {
-          fxReference: {
-            clpUsd: fxClpUsd,
-            ...(fxClpEur !== null && fxClpEur > 0 ? { clpEur: fxClpEur } : {}),
-            ...(fxUsdEur !== null && fxUsdEur > 0 ? { usdEur: fxUsdEur } : {}),
-            ...(fxUfClp !== null && fxUfClp > 0 ? { ufClp: fxUfClp } : {}),
-            ...(fxSource ? { source: fxSource } : {}),
-          },
-        }
-      : {}),
+    fxReference: canonicalFxReference,
     source: {
       app: 'aurum' as const,
       basis: 'latest_confirmed_closure' as const,

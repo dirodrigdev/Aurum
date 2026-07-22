@@ -43,8 +43,16 @@ import { normalizeSnapshotData, resetFxTraceDiagnostics, shouldEmitFxTrace } fro
     optimizableInvestmentsCLP: 1_500_000_000,
     fxReference: {
       clpUsd: 891,
+      clpEur: 1_025,
       usdEur: 1.16,
-      source: 'active_fx_rates',
+      ufClp: 39_500,
+      source: 'closure_fx_metadata',
+      sourceId: 'closure-2026-05',
+      asOf: '2026-05-31',
+      validationStatus: 'valid',
+      schemaVersion: 1,
+      rateOrigin: { usd: 'automatic-final', eur: 'automatic-final', uf: 'automatic-final' },
+      rateSource: { usd: 'BCCh', eur: 'BCCh', uf: 'SII' },
     },
     source: {
       app: 'aurum',
@@ -53,6 +61,38 @@ import { normalizeSnapshotData, resetFxTraceDiagnostics, shouldEmitFxTrace } fro
   });
   assert.equal(normalized?.fxReference?.clpUsd, 891);
   assert.equal(normalized?.fxReference?.usdEur, 1.16);
+})();
+
+(() => {
+  const snapshot = {
+    version: 2,
+    publishedAt: '2026-05-11T08:42:00.424Z',
+    snapshotMonth: '2026-05',
+    snapshotLabel: 'test',
+    currency: 'CLP',
+    totalNetWorthCLP: 2_000_000_000,
+    optimizableInvestmentsCLP: 1_500_000_000,
+    fxReference: {
+      clpUsd: 891,
+      clpEur: 1_025,
+      usdEur: 1.16,
+      ufClp: 39_500,
+      source: 'closure_fx_metadata',
+      sourceId: 'closure-2026-05',
+      asOf: '2026-05-31',
+      validationStatus: 'valid',
+      schemaVersion: 1,
+      rateOrigin: { usd: 'automatic-final', eur: 'automatic-final', uf: 'automatic-final' },
+      rateSource: { usd: 'BCCh', eur: 'BCCh', uf: 'SII' },
+    },
+    source: { app: 'aurum', basis: 'latest_confirmed_closure' },
+  } as const;
+  const deviceA = normalizeSnapshotData({ ...snapshot, fx: { usdClp: 800 } } as unknown as Parameters<typeof normalizeSnapshotData>[0]);
+  const deviceB = normalizeSnapshotData({ ...snapshot, fx: { usdClp: 1_400 } } as unknown as Parameters<typeof normalizeSnapshotData>[0]);
+  assert.deepEqual(deviceA?.fxReference, deviceB?.fxReference, 'local/legacy FX must not alter the canonical snapshot');
+  assert.equal(normalizeSnapshotData({ ...snapshot, fxReference: { clpUsd: 891 } } as unknown as Parameters<typeof normalizeSnapshotData>[0]), null);
+  assert.equal(normalizeSnapshotData({ ...snapshot, fxReference: { ...snapshot.fxReference, clpUsd: 0 } }), null);
+  assert.equal(normalizeSnapshotData({ ...snapshot, fxReference: { ...snapshot.fxReference, asOf: '2026-04-30' } }), null);
 })();
 
 console.log('optimizableSnapshot tests passed');

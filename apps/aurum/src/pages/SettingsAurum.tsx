@@ -1877,6 +1877,11 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
                 Estado: {fxLiveMeta.status === 'ok' ? 'OK' : 'Error'} · {humanizeFxSource(fxLiveMeta.source)} · {formatDateTime(fxLiveMeta.fetchedAt)}
               </div>
             )}
+            {!fxLiveMeta && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-800">
+                Sin provenance vigente: estos valores sirven para edición local, pero no se publican como FX canónico hacia MIDAS.
+              </div>
+            )}
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               <Input value={fxDraft.usdClp} type="text" inputMode="decimal" onChange={(e) => setFxDraft((prev) => ({ ...prev, usdClp: e.target.value }))} onBlur={commitDraftFx} placeholder="USD/CLP" />
               <Input value={fxDraft.eurUsd} type="text" inputMode="decimal" onChange={(e) => setFxDraft((prev) => ({ ...prev, eurUsd: e.target.value }))} onBlur={commitDraftFx} placeholder="EUR/USD" />

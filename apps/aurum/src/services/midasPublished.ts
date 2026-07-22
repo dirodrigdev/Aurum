@@ -23,7 +23,15 @@ export type AurumOptimizableInvestmentsSnapshot = {
     clpEur?: number;
     usdEur?: number;
     ufClp?: number;
-    source?: 'closure_fxRates' | 'active_fx_rates';
+    source: 'closure_fx_metadata';
+    sourceId: string;
+    asOf: string;
+    fetchedAt?: string;
+    lastSuccessfulRefreshAt?: string;
+    validationStatus: 'valid';
+    schemaVersion: 1;
+    rateOrigin: Record<'usd' | 'eur' | 'uf', string>;
+    rateSource: Record<'usd' | 'eur' | 'uf', string>;
   };
   nonOptimizable?: {
     banksCLP?: number;
@@ -215,59 +223,70 @@ const extractRiskCapital = (closure: WealthMonthlyClosure) => {
   };
 };
 
-const extractFxReference = (
-  closure: WealthMonthlyClosure,
-  activeFxRates?: WealthFxRates | null,
-) => {
-  const hasActiveFx =
-    !!activeFxRates &&
-    Number.isFinite(Number(activeFxRates.usdClp)) &&
-    Number(activeFxRates.usdClp) > 0;
-  const usdClp = asFiniteOrNull(activeFxRates?.usdClp) ?? asFiniteOrNull(closure.fxRates?.usdClp);
-  if (usdClp === null || usdClp <= 0) return undefined;
-  const eurClp = asFiniteOrNull(activeFxRates?.eurClp) ?? asFiniteOrNull(closure.fxRates?.eurClp);
-  const ufClp = asFiniteOrNull(activeFxRates?.ufClp) ?? asFiniteOrNull(closure.fxRates?.ufClp);
-  const usdEur =
-    eurClp !== null && eurClp > 0
-      ? usdClp / eurClp
-      : null;
-  const source: 'closure_fxRates' | 'active_fx_rates' = hasActiveFx ? 'active_fx_rates' : 'closure_fxRates';
+const sameRate = (left: unknown, right: unknown) => Number(left) === Number(right);
+
+/**
+ * MIDAS receives the closure's economic FX, never the browser's current FX cache.
+ * A closure without full metadata is still usable in Aurum, but is not publishable
+ * as a canonical financial input.
+ */
+const extractFxReference = (closure: WealthMonthlyClosure) => {
+  const metadata = closure.fxMetadata;
+  const rates = closure.fxRates;
+  if (!metadata || !rates) return undefined;
+  if (metadata.economicMonthKey !== closure.monthKey || !metadata.economicDate.startsWith(`${closure.monthKey}-`)) {
+    return undefined;
+  }
+  const usdClp = asFiniteOrNull(metadata.usedFxRates?.usdClp);
+  const eurClp = asFiniteOrNull(metadata.usedFxRates?.eurClp);
+  const ufClp = asFiniteOrNull(metadata.usedFxRates?.ufClp);
+  if (
+    usdClp === null || usdClp <= 0 ||
+    eurClp === null || eurClp <= 0 ||
+    ufClp === null || ufClp <= 0 ||
+    !sameRate(usdClp, rates.usdClp) ||
+    !sameRate(eurClp, rates.eurClp) ||
+    !sameRate(ufClp, rates.ufClp)
+  ) return undefined;
+
+  const rateOrigin = metadata.rateOrigin;
+  const rateSource = {
+    usd: String(metadata.source?.usd || (rateOrigin.usd === 'manual' ? 'manual' : '')).trim(),
+    eur: String(metadata.source?.eur || (rateOrigin.eur === 'manual' ? 'manual' : '')).trim(),
+    uf: String(metadata.source?.uf || (rateOrigin.uf === 'manual' ? 'manual' : '')).trim(),
+  };
+  if (!rateOrigin?.usd || !rateOrigin?.eur || !rateOrigin?.uf || !rateSource.usd || !rateSource.eur || !rateSource.uf) {
+    return undefined;
+  }
+  const usdEur = usdClp / eurClp;
+  if (!Number.isFinite(usdEur) || usdEur <= 0) return undefined;
   return {
     clpUsd: Math.round(usdClp),
-    ...(eurClp !== null && eurClp > 0 ? { clpEur: Math.round(eurClp) } : {}),
-    ...(usdEur !== null && Number.isFinite(usdEur) && usdEur > 0 ? { usdEur: Math.round(usdEur * 10_000) / 10_000 } : {}),
-    ...(ufClp !== null && ufClp > 0 ? { ufClp: Math.round(ufClp) } : {}),
-    source,
-  };
-};
-
-const ensureSnapshotFxReference = (
-  snapshot: AurumOptimizableInvestmentsSnapshot,
-  closures: WealthMonthlyClosure[],
-  activeFxRates?: WealthFxRates | null,
-): AurumOptimizableInvestmentsSnapshot => {
-  const existing = asFiniteOrNull(snapshot.fxReference?.clpUsd);
-  if (existing !== null && existing > 0) return snapshot;
-  const latestByMonth = [...closures].sort(compareClosuresByMonthDesc)[0];
-  const fallbackFx = extractFxReference(latestByMonth, activeFxRates);
-  if (!fallbackFx) return snapshot;
-  return {
-    ...snapshot,
-    fxReference: fallbackFx,
+    clpEur: Math.round(eurClp),
+    usdEur: Math.round(usdEur * 10_000) / 10_000,
+    ufClp: Math.round(ufClp),
+    source: 'closure_fx_metadata' as const,
+    sourceId: closure.id,
+    asOf: metadata.economicDate,
+    ...(metadata.retrievedAt ? { fetchedAt: metadata.retrievedAt, lastSuccessfulRefreshAt: metadata.retrievedAt } : {}),
+    validationStatus: 'valid' as const,
+    schemaVersion: 1 as const,
+    rateOrigin: { ...rateOrigin },
+    rateSource,
   };
 };
 
 export const buildAurumOptimizableInvestmentsSnapshot = (
   closures: WealthMonthlyClosure[],
-  options?: { activeFxRates?: WealthFxRates | null },
+  _options?: { activeFxRates?: WealthFxRates | null },
 ): AurumOptimizableInvestmentsSnapshot | null => {
-  const result = prepareAurumOptimizableInvestmentsSnapshot(closures, options);
+  const result = prepareAurumOptimizableInvestmentsSnapshot(closures, _options);
   return result.ok ? result.snapshot : null;
 };
 
 export const prepareAurumOptimizableInvestmentsSnapshot = (
   closures: WealthMonthlyClosure[],
-  options?: { activeFxRates?: WealthFxRates | null },
+  _options?: { activeFxRates?: WealthFxRates | null },
 ): AurumOptimizableSnapshotBuildResult => {
   const latest = [...closures]
     .sort(compareClosuresByMonthDesc)
@@ -298,7 +317,13 @@ export const prepareAurumOptimizableInvestmentsSnapshot = (
   const totalNetWorthWithRisk =
     asFiniteOrNull(latest.summary?.netClpWithRisk) ?? asFiniteOrNull(latest.summary?.netConsolidatedClp);
   const riskCapital = extractRiskCapital(latest);
-  const fxReference = extractFxReference(latest, options?.activeFxRates);
+  const fxReference = extractFxReference(latest);
+  if (!fxReference) {
+    return {
+      ok: false,
+      reason: `El cierre ${latest.monthKey} no tiene FX canónico completo y trazable para publicar hacia MIDAS.`,
+    };
+  }
 
   return {
     ok: true,
@@ -336,7 +361,7 @@ export const publishAurumOptimizableInvestmentsSnapshot = async (
     };
   }
 
-  const snapshot = ensureSnapshotFxReference(prepared.snapshot, closures, options?.activeFxRates);
+  const snapshot = prepared.snapshot;
   if (isE2EFirebaseEmulatorEnabled()) {
     return { ok: true, snapshot };
   }
@@ -364,7 +389,9 @@ export const publishAurumOptimizableInvestmentsSnapshot = async (
       'Content-Type': 'application/json',
       Authorization: `Bearer ${idToken}`,
     },
-    body: JSON.stringify({ snapshot, activeFxRates: options?.activeFxRates ?? null }),
+    // Kept as an ignored compatibility parameter at the call boundary. The API
+    // accepts only snapshot.fxReference, so local device FX can never be promoted.
+    body: JSON.stringify({ snapshot }),
   });
   try {
     console.info(`[FX TRACE][Aurum publish] snapshot_payload_sent ${JSON.stringify({

@@ -44,6 +44,9 @@ const approximatelyEqual = (a: number, b: number) => Math.abs(a - b) / a <= REL_
 export function isAurumCurrentFxSource(source: string | null | undefined): boolean {
   const normalized = String(source ?? '').trim().toLowerCase();
   if (!normalized) return false;
+  // A closure-backed reference is the canonical economic FX for MIDAS. It is
+  // distinct from a browser's live/local FX, but still authoritative here.
+  if (normalized === 'closure_fx_metadata') return true;
   if (normalized.includes('closure')) return false;
   if (normalized.includes('active')) return true;
   if (normalized.includes('manual')) return true;

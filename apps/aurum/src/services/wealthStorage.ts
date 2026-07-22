@@ -5153,11 +5153,9 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
         }),
         { merge: true },
       );
-      // Publish to MIDAS must use the FX currently active in this local session.
-      // Cloud merge can choose a stale remote FX while records are being reconciled.
-      const publishResult = await publishAurumOptimizableInvestmentsSnapshot(closuresForCloud, {
-        activeFxRates: localFx,
-      }).catch((err: any) => ({
+      // MIDAS consumes only the FX sealed in the confirmed closure. Local browser
+      // FX remains a UI/cache concern and cannot alter the published snapshot.
+      const publishResult = await publishAurumOptimizableInvestmentsSnapshot(closuresForCloud).catch((err: any) => ({
         ok: false as const,
         reason: String(err?.message || 'No pude publicar el snapshot Aurum → Midas.'),
         snapshot: null,
@@ -5406,11 +5404,9 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
       !sameStringList(mergedDeletedRecordAssetMonthKeys, remoteDeletedRecordAssetMonthKeys) ||
       JSON.stringify(remoteFx) !== JSON.stringify(mergedFx);
 
-    // Keep MIDAS publish anchored to the active FX captured from local session,
-    // not merge arbitration (which may pick stale remote closure FX).
-    const publishResult = await publishAurumOptimizableInvestmentsSnapshot(mergedClosures, {
-      activeFxRates: localFx,
-    }).catch((err: any) => ({
+    // MIDAS consumes only the FX sealed in the confirmed closure. Local browser
+    // FX remains a UI/cache concern and cannot alter the published snapshot.
+    const publishResult = await publishAurumOptimizableInvestmentsSnapshot(mergedClosures).catch((err: any) => ({
       ok: false as const,
       reason: String(err?.message || 'No pude publicar el snapshot Aurum → Midas.'),
       snapshot: null,

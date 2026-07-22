@@ -87,14 +87,24 @@ const summaryFor = (records) => {
 const closures = monthKeys.map((monthKey, index) => {
   const records = recordsForMonth(monthKey, index);
   const [year, month] = monthKey.split('-').map(Number);
+  const fxRates = {
+    usdClp: 820 + index * 3,
+    eurClp: 900 + index * 4,
+    ufClp: 35_000 + index * 120,
+  };
+  const economicDate = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
   return {
     id: `e2e-closure-${monthKey}`,
     monthKey,
     closedAt: new Date(Date.UTC(year, month, 1, 12)).toISOString(),
-    fxRates: {
-      usdClp: 820 + index * 3,
-      eurClp: 900 + index * 4,
-      ufClp: 35_000 + index * 120,
+    fxRates,
+    fxMetadata: {
+      economicMonthKey: monthKey,
+      economicDate,
+      usedFxRates: fxRates,
+      rateOrigin: { usd: 'automatic-final', eur: 'automatic-final', uf: 'automatic-final' },
+      source: { usd: 'e2e-fixture', eur: 'e2e-fixture', uf: 'e2e-fixture' },
+      retrievedAt: `${economicDate}T12:00:00.000Z`,
     },
     summary: summaryFor(records),
     records,

@@ -47,6 +47,7 @@ import {
 } from './domain/model/canonicalInstrumentUniverse';
 import { resolveAurumEurUsdForMidas, resolveOperativeMasterFx, type OperativeFxResolution } from './domain/model/operativeFx';
 import { optimizableSnapshotToReference, snapshotToSimulationComposition } from './integrations/aurum/adapters';
+import { getCanonicalSnapshotEconomicSignature } from './integrations/aurum/canonicalSnapshotIdentity';
 import {
   subscribeToPublishedOptimizableInvestmentsSnapshot,
 } from './integrations/aurum/optimizableSnapshot';
@@ -2227,45 +2228,10 @@ export default function App() {
 
   const manualOptimizableDelta = manualAdjustmentImpact.currentInvestmentsDelta;
 
-  const getSnapshotSignature = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot) => {
-    const ufSnapshotClp =
-      snapshot.version === 2
-        ? snapshot.nonOptimizable?.realEstate?.ufSnapshotCLP ?? ''
-        : '';
-    const riskTotalClp =
-      snapshot.version === 2
-        ? snapshot.riskCapital?.totalCLP ?? ''
-        : '';
-    const riskClp =
-      snapshot.version === 2
-        ? snapshot.riskCapital?.clp ?? ''
-        : '';
-    const riskUsd =
-      snapshot.version === 2
-        ? snapshot.riskCapital?.usd ?? ''
-        : '';
-    const fxClpUsd =
-      snapshot.version === 2
-        ? snapshot.fxReference?.clpUsd ?? ''
-        : '';
-    const fxUsdEur =
-      snapshot.version === 2
-        ? snapshot.fxReference?.usdEur ?? ''
-        : '';
-    return [
-      snapshot.version,
-      snapshot.snapshotMonth,
-      snapshot.snapshotLabel,
-      snapshot.totalNetWorthCLP,
-      snapshot.optimizableInvestmentsCLP,
-      ufSnapshotClp,
-      riskTotalClp,
-      riskClp,
-      riskUsd,
-      fxClpUsd,
-      fxUsdEur,
-    ].join('|');
-  }, []);
+  const getSnapshotSignature = useCallback(
+    (snapshot: AurumOptimizableInvestmentsSnapshot) => getCanonicalSnapshotEconomicSignature(snapshot),
+    [],
+  );
   const computeRiskCapital = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot) => {
     const snapshotFxClpUsd = getAurumFxReferenceClpUsd(snapshot);
     const fallbackUsdSnapshotCLP = Number(
@@ -3921,6 +3887,11 @@ export default function App() {
         setPendingSnapshot(null);
         setPendingSnapshotLabel(null);
         setPendingSnapshotSignature(null);
+        // A missing/invalid canonical snapshot must not leave its former
+        // signature eligible for a new run. The existing result remains only
+        // as historical UI state while the formal gate stays blocked.
+        lastAppliedSnapshotSignatureRef.current = null;
+        setLastAppliedAurumSnapshotSignature(null);
         lastSnapshotSignatureRef.current = null;
         lastProcessedSnapshotSignatureRef.current = null;
         setLastProcessedSnapshotSignature(null);
