@@ -38,6 +38,7 @@ vi.mock('firebase/firestore', () => ({
 vi.mock('../src/services/firebase', () => ({
   getGastappConfiguredProjectId: () => 'gastapp-test',
   isGastappFirestoreConfigured: () => true,
+  isE2EFirebaseEmulatorEnabled: () => false,
   getGastappFirestore: () => firestoreMock.state.db,
 }));
 

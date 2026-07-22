@@ -77,16 +77,10 @@ export function evaluateCanonicalInputReadiness(
     return { ready: false, blockedReason: 'instrument_universe_missing' };
   }
   if (!input.aurumSnapshotAvailable) {
-    if (
-      input.aurumIntegrationStatus === 'loading'
-      || input.aurumIntegrationStatus === 'refreshing'
-      || input.aurumIntegrationStatus === 'missing'
-    ) {
-      return { ready: false, blockedReason: 'aurum_snapshot_missing' };
-    }
     if (input.aurumIntegrationStatus === 'error') {
       return { ready: false, blockedReason: 'aurum_snapshot_error' };
     }
+    return { ready: false, blockedReason: 'aurum_snapshot_missing' };
   }
   if (!input.hasEffectiveInput || !input.effectiveEngineInputHash) {
     return { ready: false, blockedReason: 'effective_input_missing' };

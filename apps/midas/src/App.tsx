@@ -680,10 +680,7 @@ function resolveCanonicalCloudHydrationReady(input: {
     input.simulationConfigHydrationStatus === 'cloud'
     && input.simulationConfigSource === 'cloud'
     && Boolean(input.simulationConfigHash);
-  const aurumReady =
-    input.aurumIntegrationStatus === 'unconfigured'
-    || input.aurumSnapshotAvailable
-    || (input.aurumIntegrationStatus !== 'loading' && input.aurumIntegrationStatus !== 'refreshing');
+  const aurumReady = input.aurumSnapshotAvailable;
   return configReady && aurumReady && Boolean(input.effectiveEngineInputHash);
 }
 

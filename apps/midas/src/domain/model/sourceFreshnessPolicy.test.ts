@@ -208,6 +208,22 @@ const base = () => ({
 {
   const policy = buildSourceFreshnessPolicy({
     ...base(),
+    aurumSnapshot: {
+      ...base().aurumSnapshot,
+      month: '2026-01',
+      // Republishing does not make an old economic snapshot current.
+      publishedAt: '2026-06-29T12:00:00.000Z',
+    },
+  });
+  assert.equal(policy.photoStatus, 'stale_snapshot');
+  assert.equal(policy.status, 'not_comparable');
+  const snapshot = policy.sources.find((entry) => entry.id === 'aurumSnapshot');
+  assert.equal(snapshot?.freshness.observedAt, '2026-01-31T12:00:00.000Z');
+}
+
+{
+  const policy = buildSourceFreshnessPolicy({
+    ...base(),
     hasReplayTrace: false,
   });
   assert.equal(policy.status, 'not_comparable');

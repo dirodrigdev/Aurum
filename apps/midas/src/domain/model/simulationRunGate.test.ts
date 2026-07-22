@@ -182,6 +182,24 @@ const base = () => ({
 (() => {
   const result = evaluateSimulationRunGate({
     ...base(),
+    aurumIntegrationStatus: 'partial',
+    aurumSnapshotAvailable: false,
+  });
+  assert.deepEqual(result, { status: 'blocked', blockedReason: 'aurum_snapshot_missing' });
+})();
+
+(() => {
+  const result = evaluateSimulationRunGate({
+    ...base(),
+    aurumIntegrationStatus: 'unconfigured',
+    aurumSnapshotAvailable: false,
+  });
+  assert.deepEqual(result, { status: 'blocked', blockedReason: 'aurum_snapshot_missing' });
+})();
+
+(() => {
+  const result = evaluateSimulationRunGate({
+    ...base(),
     aurumIntegrationStatus: 'error',
     aurumSnapshotAvailable: false,
   });

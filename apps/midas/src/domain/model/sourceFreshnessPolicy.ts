@@ -136,6 +136,25 @@ const parseIso = (value: string | null | undefined): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const monthAsEconomicAsOf = (value: string | null | undefined): string | null => {
+  const match = String(value ?? '').match(/^(\d{4})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return null;
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${match[1]}-${match[2]}-${String(lastDay).padStart(2, '0')}T12:00:00.000Z`;
+};
+
+const resolveSnapshotEconomicAsOf = (month: string | null, publishedAt: string | null): string | null => {
+  const monthEnd = monthAsEconomicAsOf(month);
+  const monthEndMs = parseIso(monthEnd);
+  const publishedAtMs = parseIso(publishedAt);
+  if (monthEndMs === null) return publishedAt;
+  if (publishedAtMs === null) return monthEnd;
+  return monthEndMs <= publishedAtMs ? monthEnd : publishedAt;
+};
+
 const dedupe = (values: Array<string | null | undefined>): string[] =>
   Array.from(new Set(values.map((value) => String(value ?? '').trim()).filter(Boolean)));
 
@@ -192,9 +211,13 @@ function buildFreshness(
   };
 }
 
-function resolvePhotoStatus(input: BuildSourceFreshnessPolicyInput, nowMs: number): SourcePolicyPhotoStatus {
-  if (!input.aurumSnapshot.hash && !input.aurumSnapshot.publishedAt) return 'missing_snapshot';
-  const parsed = parseIso(input.aurumSnapshot.publishedAt);
+function resolvePhotoStatus(
+  input: BuildSourceFreshnessPolicyInput,
+  nowMs: number,
+  economicAsOf: string | null,
+): SourcePolicyPhotoStatus {
+  if (!input.aurumSnapshot.hash && !input.aurumSnapshot.publishedAt && !input.aurumSnapshot.month) return 'missing_snapshot';
+  const parsed = parseIso(economicAsOf);
   if (parsed === null) return 'unknown';
   const ageDays = (nowMs - parsed) / (1000 * 60 * 60 * 24);
   if (!Number.isFinite(ageDays) || ageDays < 0) return 'unknown';
@@ -262,8 +285,14 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
 
   const simulationConfigFreshness = buildFreshness(input.simulationActiveV1.savedAt, nowMs, RECENT_FALLBACK_MAX_AGE_DAYS);
   const instrumentUniverseFreshness = buildFreshness(input.instrumentUniverse.savedAt, nowMs, INSTRUMENT_UNIVERSE_MAX_AGE_DAYS);
-  const snapshotFreshness = buildFreshness(input.aurumSnapshot.publishedAt, nowMs, RECENT_SNAPSHOT_MAX_AGE_DAYS);
-  const photoStatus = resolvePhotoStatus(input, nowMs);
+  // `publishedAt` is a technical publication timestamp. When the snapshot declares
+  // its closure month, freshness must reflect that economic period instead.
+  const aurumSnapshotEconomicAsOf = resolveSnapshotEconomicAsOf(
+    input.aurumSnapshot.month,
+    input.aurumSnapshot.publishedAt,
+  );
+  const snapshotFreshness = buildFreshness(aurumSnapshotEconomicAsOf, nowMs, RECENT_SNAPSHOT_MAX_AGE_DAYS);
+  const photoStatus = resolvePhotoStatus(input, nowMs, aurumSnapshotEconomicAsOf);
   const localDraftExists = Boolean(input.localDiagnostics?.persistedBaseExists);
   const localReadOnlyFallbackActive = Boolean(input.localDiagnostics?.localReadOnlyFallbackActive);
   const manualAdjustmentsCount = Number(input.capitalDerivation?.manualAdjustmentsCount ?? 0);
@@ -498,7 +527,7 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
             : input.instrumentUniverse.weightsMode === 'system-defaults'
               ? 'Universe defaults'
               : 'Mix respaldo',
-      photoStatusLabel(photoStatus, input.aurumSnapshot.publishedAt),
+      photoStatusLabel(photoStatus, aurumSnapshotEconomicAsOf),
     ].join(' · '),
     photoStatus,
     freshness: snapshotFreshness,
