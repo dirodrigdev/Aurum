@@ -4,6 +4,12 @@ import type {
   PathQualityPhaseStressV1,
 } from '../model/types';
 import { buildFixedSpendingDurations } from '../model/spendingPhases';
+import {
+  buildM8PhaseBoundaries,
+  buildM8PhaseBoundariesFromDurations,
+  type M8PhaseBoundary,
+  type M8PhaseEndYears,
+} from './phaseTimeline';
 
 export type M8PathQualityRuntimeSummary = {
   pathId: number;
@@ -82,32 +88,31 @@ const minAnnualConsumptionRatio = (monthlyRatios: number[]): number | null => {
 const buildPhaseStress = (
   monthlyRatios: number[],
   horizonMonths: number,
+  phaseEndYears?: M8PhaseEndYears,
 ): PathQualityPhaseStressV1[] => {
   if (monthlyRatios.length === 0 || horizonMonths <= 0) return [];
 
-  let durations: [number, number, number, number];
+  let boundaries: M8PhaseBoundary[];
   try {
-    durations = buildFixedSpendingDurations(horizonMonths);
+    boundaries = phaseEndYears
+      ? buildM8PhaseBoundaries(horizonMonths, phaseEndYears)
+      : buildM8PhaseBoundariesFromDurations(horizonMonths, buildFixedSpendingDurations(horizonMonths));
   } catch {
     return [];
   }
   const phases: PathQualityPhaseStressV1[] = [];
-  let phaseStartMonth = 1;
-
-  for (const [index, durationMonths] of durations.entries()) {
-    const phaseEndMonth = phaseStartMonth + durationMonths - 1;
-    const phaseRatios = monthlyRatios.slice(phaseStartMonth - 1, phaseEndMonth);
+  for (const boundary of boundaries) {
+    const phaseRatios = monthlyRatios.slice(boundary.startMonth - 1, boundary.endMonth);
     phases.push({
-      phaseIndex: index + 1,
-      startMonth: phaseStartMonth,
-      endMonth: phaseEndMonth,
+      phaseIndex: boundary.phaseIndex,
+      startMonth: boundary.startMonth,
+      endMonth: boundary.endMonth,
       monthsObserved: phaseRatios.length,
       monthsBelow85: countBelowThreshold(phaseRatios, SEVERE_RATIO_THRESHOLD),
       monthsBelow90: countBelowThreshold(phaseRatios, MODERATE_RATIO_THRESHOLD),
       maxConsecutiveMonthsBelow85: maxConsecutiveBelowThreshold(phaseRatios, SEVERE_RATIO_THRESHOLD),
       maxConsecutiveMonthsBelow90: maxConsecutiveBelowThreshold(phaseRatios, MODERATE_RATIO_THRESHOLD),
     });
-    phaseStartMonth = phaseEndMonth + 1;
   }
 
   return phases;
@@ -116,6 +121,7 @@ const buildPhaseStress = (
 export function buildPathQualityDiagnosticsFromM8Output(args: {
   pathCount: number;
   horizonMonths: number;
+  phaseEndYears?: M8PhaseEndYears;
   pathSummaries?: M8PathQualityRuntimeSummary[];
 }): PathQualityDiagnosticsV1 {
   const warnings: string[] = [];
@@ -157,7 +163,7 @@ export function buildPathQualityDiagnosticsFromM8Output(args: {
     const earlyStressMonthsBelow85 = ratios.length
       ? countBelowThreshold(ratios.slice(0, Math.min(EARLY_STRESS_WINDOW_MONTHS, horizonMonths)), SEVERE_RATIO_THRESHOLD)
       : null;
-    const phaseStress = buildPhaseStress(ratios, horizonMonths);
+    const phaseStress = buildPhaseStress(ratios, horizonMonths, args.phaseEndYears);
     const postRuinMonths = ruinMonth === null
       ? 0
       : Math.max(0, horizonMonths - ruinMonth);

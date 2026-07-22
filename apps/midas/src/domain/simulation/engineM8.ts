@@ -15,6 +15,7 @@ import {
   buildPathQualityDiagnosticsFromM8Output,
   type M8PathQualityRuntimeSummary,
 } from './pathQualityDiagnostics';
+import { resolveM8PhaseIndex } from './phaseTimeline';
 
 const ASSET_ORDER = ['eq_global', 'eq_chile', 'fi_global', 'fi_chile', 'usd_liquidity', 'clp_cash'] as const;
 type AssetKey = typeof ASSET_ORDER[number];
@@ -412,11 +413,7 @@ export const resolveM8MortgageBalanceUf = (input: M8Input, monthIndex: number): 
 };
 
 const phaseOfMonth = (input: M8Input, monthIndex: number): 1 | 2 | 3 | 4 => {
-  const yearIndex = Math.floor((monthIndex - 1) / 12) + 1;
-  if (yearIndex <= input.phase1EndYear) return 1;
-  if (yearIndex <= input.phase2EndYear) return 2;
-  if (yearIndex <= input.phase3EndYear) return 3;
-  return 4;
+  return resolveM8PhaseIndex(monthIndex, input);
 };
 
 const phaseMonthlySpend = (input: M8Input, monthIndex: number): number => {
@@ -1557,6 +1554,11 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
     pathQualityDiagnostics: buildPathQualityDiagnosticsFromM8Output({
       pathCount: input.n_paths,
       horizonMonths: months,
+      phaseEndYears: {
+        phase1EndYear: input.phase1EndYear,
+        phase2EndYear: input.phase2EndYear,
+        phase3EndYear: input.phase3EndYear,
+      },
       pathSummaries: pathQualitySummaries,
     }),
   };

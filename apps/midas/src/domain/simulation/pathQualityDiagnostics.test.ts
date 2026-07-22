@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { DEFAULT_PARAMETERS } from '../model/defaults';
 import type { M8Output } from './m8.types';
-import { fromM8Output } from './m8Adapter';
+import { fromM8Output, toM8Input } from './m8Adapter';
 import { buildPathQualityDiagnosticsFromM8Output } from './pathQualityDiagnostics';
+import { resolveCapital } from './capitalResolver';
+import { runM8 } from './engineM8';
 
 const assertNear = (actual: number | null, expected: number, epsilon = 1e-12) => {
   assert.ok(actual !== null, 'expected a numeric value');
@@ -311,6 +313,51 @@ assert.equal(continuousStress.earlyStressMonthsBelow85, 6);
 assert.equal(continuousStress.phaseStress[0]?.monthsBelow85, 6);
 assert.equal(continuousStress.phaseStress[1]?.monthsBelow85, 0);
 assert.equal(continuousStress.phaseStress[2]?.monthsBelow85, 6);
+
+const configuredBoundaries = buildPathQualityDiagnosticsFromM8Output({
+  pathCount: 1,
+  horizonMonths: 120,
+  phaseEndYears: { phase1EndYear: 1, phase2EndYear: 3, phase3EndYear: 7 },
+  pathSummaries: [{
+    pathId: 0,
+    ruined: false,
+    ruinMonth: null,
+    terminalWealthClp: 10,
+    monthlyConsumptionRatios: new Array(120).fill(1).map((value, index) =>
+      [12, 36, 72, 85].includes(index + 1) ? 0.8 : value),
+    cutStates: new Array(120).fill(0),
+    houseSaleTriggerMonth: null,
+    houseSaleMonth: null,
+    liquidWealthAfterHouseSaleClp: null,
+  }],
+}).paths[0];
+assert.deepEqual(
+  configuredBoundaries?.phaseStress.map((phase) => [phase.phaseIndex, phase.startMonth, phase.endMonth, phase.monthsObserved]),
+  [[1, 1, 12, 12], [2, 13, 36, 24], [3, 37, 84, 48], [4, 85, 120, 36]],
+);
+assert.deepEqual(
+  configuredBoundaries?.phaseStress.map((phase) => phase.monthsBelow85),
+  [1, 1, 1, 1],
+);
+
+const m8Params = structuredClone(DEFAULT_PARAMETERS);
+m8Params.simulation = { ...m8Params.simulation, nSim: 1, horizonMonths: 120, seed: 20260722, useHistoricalData: false };
+m8Params.realEstatePolicy = {
+  enabled: false,
+  triggerRunwayMonths: 36,
+  saleDelayMonths: 12,
+  saleCostPct: 0,
+  realAppreciationAnnual: 0,
+};
+const m8Input = toM8Input(m8Params, resolveCapital({ params: m8Params }));
+m8Input.phase1EndYear = 1;
+m8Input.phase2EndYear = 3;
+m8Input.phase3EndYear = 7;
+const m8Output = runM8(m8Input);
+assert.deepEqual(
+  m8Output.pathQualityDiagnostics?.paths[0]?.phaseStress.map((phase) => [phase.startMonth, phase.endMonth]),
+  [[1, 12], [13, 36], [37, 84], [85, 120]],
+);
 
 const saleMissingTrigger = buildPathQualityDiagnosticsFromM8Output({
   pathCount: 1,
