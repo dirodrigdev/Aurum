@@ -25,6 +25,11 @@ export type GastappDataRoomV2DiagnosticViewState = {
   rowsSample: GastappDataRoomV2Row[];
 };
 
+export type MidasPublicationViewState = {
+  status: 'idle' | 'publishing' | 'ok' | 'error';
+  message: string;
+};
+
 export const describeGastappDataRoomV2DiagnosticState = (
   state: GastappDataRoomV2DiagnosticViewState,
 ): string => {
@@ -40,10 +45,12 @@ interface SyncStatusSectionProps {
   syncMessage: string;
   fsDebug: string;
   gastappDataRoomV2: GastappDataRoomV2DiagnosticViewState;
+  midasPublication: MidasPublicationViewState;
   onToggle: () => void;
   onSyncNow: () => void;
   onSignOut: () => void | Promise<void>;
   onRefreshGastappDataRoomV2: () => void;
+  onRepublishMidas: () => void;
 }
 
 export const SyncStatusSection: React.FC<SyncStatusSectionProps> = ({
@@ -53,10 +60,12 @@ export const SyncStatusSection: React.FC<SyncStatusSectionProps> = ({
   syncMessage,
   fsDebug,
   gastappDataRoomV2,
+  midasPublication,
   onToggle,
   onSyncNow,
   onSignOut,
   onRefreshGastappDataRoomV2,
+  onRepublishMidas,
 }) => {
   const isOk = fsStatus.state === 'ok';
   const statusLabel =
@@ -97,6 +106,29 @@ export const SyncStatusSection: React.FC<SyncStatusSectionProps> = ({
           </div>
           {!!syncMessage && <div className="text-xs text-slate-600">{syncMessage}</div>}
           {!!fsDebug && <div className="text-xs text-slate-500 break-words">{fsDebug}</div>}
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">Publicación Aurum → MIDAS</div>
+                <div className="text-[11px] text-slate-500">Último cierre completo y trazable disponible</div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={midasPublication.status === 'publishing'}
+                onClick={onRepublishMidas}
+              >
+                {midasPublication.status === 'publishing' ? 'Publicando…' : 'Regenerar publicación MIDAS'}
+              </Button>
+            </div>
+            <div
+              className={`whitespace-pre-line text-[11px] ${
+                midasPublication.status === 'error' ? 'text-amber-700' : 'text-slate-600'
+              }`}
+            >
+              {midasPublication.message}
+            </div>
+          </div>
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 space-y-2">
             <div className="flex items-center justify-between gap-2">
               <div>

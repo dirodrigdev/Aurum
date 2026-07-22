@@ -28,6 +28,42 @@ test('local emulator session loads Dashboard without external traffic', async ({
   expect(consoleErrors, `console errors: ${consoleErrors.join(' | ')}`).toEqual([]);
 });
 
+test('authenticated Settings can regenerate the canonical MIDAS publication', async ({ page }, testInfo) => {
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+  const networkGuard = await installLocalNetworkGuard(page);
+
+  const response = await page.goto('/#/settings');
+  expect(response?.ok()).toBe(true);
+  const dismissIncompleteClosure = page.getByRole('button', { name: 'Omitir', exact: true });
+  await expect(dismissIncompleteClosure).toBeVisible({ timeout: 30_000 });
+  await dismissIncompleteClosure.click();
+  const syncSection = page.getByRole('button', { name: /Sincronización/ });
+  await expect(syncSection).toBeVisible({ timeout: 30_000 });
+  await syncSection.click();
+
+  const regenerate = page.getByRole('button', { name: 'Regenerar publicación MIDAS', exact: true });
+  await expect(regenerate).toBeVisible();
+  await expect(page.getByText(/Listo para publicar 2026-06/)).toBeVisible();
+  await regenerate.click();
+  await expect(page.getByText(/Publicado 2026-06 con FX económico al 2026-06-30/)).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('aurum-midas-publication-desktop.png'), fullPage: true });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(regenerate).toBeVisible();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-midas-publication-mobile.png'), fullPage: true });
+
+  await networkGuard.assertClean(testInfo);
+  expect(pageErrors, `page errors: ${pageErrors.join(' | ')}`).toEqual([]);
+  expect(consoleErrors, `console errors: ${consoleErrors.join(' | ')}`).toEqual([]);
+});
+
 test('Ecosystem is reachable from Aurum Dashboard and works on mobile', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const pageErrors: string[] = [];

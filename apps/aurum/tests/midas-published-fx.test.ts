@@ -4,13 +4,20 @@ import type { WealthMonthlyClosure } from '../src/services/wealthStorage';
 vi.mock('../src/services/firebase', () => ({
   auth: { currentUser: null },
 }));
+vi.mock('../../midas/src/integrations/aurum/firebase', () => ({
+  aurumDb: {},
+  aurumIntegrationConfigured: false,
+  ensureAurumIntegrationAuthPersistence: vi.fn(async () => undefined),
+  isMidasE2EFirebaseEmulatorEnabled: vi.fn(() => false),
+}));
 
 const { prepareAurumOptimizableInvestmentsSnapshot } = await import('../src/services/midasPublished');
+const { resolvePublishedSnapshotData } = await import('../../midas/src/integrations/aurum/optimizableSnapshot');
 
-const makeClosure = (usdClp: number): WealthMonthlyClosure => ({
-  id: 'c1',
-  monthKey: '2026-03',
-  closedAt: '2026-03-31T23:59:59.000Z',
+const makeClosure = (usdClp: number, monthKey = '2026-03'): WealthMonthlyClosure => ({
+  id: `c-${monthKey}`,
+  monthKey,
+  closedAt: `${monthKey}-28T23:59:59.000Z`,
   summary: {
     netByCurrency: { CLP: 1_000_000_000, USD: 0, EUR: 0, UF: 0 },
     assetsByCurrency: { CLP: 1_050_000_000, USD: 0, EUR: 0, UF: 0 },
@@ -31,8 +38,8 @@ const makeClosure = (usdClp: number): WealthMonthlyClosure => ({
     ufClp: 38_500,
   },
   fxMetadata: {
-    economicMonthKey: '2026-03',
-    economicDate: '2026-03-31',
+    economicMonthKey: monthKey,
+    economicDate: `${monthKey}-28`,
     usedFxRates: { usdClp, eurClp: 1_050, ufClp: 38_500 },
     rateOrigin: { usd: 'automatic-final', eur: 'automatic-final', uf: 'automatic-final' },
     source: { usd: 'BCCh', eur: 'BCCh', uf: 'SII' },
@@ -57,8 +64,8 @@ describe('midasPublished fxReference source-of-truth', () => {
     expect(deviceA.snapshot.fxReference?.clpUsd).toBe(985);
     expect(deviceA.snapshot.fxReference).toMatchObject({
       source: 'closure_fx_metadata',
-      sourceId: 'c1',
-      asOf: '2026-03-31',
+      sourceId: 'c-2026-03',
+      asOf: '2026-03-28',
       validationStatus: 'valid',
       schemaVersion: 1,
     });
@@ -79,10 +86,53 @@ describe('midasPublished fxReference source-of-truth', () => {
     const prepared = prepareAurumOptimizableInvestmentsSnapshot([closure], {
       activeFxRates: { usdClp: 886, eurClp: 1_020, ufClp: 38_300 },
     });
-    expect(prepared).toEqual({
-      ok: false,
-      reason: 'El cierre 2026-03 no tiene FX canónico completo y trazable para publicar hacia MIDAS.',
+    expect(prepared.ok).toBe(false);
+    if (prepared.ok) return;
+    expect(prepared.reason).toContain('El cierre 2026-03 no tiene FX canónico completo y trazable');
+    expect(prepared.selection.selectedClosureMonthKey).toBeNull();
+  });
+
+  it('publishes the latest closure when it is fully canonical', () => {
+    const prior = makeClosure(980, '2026-02');
+    const latest = makeClosure(985, '2026-03');
+    const prepared = prepareAurumOptimizableInvestmentsSnapshot([prior, latest]);
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    expect(prepared.snapshot.snapshotMonth).toBe('2026-03');
+    expect(prepared.selection.skippedClosures).toEqual([]);
+  });
+
+  it('skips an invalid latest closure and publishes the previous fully canonical closure', () => {
+    const prior = makeClosure(980, '2026-02');
+    const latest = makeClosure(985, '2026-03');
+    delete latest.fxMetadata;
+
+    const prepared = prepareAurumOptimizableInvestmentsSnapshot([prior, latest]);
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    expect(prepared.snapshot.snapshotMonth).toBe('2026-02');
+    expect(prepared.snapshot.fxReference?.asOf).toBe('2026-02-28');
+    expect(prepared.selection).toMatchObject({
+      latestClosureMonthKey: '2026-03',
+      selectedClosureMonthKey: '2026-02',
+      selectedEconomicDate: '2026-02-28',
     });
+    expect(prepared.selection.skippedClosures[0]).toMatchObject({ monthKey: '2026-03' });
+    expect(resolvePublishedSnapshotData(prepared.snapshot).status).toBe('valid');
+  });
+
+  it('does not fall back to local or live FX when no closure is fully canonical', () => {
+    const latest = makeClosure(985, '2026-03');
+    const prior = makeClosure(980, '2026-02');
+    delete latest.fxMetadata;
+    delete prior.fxMetadata;
+    const prepared = prepareAurumOptimizableInvestmentsSnapshot([latest, prior], {
+      activeFxRates: { usdClp: 1_000, eurClp: 1_100, ufClp: 40_000 },
+    });
+    expect(prepared.ok).toBe(false);
+    if (prepared.ok) return;
+    expect(prepared.selection.selectedClosureMonthKey).toBeNull();
+    expect(prepared.selection.skippedClosures.map((item) => item.monthKey)).toEqual(['2026-03', '2026-02']);
   });
 
   it('uses canonical records for non-optimizable subtotals instead of legacy byBlock when records exist', () => {

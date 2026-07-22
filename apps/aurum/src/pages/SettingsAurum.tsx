@@ -13,6 +13,7 @@ import { LabToolsSection } from '../components/settings/LabToolsSection';
 import { HistoricalFxCorrectionConsole } from '../components/settings/HistoricalFxCorrectionConsole';
 import { SyncStatusSection } from '../components/settings/SyncStatusSection';
 import type { GastappDataRoomV2DiagnosticViewState } from '../components/settings/SyncStatusSection';
+import type { MidasPublicationViewState } from '../components/settings/SyncStatusSection';
 import { TypedConfirmModal } from '../components/settings/TypedConfirmModal';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
 import { parseStrictNumber } from '../utils/numberUtils';
@@ -85,6 +86,10 @@ import {
   getGastappDataRoomV2RowsPage,
 } from '../services/dataRoom/gastappDataRoomV2Adapter';
 import { describeGastappDataRoomV2Status } from '../services/dataRoom/gastappAccessGuidance';
+import {
+  prepareAurumOptimizableInvestmentsSnapshot,
+  publishAurumOptimizableInvestmentsSnapshot,
+} from '../services/midasPublished';
 
 const CLOSING_CONFIG_STORAGE_KEY = 'aurum.closing.config.v1';
 const CLOSURE_REVIEW_PENDING_STORAGE_KEY = 'aurum.closure.review.pending.v1';
@@ -100,6 +105,27 @@ const DEFAULT_GASTAPP_V2_DIAGNOSTIC: GastappDataRoomV2DiagnosticViewState = {
   manifest: null,
   summariesSample: [],
   rowsSample: [],
+};
+
+const describeMidasPublicationReadiness = (
+  closures: WealthMonthlyClosure[],
+  syncIssue = '',
+): MidasPublicationViewState => {
+  if (syncIssue.startsWith('midas_publish_error ')) {
+    return {
+      status: 'error',
+      message: syncIssue.replace(/^midas_publish_error\s*/, ''),
+    };
+  }
+  const prepared = prepareAurumOptimizableInvestmentsSnapshot(closures);
+  if (prepared.ok === false) return { status: 'error', message: prepared.reason };
+  const skipped = prepared.selection.skippedClosures[0];
+  return {
+    status: 'idle',
+    message: skipped
+      ? `Listo para publicar ${prepared.snapshot.snapshotMonth} (fecha económica ${prepared.snapshot.fxReference?.asOf || '—'}).\n${skipped.reason}`
+      : `Listo para publicar ${prepared.snapshot.snapshotMonth} (fecha económica ${prepared.snapshot.fxReference?.asOf || '—'}).`,
+  };
 };
 
 interface ClosureReviewPendingEntry {
@@ -325,6 +351,9 @@ export const SettingsAurum: React.FC = () => {
   const [fsStatus, setFsStatus] = useState(() => getFirestoreStatus());
   const [gastappDataRoomV2Diagnostic, setGastappDataRoomV2Diagnostic] = useState<GastappDataRoomV2DiagnosticViewState>(
     DEFAULT_GASTAPP_V2_DIAGNOSTIC,
+  );
+  const [midasPublication, setMidasPublication] = useState<MidasPublicationViewState>(() =>
+    describeMidasPublicationReadiness(loadClosures(), getLastWealthSyncIssue()),
   );
   const [backupMessage, setBackupMessage] = useState('');
   const [backupDecisionState, setBackupDecisionState] = useState<BackupDecisionState>(defaultBackupDecisionState);
@@ -643,6 +672,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setFx(loadFxRates());
     setFxLiveMeta(loadFxLiveSyncMeta());
     setAvailableClosures(closuresNow);
+    setMidasPublication(describeMidasPublicationReadiness(closuresNow, getLastWealthSyncIssue()));
     setAllRecords(loadWealthRecords());
     setInvestmentInstruments(loadInvestmentInstruments());
     setFsStatus(getFirestoreStatus());
@@ -657,6 +687,32 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     }
     refreshLocalState();
     return pushed;
+  };
+
+  const regenerateMidasPublication = async () => {
+    setMidasPublication({ status: 'publishing', message: 'Validando y publicando el último cierre trazable…' });
+    const result = await publishAurumOptimizableInvestmentsSnapshot(loadClosures()).catch((error: unknown) => ({
+      ok: false as const,
+      reason: String(error instanceof Error ? error.message : error || 'No pude publicar hacia MIDAS.'),
+      snapshot: null,
+      selection: {
+        latestClosureMonthKey: null,
+        selectedClosureMonthKey: null,
+        selectedEconomicDate: null,
+        skippedClosures: [],
+      },
+    }));
+    if (result.ok === false) {
+      setMidasPublication({ status: 'error', message: result.reason });
+      return;
+    }
+    const skipped = result.selection.skippedClosures[0];
+    setMidasPublication({
+      status: 'ok',
+      message: skipped
+        ? `Publicado ${result.snapshot.snapshotMonth} con FX económico al ${result.snapshot.fxReference?.asOf || '—'}.\nSe omitió ${skipped.monthKey}: ${skipped.reason}`
+        : `Publicado ${result.snapshot.snapshotMonth} con FX económico al ${result.snapshot.fxReference?.asOf || '—'}.`,
+    });
   };
 
   const refreshBackupSnapshots = async () => {
@@ -1962,6 +2018,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         syncMessage={syncMessage}
         fsDebug={fsDebug}
         gastappDataRoomV2={gastappDataRoomV2Diagnostic}
+        midasPublication={midasPublication}
         onToggle={() => toggleSection('sync')}
         onSyncNow={() => {
           void (async () => {
@@ -1975,6 +2032,9 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         onSignOut={signOutUser}
         onRefreshGastappDataRoomV2={() => {
           void loadGastappDataRoomV2Diagnostic();
+        }}
+        onRepublishMidas={() => {
+          void regenerateMidasPublication();
         }}
       />
 
