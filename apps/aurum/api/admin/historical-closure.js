@@ -7,6 +7,7 @@ import {
   prepareHistoricalCorrection,
   previewHistoricalCorrection,
   previewHistoricalRollback,
+  reconfirmHistoricalFxMetadata,
   readHistoricalClosure,
   rollbackHistoricalCorrection,
 } from './_historicalClosureService.js';
@@ -76,6 +77,8 @@ export default async function handler(req, res) {
       });
     } else if (req.method === 'POST' && action === 'apply') {
       result = await applyHistoricalCorrection({ db, identity, input: req.body, adminContext });
+    } else if (req.method === 'POST' && action === 'reconfirm-fx-metadata') {
+      result = await reconfirmHistoricalFxMetadata({ db, identity, input: req.body, adminContext });
     } else if (req.method === 'POST' && action === 'rollback-preview') {
       result = await previewHistoricalRollback({
         db, adminContext,

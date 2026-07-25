@@ -1,4 +1,5 @@
 import { auth, isE2EFirebaseEmulatorEnabled } from './firebase';
+import type { HistoricalFxMetadataEvidence } from './historicalFxMetadataRepair';
 
 export type HistoricalFxRates = { usdClp: number; eurClp: number; ufClp: number };
 
@@ -155,6 +156,20 @@ export const previewHistoricalClosureRollback = (monthKey: string, checkpointId:
 
 export const rollbackHistoricalClosureCorrection = (input: Record<string, unknown>) =>
   request<{ operationId: string; monthKey: string; fingerprint: string; safetyBackupId: string }>('POST', 'rollback', input);
+
+export const reconfirmHistoricalFxMetadataForMidas = (input: {
+  monthKey: string;
+  expectedFingerprint: string;
+  evidence: HistoricalFxMetadataEvidence;
+  confirmationText: string;
+}) => request<{
+  status: 'applied_verified' | 'already_verified';
+  monthKey: string;
+  fingerprint: string;
+  operationId: string | null;
+  backupId: string | null;
+  verification: { fxRatesPreserved: boolean; metadataCanonical: boolean; projectId: string | null; documentPath: string };
+}>('POST', 'reconfirm-fx-metadata', input);
 
 export const downloadHistoricalBackup = (payload: Record<string, unknown>, monthKey: string) => {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');

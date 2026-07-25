@@ -288,6 +288,134 @@ export const applyHistoricalCorrection = async ({ db, identity, input, adminCont
   return { status: 'applied_verified', operationId, monthKey: input.monthKey, fingerprint: verified.fingerprint, persistedFxRates: persistedFx, persistedNetClp: verified.closure.summary?.netClp, persistedNetClpWithRisk: verified.closure.summary?.netClpWithRisk, preview: result.preview, reconciliation: result.preview.reconciliation, verification: { before: beforeVerification, after: verified.verification } };
 };
 
+const FX_KEYS = [
+  ['usd', 'usdClp'],
+  ['eur', 'eurClp'],
+  ['uf', 'ufClp'],
+];
+const FX_SERIALIZATION_TOLERANCE = 1e-9;
+const canonicalFxMetadataConfirmation = (monthKey) => `RECONFIRMO FX ${String(monthKey || '').trim().toUpperCase()}`;
+
+const validateOfficialFxEvidence = ({ monthKey, closure, evidence }) => {
+  const rates = closure?.fxRates || {};
+  if (!evidence || typeof evidence !== 'object') error('La evidencia oficial es obligatoria.', 400, 'evidence_required');
+  if (evidence.monthKey !== monthKey || evidence.economicDate !== economicDateForMonth(monthKey)) {
+    error('La evidencia no corresponde al mes económico del cierre.', 400, 'evidence_month_mismatch');
+  }
+  if (!Number.isFinite(Date.parse(String(evidence.retrievedAt || '')))) {
+    error('La evidencia oficial no tiene timestamp verificable.', 400, 'evidence_timestamp_invalid');
+  }
+  const references = evidence.references || {};
+  const mismatches = FX_KEYS.map(([key, field]) => {
+    const sealed = Number(rates[field]);
+    const reference = references[key] || {};
+    const official = Number(reference.value);
+    const difference = sealed - official;
+    const source = String(reference.source || '').trim();
+    const effectiveDate = String(reference.effectiveDate || '').trim();
+    const valid = Number.isFinite(sealed) && sealed > 0 && Number.isFinite(official) && official > 0 &&
+      Math.abs(difference) <= FX_SERIALIZATION_TOLERANCE && source && effectiveDate === economicDateForMonth(monthKey);
+    return { key, field, sealed, official, difference, source, effectiveDate, valid };
+  });
+  const invalid = mismatches.filter((item) => !item.valid);
+  if (invalid.length) {
+    const detail = invalid.map((item) => `${item.field}: sellada=${item.sealed}, oficial=${item.official}, diferencia=${item.difference}`).join('; ');
+    error(`La evidencia oficial no coincide exactamente con las FX del cierre. ${detail}`, 409, 'official_fx_mismatch');
+  }
+  return mismatches;
+};
+
+export const reconfirmHistoricalFxMetadata = async ({ db, identity, input, adminContext }) => {
+  const monthKey = String(input.monthKey || '');
+  if (normalizeConfirmationText(input.confirmationText) !== canonicalFxMetadataConfirmation(monthKey)) {
+    error(`Confirmación requerida: ${canonicalFxMetadataConfirmation(monthKey)}.`, 400, 'confirmation_mismatch');
+  }
+  const operationId = randomUUID();
+  let result = null;
+  await db.runTransaction(async (transaction) => {
+    const documentRef = rootRef(db, identity.uid);
+    const snapshot = await transaction.get(documentRef);
+    const rootData = requireRoot(snapshot);
+    const { closure, index } = locateClosure(rootData, monthKey);
+    const currentFingerprint = fingerprintValue(closure);
+    if (currentFingerprint !== String(input.expectedFingerprint || '')) {
+      error('El cierre cambió desde el diagnóstico. Vuelve a leerlo antes de confirmar.', 409, 'concurrent_modification');
+    }
+    const matches = validateOfficialFxEvidence({ monthKey, closure, evidence: input.evidence });
+    const expectedSources = Object.fromEntries(matches.map((item) => [item.key, item.source]));
+    const metadata = closure.fxMetadata || {};
+    const alreadyVerified = metadata.economicMonthKey === monthKey && metadata.economicDate === economicDateForMonth(monthKey) &&
+      FX_KEYS.every(([key, field]) => Number(metadata.usedFxRates?.[field]) === Number(closure.fxRates?.[field]) &&
+        String(metadata.source?.[key] || '').trim() === expectedSources[key]);
+    if (alreadyVerified) {
+      result = { status: 'already_verified', fingerprint: currentFingerprint, backupId: null };
+      return;
+    }
+    const backup = createBackupPackage({
+      rootData,
+      rawClosure: closure,
+      identity,
+      monthKey,
+      reason: 'Reconfirmación manual de metadata FX histórica oficial para publicación MIDAS.',
+      rootUpdateTime: updateTimeIso(snapshot),
+      operationId,
+      approvedCorrection: { type: 'midas_fx_metadata_only', evidence: input.evidence, expectedFingerprint: currentFingerprint },
+    });
+    const auditEntry = {
+      operationId,
+      repairedAt: new Date().toISOString(),
+      repairedBy: identity.email,
+      kind: 'midas_fx_metadata_reconfirmation',
+      monthKey,
+      rates: Object.fromEntries(matches.map((item) => [item.field, item.sealed])),
+      officialEvidence: input.evidence,
+      tolerance: FX_SERIALIZATION_TOLERANCE,
+      sourceDocuments: Object.fromEntries(matches.map((item) => [item.key, item.source])),
+      backupId: backup.backupId,
+      checkpointId: backup.checkpointId,
+      originalFingerprint: currentFingerprint,
+    };
+    const nextClosure = {
+      ...closure,
+      fxMetadata: {
+        ...metadata,
+        economicMonthKey: monthKey,
+        economicDate: economicDateForMonth(monthKey),
+        usedFxRates: { ...closure.fxRates },
+        suggestedFxRates: { ...closure.fxRates },
+        rateOrigin: { usd: 'automatic-final', eur: 'automatic-final', uf: 'automatic-final' },
+        source: expectedSources,
+        retrievedAt: input.evidence.retrievedAt,
+        reconciliation: { status: 'reconciled', checkedAt: auditEntry.repairedAt },
+        provenance: { kind: 'official_historical_reconfirmation', operationId, evidence: input.evidence },
+      },
+      midasFxMetadataRepairAudit: [...(Array.isArray(closure.midasFxMetadataRepairAudit) ? closure.midasFxMetadataRepairAudit : []), auditEntry].slice(-24),
+    };
+    const closures = [...rootData.closures];
+    closures[index] = nextClosure;
+    writeBackupPackage(transaction, db, identity, backup);
+    transaction.set(documentRef, { ...rootData, updatedAt: auditEntry.repairedAt, closures }, { merge: false });
+    transaction.set(auditRef(db, identity.uid, operationId), { ...auditEntry, type: 'midas-fx-metadata-reconfirmation', documentPath: documentRef.path }, { merge: false });
+    result = { status: 'applied_verified', fingerprint: fingerprintValue(nextClosure), backupId: backup.backupId };
+  });
+  const verified = await readHistoricalClosure({ db, identity, monthKey, adminContext });
+  const metadata = verified.closure.fxMetadata || {};
+  const fxRatesPreserved = FX_KEYS.every(([, field]) => Number(verified.closure.fxRates?.[field]) === Number(input.evidence.rates?.[field]));
+  const metadataCanonical = metadata.economicMonthKey === monthKey && metadata.economicDate === economicDateForMonth(monthKey) &&
+    FX_KEYS.every(([key, field]) => Number(metadata.usedFxRates?.[field]) === Number(verified.closure.fxRates?.[field]) && String(metadata.source?.[key] || '').trim());
+  if (!fxRatesPreserved || !metadataCanonical || verified.fingerprint !== result.fingerprint) {
+    error('La relectura no verificó la reparación de metadata FX.', 500, 'post_write_verification_failed');
+  }
+  return {
+    status: result.status,
+    monthKey,
+    fingerprint: verified.fingerprint,
+    operationId: result.status === 'applied_verified' ? operationId : null,
+    backupId: result.backupId,
+    verification: { fxRatesPreserved, metadataCanonical, projectId: adminContext?.projectId || null, documentPath: `aurum_wealth/${identity.uid}` },
+  };
+};
+
 export const previewHistoricalRollback = async ({ db, identity, monthKey, checkpointId }) => {
   const [read, checkpointSnapshot] = await Promise.all([
     readHistoricalClosure({ db, identity, monthKey }),

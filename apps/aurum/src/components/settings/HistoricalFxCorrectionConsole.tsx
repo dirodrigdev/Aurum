@@ -17,6 +17,7 @@ import {
   type HistoricalPreview,
   type HistoricalRollbackPreview,
 } from '../../services/historicalClosureCorrectionClient';
+import { MidasHistoricalFxMetadataRepair } from './MidasHistoricalFxMetadataRepair';
 
 const ADMIN_EMAIL = 'diegorp.1978@gmail.com';
 const MONTHS = ['2026-05', '2026-06'];
@@ -328,6 +329,7 @@ export const HistoricalFxCorrectionConsole: React.FC<{
           {resultState === 'applied_verified' && prepared && verifiedResult && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 space-y-2"><div className="text-sm font-semibold text-emerald-950">Corrección aplicada y verificada</div><div className="grid gap-1 text-[11px] text-emerald-900 sm:grid-cols-2">{rateRows.map(([, label, field]) => <div key={field}>{label}: {number(preview?.currentFxRates[field])} → {number(verifiedResult.persistedFxRates[field])}</div>)}<div>Sin CapRiesgo: {formatCurrency(preview!.withoutRisk.before, 'CLP')} → {formatCurrency(verifiedResult.persistedNetClp, 'CLP')}</div><div>Con CapRiesgo: {formatCurrency(preview!.withRisk.before, 'CLP')} → {formatCurrency(verifiedResult.persistedNetClpWithRisk, 'CLP')}</div></div><div className="text-[11px] text-emerald-900">Reconciliación: OK · Operation ID: {verifiedResult.operationId}</div><div className="text-[10px] text-emerald-800">Proyecto: {verifiedResult.verification.after.projectId} · documento: {verifiedResult.verification.after.documentPath} · persistido: {verifiedResult.verification.after.updateTime}</div><div className="border-t border-emerald-200 pt-2"><Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void inspectRollback()}>{busy === 'rollback-preview' ? 'Revisando...' : 'Revisar restauración'}</Button>{rollbackPreview && <><div className="mt-2 text-[11px] text-slate-700">USD/CLP {number(rollbackPreview.currentFxRates.usdClp)} → {number(rollbackPreview.restoredFxRates.usdClp)} · neto {formatCurrency(rollbackPreview.currentNetClp, 'CLP')} → {formatCurrency(rollbackPreview.restoredNetClp, 'CLP')}</div>{Math.abs(rollbackPreview.currentNetClp - rollbackPreview.restoredNetClp) > 0.01 && <><div className="mt-2 text-[11px] font-semibold">Escribe: {rollbackText}</div><Input aria-label="Confirmación exacta de rollback" className="h-8 text-xs" value={rollbackConfirmation} onChange={(event) => setRollbackConfirmation(event.target.value)} /><Button className="mt-2" size="sm" variant="danger" disabled={busy !== null || !isHistoricalConfirmationValid(rollbackConfirmation, monthKey, true)} onClick={() => void rollback()}>{busy === 'rollback' ? 'Restaurando...' : 'Restaurar desde checkpoint'}</Button></>}</>}</div></div>}
         </div>
       )}
+      <MidasHistoricalFxMetadataRepair onApplied={onApplied} />
     </Card>
   );
 };
