@@ -92,6 +92,20 @@ export type AurumOptimizableClosureSelection = {
   }>;
 };
 
+export type AurumFxMetadataRepairResult =
+  | {
+      ok: true;
+      closures: WealthMonthlyClosure[];
+      repairedClosureMonthKey: string | null;
+      evidenceVersionId: string | null;
+      economicDate: string | null;
+    }
+  | {
+      ok: false;
+      reason: string;
+      closures: WealthMonthlyClosure[];
+    };
+
 const compareClosuresByMonthDesc = (a: WealthMonthlyClosure, b: WealthMonthlyClosure) =>
   b.monthKey.localeCompare(a.monthKey);
 
@@ -238,6 +252,123 @@ const extractRiskCapital = (closure: WealthMonthlyClosure) => {
 };
 
 const sameRate = (left: unknown, right: unknown) => Number(left) === Number(right);
+
+const hasCompletePositiveFxRates = (rates: WealthMonthlyClosure['fxRates'] | undefined) =>
+  Boolean(
+    rates &&
+      asFiniteOrNull(rates.usdClp) !== null && asFiniteOrNull(rates.usdClp)! > 0 &&
+      asFiniteOrNull(rates.eurClp) !== null && asFiniteOrNull(rates.eurClp)! > 0 &&
+      asFiniteOrNull(rates.ufClp) !== null && asFiniteOrNull(rates.ufClp)! > 0,
+  );
+
+const hasTraceableMetadataForRates = (
+  closure: Pick<WealthMonthlyClosure, 'monthKey' | 'fxRates' | 'fxMetadata'>,
+) => {
+  const metadata = closure.fxMetadata;
+  const rates = closure.fxRates;
+  if (!metadata || !rates || !hasCompletePositiveFxRates(rates)) return false;
+  if (metadata.economicMonthKey !== closure.monthKey || !metadata.economicDate.startsWith(`${closure.monthKey}-`)) {
+    return false;
+  }
+  if (!metadata.retrievedAt || !Number.isFinite(Date.parse(metadata.retrievedAt))) return false;
+  if (
+    !sameRate(metadata.usedFxRates?.usdClp, rates.usdClp) ||
+    !sameRate(metadata.usedFxRates?.eurClp, rates.eurClp) ||
+    !sameRate(metadata.usedFxRates?.ufClp, rates.ufClp)
+  ) return false;
+  return Boolean(
+    metadata.rateOrigin?.usd && metadata.rateOrigin?.eur && metadata.rateOrigin?.uf &&
+      String(metadata.source?.usd || '').trim() &&
+      String(metadata.source?.eur || '').trim() &&
+      String(metadata.source?.uf || '').trim(),
+  );
+};
+
+const sameFxRates = (left: WealthMonthlyClosure['fxRates'], right: WealthMonthlyClosure['fxRates']) =>
+  Boolean(
+    left && right &&
+      sameRate(left.usdClp, right.usdClp) &&
+      sameRate(left.eurClp, right.eurClp) &&
+      sameRate(left.ufClp, right.ufClp),
+  );
+
+/**
+ * Repairs a legacy closure only from an archived version of that exact closure.
+ * It never fetches rates, derives a source, or borrows provenance from another
+ * month. The caller is responsible for persisting this result from an explicit
+ * user action.
+ */
+export const repairLatestAurumClosureFxMetadataForMidas = (
+  closures: WealthMonthlyClosure[],
+): AurumFxMetadataRepairResult => {
+  const orderedClosures = [...closures].sort(compareClosuresByMonthDesc);
+  const target = orderedClosures.find((closure) =>
+    asFiniteOrNull(closure.summary?.investmentClp) !== null &&
+    (asFiniteOrNull(closure.summary?.netClp) ?? asFiniteOrNull(closure.summary?.netConsolidatedClp)) !== null,
+  );
+  if (!target) {
+    return {
+      ok: true,
+      closures,
+      repairedClosureMonthKey: null,
+      evidenceVersionId: null,
+      economicDate: null,
+    };
+  }
+  if (extractFxReference(target)) {
+    return {
+      ok: true,
+      closures,
+      repairedClosureMonthKey: null,
+      evidenceVersionId: null,
+      economicDate: null,
+    };
+  }
+  if (!hasCompletePositiveFxRates(target.fxRates)) {
+    return {
+      ok: false,
+      closures,
+      reason: `El cierre ${target.monthKey} no se puede reparar: faltan una o más fxRates históricas válidas (USD/CLP, EUR/CLP, UF/CLP).`,
+    };
+  }
+
+  const evidence = (target.previousVersions || []).find((version) =>
+    version.monthKey === target.monthKey &&
+    sameFxRates(version.fxRates, target.fxRates) &&
+    hasTraceableMetadataForRates(version),
+  );
+  if (!evidence?.fxMetadata) {
+    return {
+      ok: false,
+      closures,
+      reason: `El cierre ${target.monthKey} no se puede reparar: falta una versión histórica del mismo cierre con las mismas FX y metadata trazable completa (fecha económica, origen, fuente y timestamp).`,
+    };
+  }
+
+  const metadata = evidence.fxMetadata;
+  const repairedClosure: WealthMonthlyClosure = {
+    ...target,
+    fxMetadata: {
+      ...metadata,
+      usedFxRates: { ...target.fxRates! },
+      rateOrigin: { ...metadata.rateOrigin },
+      source: { ...metadata.source },
+      suggestedFxRates: metadata.suggestedFxRates ? { ...metadata.suggestedFxRates } : undefined,
+      previousClosureFxRates: metadata.previousClosureFxRates ? { ...metadata.previousClosureFxRates } : undefined,
+      reconciliation: metadata.reconciliation ? { ...metadata.reconciliation } : undefined,
+    },
+  };
+  const nextClosures = closures.map((closure) =>
+    closure.monthKey === target.monthKey ? repairedClosure : closure,
+  );
+  return {
+    ok: true,
+    closures: nextClosures,
+    repairedClosureMonthKey: target.monthKey,
+    evidenceVersionId: evidence.id,
+    economicDate: metadata.economicDate,
+  };
+};
 
 /**
  * MIDAS receives the closure's economic FX, never the browser's current FX cache.

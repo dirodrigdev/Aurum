@@ -11,7 +11,10 @@ vi.mock('../../midas/src/integrations/aurum/firebase', () => ({
   isMidasE2EFirebaseEmulatorEnabled: vi.fn(() => false),
 }));
 
-const { prepareAurumOptimizableInvestmentsSnapshot } = await import('../src/services/midasPublished');
+const {
+  prepareAurumOptimizableInvestmentsSnapshot,
+  repairLatestAurumClosureFxMetadataForMidas,
+} = await import('../src/services/midasPublished');
 const { resolvePublishedSnapshotData } = await import('../../midas/src/integrations/aurum/optimizableSnapshot');
 
 const makeClosure = (usdClp: number, monthKey = '2026-03'): WealthMonthlyClosure => ({
@@ -133,6 +136,50 @@ describe('midasPublished fxReference source-of-truth', () => {
     if (prepared.ok) return;
     expect(prepared.selection.selectedClosureMonthKey).toBeNull();
     expect(prepared.selection.skippedClosures.map((item) => item.monthKey)).toEqual(['2026-03', '2026-02']);
+  });
+
+  it('repairs a legacy closure only from matching historical FX metadata and preserves snapshotMonth', () => {
+    const closure = makeClosure(985, '2026-06');
+    const evidence = {
+      ...closure,
+      id: 'c-2026-06-historical-version',
+      fxMetadata: { ...closure.fxMetadata!, retrievedAt: '2026-07-03T09:00:00.000Z' },
+    };
+    delete closure.fxMetadata;
+    closure.previousVersions = [evidence];
+
+    const repaired = repairLatestAurumClosureFxMetadataForMidas([closure]);
+    expect(repaired.ok).toBe(true);
+    if (!repaired.ok) return;
+    expect(repaired.repairedClosureMonthKey).toBe('2026-06');
+    expect(repaired.evidenceVersionId).toBe('c-2026-06-historical-version');
+    const prepared = prepareAurumOptimizableInvestmentsSnapshot(repaired.closures);
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    expect(prepared.snapshot.snapshotMonth).toBe('2026-06');
+    expect(prepared.snapshot.fxReference).toMatchObject({
+      sourceId: 'c-2026-06',
+      asOf: '2026-06-28',
+      rateOrigin: { usd: 'automatic-final', eur: 'automatic-final', uf: 'automatic-final' },
+      rateSource: { usd: 'BCCh', eur: 'BCCh', uf: 'SII' },
+    });
+    expect(resolvePublishedSnapshotData(prepared.snapshot).status).toBe('valid');
+  });
+
+  it('rejects repair when the historical version does not prove source provenance and never uses active FX', () => {
+    const closure = makeClosure(985, '2026-06');
+    const evidence = { ...closure, id: 'c-2026-06-incomplete-evidence' };
+    delete evidence.fxMetadata!.source;
+    delete closure.fxMetadata;
+    closure.previousVersions = [evidence];
+
+    const repaired = repairLatestAurumClosureFxMetadataForMidas([closure]);
+    expect(repaired.ok).toBe(false);
+    if (repaired.ok) return;
+    expect(repaired.reason).toContain('metadata trazable completa');
+    expect(prepareAurumOptimizableInvestmentsSnapshot(repaired.closures, {
+      activeFxRates: { usdClp: 1_000, eurClp: 1_100, ufClp: 40_000 },
+    }).ok).toBe(false);
   });
 
   it('uses canonical records for non-optimizable subtotals instead of legacy byBlock when records exist', () => {

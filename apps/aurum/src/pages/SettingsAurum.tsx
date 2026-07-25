@@ -89,6 +89,7 @@ import { describeGastappDataRoomV2Status } from '../services/dataRoom/gastappAcc
 import {
   prepareAurumOptimizableInvestmentsSnapshot,
   publishAurumOptimizableInvestmentsSnapshot,
+  repairLatestAurumClosureFxMetadataForMidas,
 } from '../services/midasPublished';
 
 const CLOSING_CONFIG_STORAGE_KEY = 'aurum.closing.config.v1';
@@ -690,8 +691,30 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
   };
 
   const regenerateMidasPublication = async () => {
-    setMidasPublication({ status: 'publishing', message: 'Validando y publicando el último cierre trazable…' });
-    const result = await publishAurumOptimizableInvestmentsSnapshot(loadClosures()).catch((error: unknown) => ({
+    setMidasPublication({ status: 'publishing', message: 'Verificando la trazabilidad FX histórica y publicando…' });
+    const repair = repairLatestAurumClosureFxMetadataForMidas(loadClosures());
+    if (repair.ok === false) {
+      console.info('[FX TRACE][Aurum repair] metadata_repair_blocked', { reason: repair.reason });
+      setMidasPublication({ status: 'error', message: repair.reason });
+      return;
+    }
+    if (repair.repairedClosureMonthKey) {
+      console.info('[FX TRACE][Aurum repair] metadata_repaired_from_historical_version', {
+        closureMonthKey: repair.repairedClosureMonthKey,
+        evidenceVersionId: repair.evidenceVersionId,
+        economicDate: repair.economicDate,
+      });
+      saveClosures(repair.closures, { skipCloudSync: true });
+      const synced = await syncWealthNow();
+      if (!synced) {
+        setMidasPublication({
+          status: 'error',
+          message: `Reparé localmente la metadata FX de ${repair.repairedClosureMonthKey}, pero no pude confirmarla en Aurum. Revisa la sincronización antes de publicar hacia MIDAS.`,
+        });
+        return;
+      }
+    }
+    const result = await publishAurumOptimizableInvestmentsSnapshot(repair.closures).catch((error: unknown) => ({
       ok: false as const,
       reason: String(error instanceof Error ? error.message : error || 'No pude publicar hacia MIDAS.'),
       snapshot: null,
@@ -710,8 +733,8 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setMidasPublication({
       status: 'ok',
       message: skipped
-        ? `Publicado ${result.snapshot.snapshotMonth} con FX económico al ${result.snapshot.fxReference?.asOf || '—'}.\nSe omitió ${skipped.monthKey}: ${skipped.reason}`
-        : `Publicado ${result.snapshot.snapshotMonth} con FX económico al ${result.snapshot.fxReference?.asOf || '—'}.`,
+        ? `Publicado ${result.snapshot.snapshotMonth} con FX económico al ${result.snapshot.fxReference?.asOf || '—'} (snapshotMonth ${result.snapshot.snapshotMonth}).\nSe omitió ${skipped.monthKey}: ${skipped.reason}`
+        : `Publicado ${result.snapshot.snapshotMonth} con FX económico al ${result.snapshot.fxReference?.asOf || '—'} (snapshotMonth ${result.snapshot.snapshotMonth}).`,
     });
   };
 
