@@ -12,7 +12,7 @@ import {
   getUserScopedSimulationConfigPath,
   shouldSeedUserScopedSimulationConfig,
 } from './simulationConfigCanonical';
-import { buildBackupMetadata, type BackupMetadata } from '../../domain/model/backupMetadata';
+import { buildBackupMetadata, selectBestBackupCandidate, type BackupMetadata } from '../../domain/model/backupMetadata';
 
 export const LEGACY_SIMULATION_CONFIG_COLLECTION = 'midas_config';
 export const SIMULATION_CONFIG_COLLECTION = 'midas_config';
@@ -267,13 +267,27 @@ async function readPersistedConfigDocument(input: {
       };
     }
     const data = snap.data() as PersistedSimulationConfigDocument & { updatedAt?: unknown };
+    const candidates = [data.active, data.previous]
+      .filter(isPersistedVersion)
+      .map((version) => ({
+        value: version,
+        metadata: version.backupMetadata ?? buildBackupMetadata({
+          sourceMode: 'cloud',
+          capturedAt: version.savedAt,
+          payloadHash: version.hash,
+          configRevision: 'simulationActiveV1:v1',
+          rejectedReason: version === data.active ? null : 'legacy_previous_candidate',
+        }),
+      }));
+    const selected = selectBestBackupCandidate(candidates);
+    const selectedActive = selected?.value ?? null;
     const diagnostics = buildDiagnosticsFromDocument({
-      data,
+      data: { ...data, active: selectedActive },
       exists: true,
       readStatus: 'loaded',
       path: input.path,
     });
-    if (!isPersistedVersion(data.active)) {
+    if (!selectedActive) {
       return {
         ok: false,
         reason: 'active_payload_invalid',
@@ -284,7 +298,7 @@ async function readPersistedConfigDocument(input: {
         },
       };
     }
-    const parsed = parseParams(data.active);
+    const parsed = parseParams(selectedActive);
     if (!parsed) {
       return {
         ok: false,
@@ -296,7 +310,7 @@ async function readPersistedConfigDocument(input: {
         },
       };
     }
-    return { ok: true, params: parsed, active: data.active, diagnostics };
+    return { ok: true, params: parsed, active: selectedActive, diagnostics };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     return {

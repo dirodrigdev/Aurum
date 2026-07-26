@@ -8,7 +8,7 @@ import {
   type InstrumentUniverseSnapshot,
 } from '../../domain/instrumentUniverse';
 import { aurumAuth, aurumDb, aurumIntegrationConfigured, ensureAurumIntegrationAuthPersistence } from '../aurum/firebase';
-import { buildBackupMetadata, type BackupMetadata } from '../../domain/model/backupMetadata';
+import { buildBackupMetadata, selectBestBackupCandidate, type BackupMetadata } from '../../domain/model/backupMetadata';
 
 export const INSTRUMENT_UNIVERSE_COLLECTION = 'midas_config';
 export const INSTRUMENT_UNIVERSE_DOC_ID = 'instrumentUniverseV1';
@@ -145,8 +145,23 @@ export async function loadActiveInstrumentUniverseFromFirestore(): Promise<LoadP
     const snap = await getDoc(docRef);
     if (!snap.exists()) return { ok: false, reason: 'active_not_found' };
     const data = snap.data() as PersistedInstrumentUniverseDocument;
-    const active = data.active;
-    if (!isPersistedVersion(active)) return { ok: false, reason: 'active_payload_missing_or_invalid_shape' };
+    const selected = selectBestBackupCandidate(
+      [data.active, data.previous]
+        .filter(isPersistedVersion)
+        .map((version) => ({
+          value: version,
+          metadata: version.backupMetadata ?? buildBackupMetadata({
+            sourceMode: 'cloud',
+            economicDate: version.savedAt,
+            capturedAt: version.savedAt,
+            payloadHash: version.hash,
+            configRevision: 'instrumentUniverseV1:v1',
+            rejectedReason: version === data.active ? null : 'legacy_previous_candidate',
+          }),
+        })),
+    );
+    const active = selected?.value ?? null;
+    if (!active) return { ok: false, reason: 'active_payload_missing_or_invalid_shape' };
     const snapshot = parseStoredInstrumentUniverseSnapshot(active.payloadJson);
     if (!snapshot) return { ok: false, reason: 'active_payload_failed_validation' };
     return { ok: true, snapshot: { ...snapshot, savedAt: active.savedAt }, active };
