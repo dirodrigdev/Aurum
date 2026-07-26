@@ -586,6 +586,8 @@ assert(source.includes('Hay una simulación temporal activa. Cambiar el Modelo B
 assert(source.includes('Editar Modelo Base'));
 assert(source.includes('Borrador local: no modifica la simulación ni cloud hasta confirmar el guardado.'));
 assert(source.includes('Horizonte (años)'));
+assert(source.includes("const [modelBaseHorizonYearsDraft, setModelBaseHorizonYearsDraft] = useState('');"));
+assert(source.includes('if (!Number.isInteger(nextYears) || nextYears <= 0) return;'));
 assert(source.includes('Fee anual'));
 assert(source.includes('Guardar cambios'));
 assert(source.includes('Escribe CONFIRMAR para guardar'));
@@ -594,6 +596,7 @@ assert(source.includes('Bucket months'));
 assert(source.includes("const mixLevel = mixSourceTone === 'ok'"));
 assert(!source.includes("weightsSourceMode === 'instrument-universe'"));
 assert(source.includes('<SourceBadge label={mixSourceCompactLabel} tone={mixSourceTone} />'));
+assert(source.includes("universeSourceOrigin === 'firestore'\n                ? null"));
 assert(source.includes('id="midas-data-trust"'));
 assert(source.includes("window.addEventListener('midas:focus-data-trust', focusDataTrust)"));
 assert(source.includes('Cloud canónico'));

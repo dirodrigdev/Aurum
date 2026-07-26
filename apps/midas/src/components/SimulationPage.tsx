@@ -860,6 +860,7 @@ export function SimulationPage({
   const [dataTrustOpen, setDataTrustOpen] = useState(false);
   const [modelBaseOpen, setModelBaseOpen] = useState(false);
   const [modelBaseDraft, setModelBaseDraft] = useState<ModelParameters | null>(null);
+  const [modelBaseHorizonYearsDraft, setModelBaseHorizonYearsDraft] = useState('');
   const [modelBaseAwaitingConfirmation, setModelBaseAwaitingConfirmation] = useState(false);
   const [modelBaseConfirmation, setModelBaseConfirmation] = useState('');
   const [modelBaseSaveError, setModelBaseSaveError] = useState<string | null>(null);
@@ -947,12 +948,14 @@ export function SimulationPage({
       ...baseModelParams,
       spendingPhases: normalizeModelSpendingPhases(baseModelParams),
     }));
+    setModelBaseHorizonYearsDraft(String(Math.round(baseModelParams.simulation.horizonMonths / 12)));
     setModelBaseConfirmation('');
     setModelBaseAwaitingConfirmation(false);
     setModelBaseSaveError(null);
   }, [baseModelParams]);
   const cancelModelBaseEdit = useCallback(() => {
     setModelBaseDraft(null);
+    setModelBaseHorizonYearsDraft('');
     setModelBaseConfirmation('');
     setModelBaseAwaitingConfirmation(false);
     setModelBaseSaveError(null);
@@ -972,13 +975,15 @@ export function SimulationPage({
       setModelBaseSaveError('Escribe CONFIRMAR para guardar el nuevo Modelo Base.');
       return;
     }
+    const horizonYears = Number(modelBaseHorizonYearsDraft);
     const horizonMonths = Number(modelBaseDraft.simulation?.horizonMonths ?? 0);
     const nSim = Number(modelBaseDraft.simulation?.nSim ?? 0);
     const seed = Number(modelBaseDraft.simulation?.seed ?? 0);
     const bucketMonths = Number(modelBaseDraft.bucketMonths ?? 0);
     const feeAnnual = Number(modelBaseDraft.feeAnnual ?? NaN);
     const phases = normalizeModelSpendingPhases(modelBaseDraft);
-    const invalid = !Number.isInteger(horizonMonths) || horizonMonths <= 0 || horizonMonths % 12 !== 0
+    const invalid = !Number.isInteger(horizonYears) || horizonYears <= 0
+      || !Number.isInteger(horizonMonths) || horizonMonths <= 0 || horizonMonths % 12 !== 0
       || !Number.isInteger(nSim) || nSim < 100
       || !Number.isInteger(seed) || seed <= 0
       || !Number.isInteger(bucketMonths) || bucketMonths <= 0
@@ -997,9 +1002,10 @@ export function SimulationPage({
       return;
     }
     setModelBaseDraft(null);
+    setModelBaseHorizonYearsDraft('');
     setModelBaseConfirmation('');
     setModelBaseAwaitingConfirmation(false);
-  }, [modelBaseConfirmation, modelBaseDraft, onCommitModelBase]);
+  }, [modelBaseConfirmation, modelBaseDraft, modelBaseHorizonYearsDraft, onCommitModelBase]);
   const baseReturn = useMemo(() => computeWeightedReturn(params), [params]);
   const baseYears = Math.round(baseModelParams.simulation.horizonMonths / 12);
   const baseCapital = params.capitalInitial;
@@ -1983,7 +1989,9 @@ export function SimulationPage({
             ? 'Error leyendo Instrument Universe cloud.'
             : universeSourceOrigin === 'cache-local'
               ? 'El mix aperturado por instrumento está usando copia local.'
-              : 'El mix aperturado por instrumento está usando versión interna de respaldo.'
+              : universeSourceOrigin === 'firestore'
+                ? null
+                : 'El mix aperturado por instrumento está usando versión interna de respaldo.'
     : isLegacyInstrumentUniverseMode(weightsSourceMode)
       ? 'Legacy recovery está activa. No es una fuente oficial de Instrument Universe V1.'
       : weightsSourceMode === 'system-defaults'
@@ -3704,7 +3712,7 @@ export function SimulationPage({
                 Borrador local: no modifica la simulación ni cloud hasta confirmar el guardado.
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(4, minmax(0,1fr))', gap: 8 }}>
-                <label style={{ display: 'grid', gap: 4 }}><span style={{ color: T.textMuted, fontSize: 10 }}>Horizonte (años)</span><input type="number" min="1" step="1" value={Math.round(modelBaseDraft.simulation.horizonMonths / 12)} onChange={(e) => updateModelBaseDraft((current) => { const next = { ...current, simulation: { ...current.simulation, horizonMonths: Number(e.target.value) * 12 } }; return { ...next, spendingPhases: normalizeModelSpendingPhases(next) }; })} /></label>
+                <label style={{ display: 'grid', gap: 4 }}><span style={{ color: T.textMuted, fontSize: 10 }}>Horizonte (años)</span><input type="number" min="1" step="1" value={modelBaseHorizonYearsDraft} onChange={(e) => { const nextYearsRaw = e.target.value; setModelBaseHorizonYearsDraft(nextYearsRaw); const nextYears = Number(nextYearsRaw); if (!Number.isInteger(nextYears) || nextYears <= 0) return; updateModelBaseDraft((current) => { const next = { ...current, simulation: { ...current.simulation, horizonMonths: nextYears * 12 } }; return { ...next, spendingPhases: normalizeModelSpendingPhases(next) }; }); }} /></label>
                 <label style={{ display: 'grid', gap: 4 }}><span style={{ color: T.textMuted, fontSize: 10 }}>Monte Carlo</span><input type="number" min="100" step="100" value={modelBaseDraft.simulation.nSim} onChange={(e) => updateModelBaseDraft((current) => ({ ...current, simulation: { ...current.simulation, nSim: Number(e.target.value) } }))} /></label>
                 <label style={{ display: 'grid', gap: 4 }}><span style={{ color: T.textMuted, fontSize: 10 }}>Seed</span><input type="number" min="1" step="1" value={modelBaseDraft.simulation.seed} onChange={(e) => updateModelBaseDraft((current) => ({ ...current, simulation: { ...current.simulation, seed: Number(e.target.value) } }))} /></label>
                 <label style={{ display: 'grid', gap: 4 }}><span style={{ color: T.textMuted, fontSize: 10 }}>Bucket months</span><input type="number" min="1" step="1" value={modelBaseDraft.bucketMonths ?? ''} onChange={(e) => updateModelBaseDraft((current) => ({ ...current, bucketMonths: Number(e.target.value) }))} /></label>
