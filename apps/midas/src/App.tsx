@@ -82,6 +82,7 @@ import {
   type SimulationConfigHydrationStatus,
 } from './integrations/midas/simulationConfigCanonical';
 import { buildM8InputFingerprint, type M8InputFingerprint } from './domain/model/m8InputFingerprint';
+import type { SourceFreshnessPolicy } from './domain/model/sourceFreshnessPolicy';
 import { M8_ENGINE_REVISION } from './domain/simulation/m8EngineRevision';
 import {
   buildSimulationActionStatus,
@@ -4796,6 +4797,24 @@ export default function App() {
   const headerBlockingReasons = resultConfidence.reasons.filter((item) => item.severity === 'blocking');
   const headerHasOnlyRunResultBlockingReasons = headerBlockingReasons.length > 0 && headerBlockingReasons.every((item) => item.source === 'runResult');
   const headerShowsStaleResult = heroPhase === 'stale' || simulationInputSync.status === 'stale' || (resultConfidence.status === 'not_decisional' && headerHasOnlyRunResultBlockingReasons);
+  const headerSourcePolicy = useMemo(() => (
+    (m8InputFingerprint.diagnosticInput.sourcePolicy as SourceFreshnessPolicy | undefined)
+      ?? ((m8InputFingerprint.diagnosticInput.replayTrace as { sourcePolicy?: SourceFreshnessPolicy } | undefined)?.sourcePolicy)
+      ?? null
+  ), [m8InputFingerprint]);
+  const headerFxIsCanonical = snapshotApplied
+    && operativeFxResolution.usingAurumCurrent
+    && Number.isFinite(aurumFxSpotUsdEur)
+    && Number(aurumFxSpotUsdEur) > 0;
+  const headerDataTrustVerdict = headerSourcePolicy
+    ? headerSourcePolicy.status === 'canonical_pure' && headerFxIsCanonical
+      ? { label: 'Online', tone: 'ok' as const }
+      : headerSourcePolicy.status === 'using_recent_fallback'
+        ? { label: 'Respaldo reciente', tone: 'warning' as const }
+        : headerSourcePolicy.status === 'canonical_with_warnings'
+          ? { label: 'Respaldo antiguo', tone: 'warning' as const }
+          : { label: 'No comparable', tone: 'alert' as const }
+    : null;
   const headerVisualStatus = useMemo(() => buildSimulationVisualStatus({
     inputSyncStatus: simulationInputSync.status,
     hasVisibleScenarioChanges,
@@ -4820,6 +4839,8 @@ export default function App() {
     ? canonicalInputBlockDisplay.confidenceLabel
     : headerShowsStaleResult
     ? 'Recalcular'
+    : headerDataTrustVerdict
+      ? headerDataTrustVerdict.label
     : localReadOnlyCloudFallbackEnabled && !headerShowsDefinitiveNumber
       ? 'Revisión local'
     : headerVisualStatus.label;
@@ -4827,7 +4848,11 @@ export default function App() {
     ? T.warning
     : headerShowsStaleResult
     ? T.warning
-    : headerVisualStatus.status === 'pending'
+      : headerDataTrustVerdict?.tone === 'alert'
+        ? T.negative
+        : headerDataTrustVerdict?.tone === 'warning'
+          ? T.warning
+      : headerVisualStatus.status === 'pending'
         ? T.warning
         : headerVisualStatus.status === 'error'
           ? T.negative

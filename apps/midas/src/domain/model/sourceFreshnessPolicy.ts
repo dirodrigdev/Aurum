@@ -117,8 +117,12 @@ const EXPIRED_EFFECTIVE_SOURCE_WARNING_LABELS: Record<string, string> = {
   aurumSnapshot: 'aurum_snapshot_effective_source_expired',
 };
 
-const RECENT_FALLBACK_MAX_AGE_DAYS = 14;
-const INSTRUMENT_UNIVERSE_MAX_AGE_DAYS = 60;
+// Product freshness windows for canonical backups.  These are deliberately
+// independent from the generic presentation buckets above: a source can look
+// recent in the UI while already being too old for official comparability.
+const RECENT_FALLBACK_MAX_AGE_DAYS = 180;
+const INSTRUMENT_UNIVERSE_MAX_AGE_DAYS = 180;
+const FRESH_BACKUP_MAX_AGE_DAYS = 90;
 const CURRENT_SNAPSHOT_MAX_AGE_DAYS = 45;
 const RECENT_SNAPSHOT_MAX_AGE_DAYS = 120;
 const TECHNICAL_NOTE_LABELS: Record<string, string> = {
@@ -418,6 +422,30 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
   const effectiveSources = sources.map(addExpiredEffectiveSourceWarning);
 
   const forbiddenSourcesUsed = dedupe([
+    simulationConfigFreshness.expired
+      ? 'base_model_expired'
+      : null,
+    isOfficialInstrumentUniverseMode(input.instrumentUniverse.weightsMode)
+      && instrumentUniverseFreshness.expired
+      ? 'instrument_universe_expired'
+      : null,
+    input.simulationActiveV1.source !== 'cloud'
+      && (simulationConfigFreshness.expired || (simulationConfigFreshness.ageDays !== null && simulationConfigFreshness.ageDays > FRESH_BACKUP_MAX_AGE_DAYS))
+      ? 'simulation_config_backup_stale'
+      : null,
+    input.instrumentUniverse.source !== 'cloud'
+      && isOfficialInstrumentUniverseMode(input.instrumentUniverse.weightsMode)
+      && (instrumentUniverseFreshness.expired || (instrumentUniverseFreshness.ageDays !== null && instrumentUniverseFreshness.ageDays > FRESH_BACKUP_MAX_AGE_DAYS))
+      ? 'instrument_universe_backup_stale'
+      : null,
+    input.simulationActiveV1.source !== 'cloud' && simulationConfigFreshness.ageDays === null
+      ? 'base_model_timestamp_missing'
+      : null,
+    input.instrumentUniverse.source !== 'cloud'
+      && isOfficialInstrumentUniverseMode(input.instrumentUniverse.weightsMode)
+      && instrumentUniverseFreshness.ageDays === null
+      ? 'instrument_universe_timestamp_missing'
+      : null,
     input.simulationActiveV1.source === 'local_cache' && simulationConfigFreshness.expired ? 'simulation_config_local_cache_stale' : null,
     input.simulationActiveV1.source === 'local_cache' && !input.simulationActiveV1.hash ? 'simulation_config_local_cache_without_hash' : null,
     input.simulationActiveV1.source === 'fallback' ? 'simulation_config_fallback_effective' : null,
@@ -494,6 +522,8 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
     && forbiddenSourcesUsed.length === 0
     && Boolean(effectiveFallbacks[0].hash)
     && !effectiveFallbacks[0].freshness.expired
+    && effectiveFallbacks[0].freshness.ageDays !== null
+    && effectiveFallbacks[0].freshness.ageDays <= FRESH_BACKUP_MAX_AGE_DAYS
     && effectiveFallbacks[0].freshness.freshness !== 'unknown';
 
   let status: SourcePolicyStatus;

@@ -304,6 +304,36 @@ const getFreshnessStatus = (publishedAt: string | null | undefined): FreshnessSt
   return 'stale';
 };
 
+const formatEconomicDate = (value: string | null | undefined) => {
+  const parsed = parseIsoTimestamp(value);
+  if (parsed === null) return 'Sin fecha económica';
+  return new Date(parsed).toLocaleDateString('es-CL', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
+};
+
+type FxTrustStatus = 'online' | 'fresh_backup' | 'stale' | 'missing' | 'invalid';
+
+const resolveFxTrustStatus = (input: {
+  usingPrimaryFx: boolean;
+  snapshotApplied: boolean;
+  hasRuntimeFx: boolean;
+  sourcePolicy: SourceFreshnessPolicy | null;
+}): FxTrustStatus => {
+  if (input.usingPrimaryFx && input.snapshotApplied) return 'online';
+  if (!input.hasRuntimeFx) return 'missing';
+  // Runtime FX has no independently verifiable economic timestamp. It is
+  // therefore usable as a technical fallback, but never fresh_backup.
+  if (!input.sourcePolicy) return 'invalid';
+  return input.sourcePolicy.isComparable ? 'invalid' : 'stale';
+};
+
+const fxTrustLabel = (status: FxTrustStatus) => ({
+  online: 'Online',
+  fresh_backup: 'Respaldo reciente',
+  stale: 'Stale / no comparable',
+  missing: 'Faltante',
+  invalid: 'Inválido / sin fecha',
+}[status]);
+
 const freshnessPresentation = (status: FreshnessStatus) => {
   if (status === 'fresh') return { label: 'Fresh', color: T.positive };
   if (status === 'aging') return { label: 'Revisar', color: T.warning };
@@ -1811,15 +1841,32 @@ export function SimulationPage({
   const usingAurumEurUsd = hasAurumEurUsd && Number.isFinite(eurUsdModelValue) && eurUsdModelValue > 0
     ? isApproximatelyEqual(aurumEurUsd, eurUsdModelValue)
     : false;
+  const snapshotSourceEntry = sourcePolicy?.sources.find((entry) => entry.id === 'aurumSnapshot') ?? null;
   const snapshotFreshness = useMemo(
-    () => getFreshnessStatus(aurumSnapshotPublishedAt),
-    [aurumSnapshotPublishedAt],
+    () => snapshotSourceEntry?.freshness.expired
+      ? 'stale'
+      : snapshotSourceEntry?.freshness.freshness === 'fresh'
+        ? 'fresh'
+        : snapshotSourceEntry?.freshness.freshness === 'recent'
+          ? 'aging'
+          : 'unknown',
+    [snapshotSourceEntry],
   );
   const snapshotFreshnessUi = freshnessPresentation(snapshotFreshness);
   const snapshotPublishedRelative = useMemo(
     () => formatRelativePublishedAt(aurumSnapshotPublishedAt),
     [aurumSnapshotPublishedAt],
   );
+  const fxTrustStatus = resolveFxTrustStatus({
+    usingPrimaryFx,
+    snapshotApplied,
+    hasRuntimeFx: Number.isFinite(backupFxClp) && backupFxClp > 0,
+    sourcePolicy,
+  });
+  const fxTrustSource = usingPrimaryFx
+    ? (aurumFxSpotSource || 'Aurum oficial')
+    : 'params.fx / fallback operativo';
+  const fxEconomicAsOf = snapshotSourceEntry?.freshness.observedAt ?? null;
   const riskFxMismatchPct = useMemo(() => {
     const riskFx = Number(riskCapitalUsdSnapshotCLP ?? NaN);
     const operativeFx = Number(operativeFxResolution.appliedClp ?? NaN);
@@ -4146,6 +4193,15 @@ export function SimulationPage({
                         <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Razón técnica universe:</span> {instrumentUniverseCloudErrorMessage}</div>
                       ) : null}
                       <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>USD/CLP:</span> {fxSpotSourceTechnical}</div>
+                      <div>
+                        <span style={{ color: T.textSecondary, fontWeight: 700 }}>FX granular:</span>{' '}
+                        <span style={{ color: fxTrustStatus === 'online' ? T.positive : T.warning, fontWeight: 800 }}>
+                          {fxTrustLabel(fxTrustStatus)}
+                        </span>{' · '}{fxTrustSource} · fecha económica {formatEconomicDate(fxEconomicAsOf)}
+                        {fxTrustStatus === 'online'
+                          ? ' · válido para comparabilidad y publicación oficial.'
+                          : ' · no habilita comparabilidad/publicación oficial.'}
+                      </div>
                       <div>
                         <span style={{ color: T.textSecondary, fontWeight: 700 }}>EUR/USD:</span>{' '}
                         {usingAurumEurUsd

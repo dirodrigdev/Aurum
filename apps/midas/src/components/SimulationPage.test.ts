@@ -813,6 +813,8 @@ assert(source.includes('Afecta resultado vigente'));
 assert(source.includes('Grupo con confirmación'));
 assert(source.includes('Copiar no modifica cálculo'));
 assert(source.includes('Política de fuente:'));
+assert(source.includes('FX granular:'));
+assert(source.includes('fecha económica'));
 assert(qualityOfLifeSource.includes('Qué mirar primero'));
 assert(qualityOfLifeSource.includes('Detalle de recortes y fases'));
 assert(qualityOfLifeSource.includes('Éxito con calidad de vida'));
@@ -836,9 +838,9 @@ assert.equal(buildMixSourceCompactLabel({
   instrumentUniverseCloudReadStatus: 'loaded',
   universeSourceOrigin: 'firestore',
   sourcePolicy: buildMixSourcePolicy('2026-04-27T12:00:00.000Z'),
-}), 'Mix oficial · 63 días · actualizar');
+}), 'Mix oficial · 63 días · vigente');
 
 assert.equal(buildSourcePolicyUserSummary(buildMixSourcePolicy('2026-05-13T15:40:33.080Z')), 'Fuente oficial trazable.');
-assert.equal(buildSourcePolicyUserSummary(buildMixSourcePolicy('2026-04-27T12:00:00.000Z')), 'Fuente oficial con revisión visible.');
+assert.equal(buildSourcePolicyUserSummary(buildMixSourcePolicy('2026-04-27T12:00:00.000Z')), 'Fuente oficial trazable.');
 
 console.log('SimulationPage tests passed');

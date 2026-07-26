@@ -311,7 +311,7 @@ assert.equal(currentSourcePolicy.isComparable, true);
 assert.deepEqual(currentSourcePolicy.forbiddenSourcesUsed, []);
 assert.deepEqual(currentSourcePolicy.blockingReasons, []);
 assert.ok(!currentSourcePolicy.warnings.includes('instrument_universe_effective_source_expired'));
-assert.equal(currentInstrumentUniverseSource?.freshness.maxAcceptedAgeDays, 60);
+assert.equal(currentInstrumentUniverseSource?.freshness.maxAcceptedAgeDays, 180);
 assert.equal(currentInstrumentUniverseSource?.freshness.expired, false);
 assert.equal(currentInstrumentUniverseSource?.warning, null);
 assert.ok(currentSourcePolicy.warnings.includes('instrument_universe_local_cache_present_not_used'));

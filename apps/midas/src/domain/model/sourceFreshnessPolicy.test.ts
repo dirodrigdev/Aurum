@@ -89,7 +89,7 @@ const base = () => ({
   assert.ok(!policy.warnings.includes('instrument_universe_effective_source_expired'));
   const effectiveUniverse = policy.sources.find((entry) => entry.id === 'instrumentUniverse');
   assert.ok(effectiveUniverse);
-  assert.equal(effectiveUniverse?.freshness.maxAcceptedAgeDays, 60);
+  assert.equal(effectiveUniverse?.freshness.maxAcceptedAgeDays, 180);
   assert.equal(effectiveUniverse?.freshness.expired, false);
   assert.equal(effectiveUniverse?.warning, null);
   assert.equal(policy.decisionWarnings.length, 0);
@@ -100,17 +100,44 @@ const base = () => ({
     ...base(),
     instrumentUniverse: {
       ...base().instrumentUniverse,
-      savedAt: '2026-04-29T12:00:00.000Z',
+      savedAt: '2025-12-29T12:00:00.000Z',
     },
   });
-  assert.equal(policy.status, 'canonical_with_warnings');
+  assert.equal(policy.status, 'not_comparable');
+  assert.equal(policy.isComparable, false);
   assert.ok(policy.warnings.includes('instrument_universe_effective_source_expired'));
+  assert.ok(policy.forbiddenSourcesUsed.includes('instrument_universe_expired'));
   const effectiveUniverse = policy.sources.find((entry) => entry.id === 'instrumentUniverse');
   assert.ok(effectiveUniverse);
-  assert.equal(effectiveUniverse?.freshness.maxAcceptedAgeDays, 60);
+  assert.equal(effectiveUniverse?.freshness.maxAcceptedAgeDays, 180);
   assert.equal(effectiveUniverse?.freshness.expired, true);
   assert.ok(effectiveUniverse?.warning?.includes('esta vencido segun politica de frescura'));
   assert.ok(policy.decisionWarnings.some((notice) => notice.code === 'instrument_universe_effective_source_expired'));
+}
+
+{
+  const policy = buildSourceFreshnessPolicy({
+    ...base(),
+    simulationActiveV1: {
+      ...base().simulationActiveV1,
+      savedAt: '2025-12-01T12:00:00.000Z',
+    },
+  });
+  assert.equal(policy.status, 'not_comparable');
+  assert.equal(policy.isComparable, false);
+  assert.ok(policy.forbiddenSourcesUsed.includes('base_model_expired'));
+}
+
+{
+  const policy = buildSourceFreshnessPolicy({
+    ...base(),
+    instrumentUniverse: {
+      ...base().instrumentUniverse,
+      savedAt: null,
+    },
+  });
+  assert.equal(policy.status, 'not_comparable');
+  assert.ok(policy.forbiddenSourcesUsed.includes('instrument_universe_expired'));
 }
 
 {
