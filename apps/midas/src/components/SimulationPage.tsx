@@ -981,18 +981,19 @@ export function SimulationPage({
     const seed = Number(modelBaseDraft.simulation?.seed ?? 0);
     const bucketMonths = Number(modelBaseDraft.bucketMonths ?? 0);
     const feeAnnual = Number(modelBaseDraft.feeAnnual ?? NaN);
-    const phases = normalizeModelSpendingPhases(modelBaseDraft);
-    const invalid = !Number.isInteger(horizonYears) || horizonYears <= 0
+    const draftPhases = Array.isArray(modelBaseDraft.spendingPhases) ? modelBaseDraft.spendingPhases : [];
+    const invalid = !Number.isInteger(horizonYears) || horizonYears < 4
       || !Number.isInteger(horizonMonths) || horizonMonths <= 0 || horizonMonths % 12 !== 0
       || !Number.isInteger(nSim) || nSim < 100
       || !Number.isInteger(seed) || seed <= 0
       || !Number.isInteger(bucketMonths) || bucketMonths <= 0
       || !Number.isFinite(feeAnnual) || feeAnnual < 0
-      || phases.some((phase) => !Number.isFinite(phase.amountReal) || phase.amountReal <= 0);
+      || draftPhases.some((phase) => !Number.isFinite(phase.amountReal) || phase.amountReal <= 0);
     if (invalid) {
-      setModelBaseSaveError('Revisa el horizonte, Monte Carlo, seed, bucket, fee y los cuatro gastos antes de guardar.');
+      setModelBaseSaveError('El horizonte debe ser de al menos 4 años. Revisa también Monte Carlo, seed, bucket, fee y los cuatro gastos.');
       return;
     }
+    const phases = normalizeModelSpendingPhases(modelBaseDraft);
     setModelBaseSaving(true);
     setModelBaseSaveError(null);
     const result = await onCommitModelBase({ ...modelBaseDraft, spendingPhases: phases });
@@ -3712,7 +3713,7 @@ export function SimulationPage({
                 Borrador local: no modifica la simulación ni cloud hasta confirmar el guardado.
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(4, minmax(0,1fr))', gap: 8 }}>
-                <label style={{ display: 'grid', gap: 4 }}><span style={{ color: T.textMuted, fontSize: 10 }}>Horizonte (años)</span><input type="number" min="1" step="1" value={modelBaseHorizonYearsDraft} onChange={(e) => { const nextYearsRaw = e.target.value; setModelBaseHorizonYearsDraft(nextYearsRaw); const nextYears = Number(nextYearsRaw); if (!Number.isInteger(nextYears) || nextYears <= 0) return; updateModelBaseDraft((current) => { const next = { ...current, simulation: { ...current.simulation, horizonMonths: nextYears * 12 } }; return { ...next, spendingPhases: normalizeModelSpendingPhases(next) }; }); }} /></label>
+                <label style={{ display: 'grid', gap: 4 }}><span style={{ color: T.textMuted, fontSize: 10 }}>Horizonte (años)</span><input type="number" min="4" step="1" value={modelBaseHorizonYearsDraft} onChange={(e) => { const nextYearsRaw = e.target.value; setModelBaseHorizonYearsDraft(nextYearsRaw); const nextYears = Number(nextYearsRaw); if (!Number.isInteger(nextYears) || nextYears < 4) return; updateModelBaseDraft((current) => { const next = { ...current, simulation: { ...current.simulation, horizonMonths: nextYears * 12 } }; return { ...next, spendingPhases: normalizeModelSpendingPhases(next) }; }); }} /></label>
                 <label style={{ display: 'grid', gap: 4 }}><span style={{ color: T.textMuted, fontSize: 10 }}>Monte Carlo</span><input type="number" min="100" step="100" value={modelBaseDraft.simulation.nSim} onChange={(e) => updateModelBaseDraft((current) => ({ ...current, simulation: { ...current.simulation, nSim: Number(e.target.value) } }))} /></label>
                 <label style={{ display: 'grid', gap: 4 }}><span style={{ color: T.textMuted, fontSize: 10 }}>Seed</span><input type="number" min="1" step="1" value={modelBaseDraft.simulation.seed} onChange={(e) => updateModelBaseDraft((current) => ({ ...current, simulation: { ...current.simulation, seed: Number(e.target.value) } }))} /></label>
                 <label style={{ display: 'grid', gap: 4 }}><span style={{ color: T.textMuted, fontSize: 10 }}>Bucket months</span><input type="number" min="1" step="1" value={modelBaseDraft.bucketMonths ?? ''} onChange={(e) => updateModelBaseDraft((current) => ({ ...current, bucketMonths: Number(e.target.value) }))} /></label>
