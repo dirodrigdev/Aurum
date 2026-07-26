@@ -590,6 +590,12 @@ assert(source.includes("const [modelBaseHorizonYearsDraft, setModelBaseHorizonYe
 assert(source.includes('if (!Number.isInteger(nextYears) || nextYears < 4) return;'));
 assert(source.includes('El horizonte debe ser de al menos 4 años.'));
 assert(source.includes('Fee anual'));
+assert(source.includes('modelBaseSpendingPhaseDrafts'));
+assert(source.includes('modelBaseFeeDraft'));
+assert(source.includes("raw === '' ? NaN : Number(raw)"));
+assert(source.includes('value={modelBaseSpendingPhaseDrafts[idx]'));
+assert(source.includes('value={modelBaseFeeDraft}'));
+assert(source.includes('draftPhases.some((phase) => !Number.isFinite(phase.amountReal)'));
 assert(source.includes('Guardar cambios'));
 assert(source.includes('Escribe CONFIRMAR para guardar'));
 assert(source.includes('Confirmar y guardar Modelo Base'));

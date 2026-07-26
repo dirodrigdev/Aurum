@@ -892,6 +892,8 @@ export function SimulationPage({
   const [modelBaseOpen, setModelBaseOpen] = useState(false);
   const [modelBaseDraft, setModelBaseDraft] = useState<ModelParameters | null>(null);
   const [modelBaseHorizonYearsDraft, setModelBaseHorizonYearsDraft] = useState('');
+  const [modelBaseSpendingPhaseDrafts, setModelBaseSpendingPhaseDrafts] = useState<string[]>([]);
+  const [modelBaseFeeDraft, setModelBaseFeeDraft] = useState('');
   const [modelBaseAwaitingConfirmation, setModelBaseAwaitingConfirmation] = useState(false);
   const [modelBaseConfirmation, setModelBaseConfirmation] = useState('');
   const [modelBaseSaveError, setModelBaseSaveError] = useState<string | null>(null);
@@ -975,11 +977,14 @@ export function SimulationPage({
     setEditingMovementId(null);
   }, []);
   const beginModelBaseEdit = useCallback(() => {
-    setModelBaseDraft(cloneModelParams({
+    const draft = cloneModelParams({
       ...baseModelParams,
       spendingPhases: normalizeModelSpendingPhases(baseModelParams),
-    }));
+    });
+    setModelBaseDraft(draft);
     setModelBaseHorizonYearsDraft(String(Math.round(baseModelParams.simulation.horizonMonths / 12)));
+    setModelBaseSpendingPhaseDrafts(draft.spendingPhases.map((phase) => String(Math.round(phase.amountReal))));
+    setModelBaseFeeDraft((draft.feeAnnual * 100).toFixed(2));
     setModelBaseConfirmation('');
     setModelBaseAwaitingConfirmation(false);
     setModelBaseSaveError(null);
@@ -987,6 +992,8 @@ export function SimulationPage({
   const cancelModelBaseEdit = useCallback(() => {
     setModelBaseDraft(null);
     setModelBaseHorizonYearsDraft('');
+    setModelBaseSpendingPhaseDrafts([]);
+    setModelBaseFeeDraft('');
     setModelBaseConfirmation('');
     setModelBaseAwaitingConfirmation(false);
     setModelBaseSaveError(null);
@@ -1035,6 +1042,8 @@ export function SimulationPage({
     }
     setModelBaseDraft(null);
     setModelBaseHorizonYearsDraft('');
+    setModelBaseSpendingPhaseDrafts([]);
+    setModelBaseFeeDraft('');
     setModelBaseConfirmation('');
     setModelBaseAwaitingConfirmation(false);
   }, [modelBaseConfirmation, modelBaseDraft, modelBaseHorizonYearsDraft, onCommitModelBase]);
@@ -3788,11 +3797,11 @@ export function SimulationPage({
                 {normalizeModelSpendingPhases(modelBaseDraft).map((phase, idx) => (
                   <label key={idx} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0,1fr)', alignItems: 'center', gap: 6 }}>
                     <span style={{ color: T.textSecondary, fontSize: 11, whiteSpace: 'nowrap' }}>{baseModelSpendingPhaseLabels[idx]?.title ?? `F${idx + 1}`}</span>
-                    <input type="number" min="1" value={Math.round(phase.amountReal)} onChange={(e) => updateModelBaseDraft((current) => ({ ...current, spendingPhases: normalizeModelSpendingPhases(current).map((item, itemIndex) => itemIndex === idx ? { ...item, amountReal: Number(e.target.value) } : item) }))} />
+                    <input type="number" min="1" value={modelBaseSpendingPhaseDrafts[idx] ?? String(Math.round(phase.amountReal))} onChange={(e) => { const raw = e.target.value; setModelBaseSpendingPhaseDrafts((current) => current.map((value, itemIndex) => itemIndex === idx ? raw : value)); updateModelBaseDraft((current) => ({ ...current, spendingPhases: normalizeModelSpendingPhases(current).map((item, itemIndex) => itemIndex === idx ? { ...item, amountReal: raw === '' ? NaN : Number(raw) } : item) })); }} />
                   </label>
                 ))}
               </div>
-              <label style={{ display: 'grid', gridTemplateColumns: 'auto 120px', alignItems: 'center', gap: 6 }}><span style={{ color: T.textMuted, fontSize: 11 }}>Fee anual (%)</span><input type="number" min="0" step="0.01" value={(modelBaseDraft.feeAnnual * 100).toFixed(2)} onChange={(e) => updateModelBaseDraft((current) => ({ ...current, feeAnnual: Number(e.target.value) / 100 }))} /></label>
+              <label style={{ display: 'grid', gridTemplateColumns: 'auto 120px', alignItems: 'center', gap: 6 }}><span style={{ color: T.textMuted, fontSize: 11 }}>Fee anual (%)</span><input type="number" min="0" step="0.01" value={modelBaseFeeDraft} onChange={(e) => { const raw = e.target.value; setModelBaseFeeDraft(raw); updateModelBaseDraft((current) => ({ ...current, feeAnnual: raw === '' ? NaN : Number(raw) / 100 })); }} /></label>
               {modelBaseAwaitingConfirmation && (
                 <div style={{ border: `1px solid ${T.warning}`, background: 'rgba(255, 176, 32, 0.10)', borderRadius: 10, padding: '9px 10px', display: 'grid', gap: 7 }}>
                   <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Este cambio reemplazará el Modelo Base canónico para próximas aperturas y simulaciones.</div>
