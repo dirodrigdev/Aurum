@@ -12,6 +12,7 @@ import {
   getUserScopedSimulationConfigPath,
   shouldSeedUserScopedSimulationConfig,
 } from './simulationConfigCanonical';
+import { buildBackupMetadata, type BackupMetadata } from '../../domain/model/backupMetadata';
 
 export const LEGACY_SIMULATION_CONFIG_COLLECTION = 'midas_config';
 export const SIMULATION_CONFIG_COLLECTION = 'midas_config';
@@ -29,6 +30,7 @@ export type PersistedSimulationConfigVersion = {
   seed: number;
   bucketMonths: number;
   capitalInitialClp: number;
+  backupMetadata?: BackupMetadata;
 };
 
 type PersistedSimulationConfigDocument = {
@@ -153,10 +155,11 @@ export function createSimulationConfigCloudDiagnostics(
 function toPersistedVersion(params: ModelParameters, source: string): PersistedSimulationConfigVersion {
   const paramsJson = JSON.stringify(params);
   const savedAt = new Date().toISOString();
+  const hash = buildSimulationConfigHash(params);
   return {
     schemaVersion: 1,
     savedAt,
-    hash: buildSimulationConfigHash(params),
+    hash,
     source,
     paramsJson,
     spendingPhases: (params.spendingPhases ?? []).map((phase, index) => ({
@@ -169,6 +172,15 @@ function toPersistedVersion(params: ModelParameters, source: string): PersistedS
     seed: Number(params.simulation?.seed ?? 0),
     bucketMonths: Number(params.bucketMonths ?? 0),
     capitalInitialClp: Number(params.capitalInitial ?? 0),
+    backupMetadata: buildBackupMetadata({
+      sourceMode: 'cloud',
+      capturedAt: savedAt,
+      payloadHash: hash,
+      configRevision: 'simulationActiveV1:v1',
+      lastOnlineAttemptAt: savedAt,
+      lastOnlineAttemptStatus: 'success',
+      selectedReason: 'cloud_validated_and_confirmed',
+    }),
   };
 }
 

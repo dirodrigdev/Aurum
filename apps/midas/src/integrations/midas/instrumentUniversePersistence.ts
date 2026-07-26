@@ -8,6 +8,7 @@ import {
   type InstrumentUniverseSnapshot,
 } from '../../domain/instrumentUniverse';
 import { aurumAuth, aurumDb, aurumIntegrationConfigured, ensureAurumIntegrationAuthPersistence } from '../aurum/firebase';
+import { buildBackupMetadata, type BackupMetadata } from '../../domain/model/backupMetadata';
 
 export const INSTRUMENT_UNIVERSE_COLLECTION = 'midas_config';
 export const INSTRUMENT_UNIVERSE_DOC_ID = 'instrumentUniverseV1';
@@ -52,6 +53,7 @@ export type PersistedInstrumentUniverseVersion = {
   warnings: string[];
   amountSource: 'amount_clp' | 'weight_portfolio' | 'mixed' | 'unknown';
   lastValid: true;
+  backupMetadata?: BackupMetadata;
 };
 
 type PersistedInstrumentUniverseDocument = {
@@ -87,10 +89,11 @@ export function buildPersistedInstrumentUniverseVersion(
     source,
     loadedAt: snapshot.savedAt,
   });
+  const hash = hashString(snapshot.rawJson);
   return {
     schemaVersion: 1,
     savedAt: snapshot.savedAt || new Date().toISOString(),
-    hash: hashString(snapshot.rawJson),
+    hash,
     fileName,
     source,
     payloadJson: snapshot.rawJson,
@@ -104,6 +107,16 @@ export function buildPersistedInstrumentUniverseVersion(
     warnings: metadata.warnings,
     amountSource: metadata.amountSource,
     lastValid: true,
+    backupMetadata: buildBackupMetadata({
+      sourceMode: 'cloud',
+      economicDate: snapshot.savedAt,
+      capturedAt: snapshot.savedAt,
+      payloadHash: hash,
+      configRevision: 'instrumentUniverseV1:v1',
+      lastOnlineAttemptAt: new Date().toISOString(),
+      lastOnlineAttemptStatus: 'success',
+      selectedReason: 'cloud_validated_and_persisted',
+    }),
   };
 }
 

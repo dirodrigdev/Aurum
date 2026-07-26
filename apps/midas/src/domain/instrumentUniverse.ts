@@ -1,4 +1,5 @@
 import type { PortfolioWeights } from './model/types';
+import { buildBackupMetadata, type BackupMetadata } from './model/backupMetadata';
 
 export type InstrumentUniverseMixKey = 'rv' | 'rf' | 'cash' | 'other';
 export type InstrumentUniverseRange = { min: number; max: number };
@@ -89,6 +90,7 @@ export type InstrumentUniverseSnapshotMetadata = {
   checksum: string;
   schemaVersion: number;
   lastValid: true;
+  backupMetadata?: BackupMetadata;
 };
 
 export type InstrumentUniverseFailedImport = {
@@ -671,6 +673,7 @@ export const buildInstrumentUniverseSnapshotMetadata = (
   input?: { fileName?: string | null; source?: string; loadedAt?: string },
 ): InstrumentUniverseSnapshotMetadata => {
   const loadedAt = input?.loadedAt ?? new Date().toISOString();
+  const checksum = hashString(snapshot.rawJson);
   const amountSource = validation.hasUsableAmounts
     ? validation.hasUsableWeights
       ? 'mixed'
@@ -692,9 +695,17 @@ export const buildInstrumentUniverseSnapshotMetadata = (
     hasUsableMix: validation.hasUsableMix,
     warnings: validation.warnings,
     amountSource,
-    checksum: hashString(snapshot.rawJson),
+    checksum,
     schemaVersion: validation.schemaVersion ?? VERSION,
     lastValid: true,
+    backupMetadata: buildBackupMetadata({
+      sourceMode: input?.source === 'firestore_active' ? 'cloud' : 'local_cache',
+      economicDate: snapshot.savedAt || null,
+      capturedAt: loadedAt,
+      payloadHash: checksum,
+      configRevision: `instrumentUniverseV${snapshot.version}`,
+      selectedReason: input?.source === 'firestore_active' ? 'cloud_validated_and_cached' : 'local_validated',
+    }),
   };
 };
 export const parseStoredInstrumentUniverseSnapshot = (raw: string): InstrumentUniverseSnapshot | null => {

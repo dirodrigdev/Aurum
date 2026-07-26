@@ -815,6 +815,8 @@ assert(source.includes('Copiar no modifica cálculo'));
 assert(source.includes('Política de fuente:'));
 assert(source.includes('FX granular:'));
 assert(source.includes('fecha económica'));
+assert(source.includes('Modelo Base metadata:'));
+assert(source.includes('selectedReason'));
 assert(qualityOfLifeSource.includes('Qué mirar primero'));
 assert(qualityOfLifeSource.includes('Detalle de recortes y fases'));
 assert(qualityOfLifeSource.includes('Éxito con calidad de vida'));

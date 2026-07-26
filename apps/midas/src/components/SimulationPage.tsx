@@ -20,6 +20,7 @@ import type { OperativeFxResolution } from '../domain/model/operativeFx';
 import type { M8InputFingerprint } from '../domain/model/m8InputFingerprint';
 import { buildMidasEvaluation } from '../domain/model/midasEvaluation';
 import type { SourceFreshnessPolicy } from '../domain/model/sourceFreshnessPolicy';
+import { buildBackupMetadata } from '../domain/model/backupMetadata';
 import type { SimulationResultDiagnostics } from '../domain/model/simulationResultDigest';
 import type { ResultConfidence } from '../domain/model/resultConfidence';
 import type { AssumptionModeDiagnostics } from '../domain/model/assumptionMode';
@@ -1867,6 +1868,24 @@ export function SimulationPage({
     ? (aurumFxSpotSource || 'Aurum oficial')
     : 'params.fx / fallback operativo';
   const fxEconomicAsOf = snapshotSourceEntry?.freshness.observedAt ?? null;
+  const modelSourceEntry = sourcePolicy?.sources.find((entry) => entry.id === 'simulationActiveV1') ?? null;
+  const universeSourceEntry = sourcePolicy?.sources.find((entry) => entry.id === 'instrumentUniverse') ?? null;
+  const modelBackupMetadata = buildBackupMetadata({
+    sourceMode: simulationConfigSource === 'cloud' ? 'cloud' : simulationConfigSource === 'local_cache' ? 'local_cache' : 'default',
+    capturedAt: simulationConfigSavedAt,
+    payloadHash: modelSourceEntry?.hash ?? null,
+    configRevision: 'simulationActiveV1:v1',
+    lastOnlineAttemptStatus: null,
+    selectedReason: modelSourceEntry?.usedForRun ? 'effective_source_policy' : null,
+  });
+  const universeBackupMetadata = buildBackupMetadata({
+    sourceMode: universeSourceOrigin === 'firestore' ? 'cloud' : universeSourceOrigin === 'bundled' ? 'bundled' : universeSourceOrigin === 'cache-local' ? 'local_cache' : 'missing',
+    capturedAt: universeSourceEntry?.savedAt ?? null,
+    payloadHash: universeSourceEntry?.hash ?? null,
+    configRevision: 'instrumentUniverseV1:v1',
+    lastOnlineAttemptStatus: instrumentUniverseCloudReadStatus === 'loaded' ? 'success' : instrumentUniverseCloudReadStatus === 'error' ? 'unavailable' : null,
+    selectedReason: universeSourceEntry?.usedForRun ? 'effective_source_policy' : null,
+  });
   const riskFxMismatchPct = useMemo(() => {
     const riskFx = Number(riskCapitalUsdSnapshotCLP ?? NaN);
     const operativeFx = Number(operativeFxResolution.appliedClp ?? NaN);
@@ -4171,6 +4190,14 @@ export function SimulationPage({
                     </summary>
                     <div style={{ marginTop: 6, display: 'grid', gap: 5, color: T.textMuted, fontSize: 10 }}>
                       <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio:</span> {patrimonioSourceTechnical}</div>
+                      <div>
+                        <span style={{ color: T.textSecondary, fontWeight: 700 }}>Modelo Base metadata:</span>{' '}
+                        {modelBackupMetadata.sourceMode} · capturedAt {modelBackupMetadata.capturedAt || 'sin timestamp'} · hash {modelBackupMetadata.payloadHash || 'sin hash'} · {modelBackupMetadata.selectedReason || 'sin selección'}
+                      </div>
+                      <div>
+                        <span style={{ color: T.textSecondary, fontWeight: 700 }}>Instrument Universe metadata:</span>{' '}
+                        {universeBackupMetadata.sourceMode} · capturedAt {universeBackupMetadata.capturedAt || 'sin timestamp'} · hash {universeBackupMetadata.payloadHash || 'sin hash'} · {universeBackupMetadata.selectedReason || 'sin selección'}
+                      </div>
                       {sourcePolicy ? (
                         <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Política:</span> {sourcePolicy.label} · {sourcePolicy.effectiveSourceSummary}</div>
                       ) : null}
@@ -4198,6 +4225,7 @@ export function SimulationPage({
                         <span style={{ color: fxTrustStatus === 'online' ? T.positive : T.warning, fontWeight: 800 }}>
                           {fxTrustLabel(fxTrustStatus)}
                         </span>{' · '}{fxTrustSource} · fecha económica {formatEconomicDate(fxEconomicAsOf)}
+                        {' · publicado/capturado '}{formatRelativePublishedAt(aurumSnapshotPublishedAt)}
                         {fxTrustStatus === 'online'
                           ? ' · válido para comparabilidad y publicación oficial.'
                           : ' · no habilita comparabilidad/publicación oficial.'}
