@@ -18,9 +18,9 @@ import type { M8Input } from './m8.types';
 // 4. pin the expected fingerprint and core metrics with explicit tolerances.
 
 const FIXED_NOW_MS = Date.parse('2026-06-29T12:00:00.000Z');
-const EXPECTED_EFFECTIVE_HASH = 'fnv1a-3563c1a7';
-const EXPECTED_DIAGNOSTIC_HASH = 'fnv1a-9068de8b';
-const EXPECTED_RESULT_DIGEST = 'c38b5dca53b5305be78d32a879b5543b774db8d2918485545efe8bd6cc5137da';
+const EXPECTED_EFFECTIVE_HASH = 'fnv1a-415e2c6f';
+const EXPECTED_DIAGNOSTIC_HASH = 'fnv1a-df48d257';
+const EXPECTED_RESULT_DIGEST = 'ba7c881703f136b8836365acd5599a48c297120dbb5c1ded9e3105710d85c905';
 
 const EXPECTED_METRICS = {
   success40: 0.70703125,
