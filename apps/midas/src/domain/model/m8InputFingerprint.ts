@@ -1,6 +1,7 @@
 import type { ModelParameters } from './types';
 import type { SimulationConfigCloudDiagnostics } from '../../integrations/midas/simulationConfigPersistence';
 import { buildM8ReplayTrace, type M8ReplayTrace } from './m8ReplayTrace';
+import { M8_ENGINE_REVISION } from '../simulation/m8EngineRevision';
 
 export type M8InputFingerprintSource = {
   source: 'cloud' | 'bundled' | 'local_cache' | 'fallback' | 'mixed' | 'none' | 'unknown';
@@ -46,6 +47,7 @@ export type M8InputFingerprintInput = {
 export type M8InputFingerprint = {
   hash: string;
   effectiveEngineInputHash: string;
+  engineRevision?: string;
   diagnosticHash: string;
   hashIncludesDiagnostics: false;
   manualLocalAdjustmentsAffectEngine: boolean;
@@ -75,6 +77,16 @@ export function canonicalizeM8FingerprintValue(value: unknown, parentKey?: strin
   return result;
 }
 
+export function buildM8EngineFingerprintInput(
+  effectiveEngineInput: Record<string, unknown>,
+  engineRevision: string = M8_ENGINE_REVISION,
+): Record<string, unknown> {
+  return canonicalizeM8FingerprintValue({
+    ...effectiveEngineInput,
+    engine_revision: engineRevision,
+  }) as Record<string, unknown>;
+}
+
 function stableSerialize(value: unknown): string {
   const canonical = canonicalizeM8FingerprintValue(value);
   if (typeof canonical === 'undefined') return 'undefined';
@@ -93,6 +105,13 @@ function hashString(value: string): string {
     hash = Math.imul(hash, 0x01000193);
   }
   return `fnv1a-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+export function buildM8EngineFingerprintHash(
+  effectiveEngineInput: Record<string, unknown>,
+  engineRevision: string = M8_ENGINE_REVISION,
+): string {
+  return hashString(stableSerialize(buildM8EngineFingerprintInput(effectiveEngineInput, engineRevision)));
 }
 
 function summarizeSpendingPhases(params: ModelParameters) {
@@ -186,8 +205,7 @@ function buildSources(input: M8InputFingerprintInput): M8InputFingerprintSources
 
 export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8InputFingerprint {
   const composition = input.params.simulationComposition;
-  const normalizedInput: Record<string, unknown> = canonicalizeM8FingerprintValue(
-    (input.effectiveEngineInput as Record<string, unknown> | null) ?? {
+  const normalizedEngineInput = (input.effectiveEngineInput as Record<string, unknown> | null) ?? {
     capitalInitialClp: Number(input.params.capitalInitial ?? 0),
     capitalSource: input.params.capitalSource ?? 'unknown',
     totalNetWorthClp: Number(composition?.totalNetWorthCLP ?? 0),
@@ -269,14 +287,15 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
       instrumentUniverseHash: input.instrumentUniverseHash,
       simulationConfigHash: input.simulationConfigHash,
     },
-    },
-  ) as Record<string, unknown>;
+    };
+  const normalizedInput = buildM8EngineFingerprintInput(normalizedEngineInput, M8_ENGINE_REVISION);
   const manualLocalAdjustmentsAffectEngine = Boolean(input.capitalDerivationDiagnostics?.manualLocalAdjustmentsAffectEngine);
   const manualCurrentAdjustmentsAffectEngine = Boolean(input.capitalDerivationDiagnostics?.manualCurrentAdjustmentsAffectEngine);
   const manualFutureAdjustmentsAffectEngine = Boolean(input.capitalDerivationDiagnostics?.manualFutureAdjustmentsAffectEngine);
-  const effectiveEngineInputHash = hashString(stableSerialize(normalizedInput));
+  const effectiveEngineInputHash = buildM8EngineFingerprintHash(normalizedEngineInput, M8_ENGINE_REVISION);
   const diagnosticInput: Record<string, unknown> = {
     flags: {
+      engineRevision: M8_ENGINE_REVISION,
       weightsSourceMode: input.weightsSourceMode,
       universeSourceOrigin: input.universeSourceOrigin,
       simulationConfigSource: input.simulationConfigSource,
@@ -331,6 +350,7 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
 
   const replayTrace = buildM8ReplayTrace({
     paramsLabel: input.params.label ?? null,
+    engineRevision: M8_ENGINE_REVISION,
     effectiveEngineInput: normalizedInput,
     effectiveEngineInputFingerprint: effectiveEngineInputHash,
     m8Fingerprint: effectiveEngineInputHash,
@@ -359,6 +379,7 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
   const diagnosticHash = hashString(stableSerialize(diagnosticInput));
   const finalReplayTrace = buildM8ReplayTrace({
     paramsLabel: input.params.label ?? null,
+    engineRevision: M8_ENGINE_REVISION,
     effectiveEngineInput: normalizedInput,
     effectiveEngineInputFingerprint: effectiveEngineInputHash,
     m8Fingerprint: effectiveEngineInputHash,
@@ -385,6 +406,7 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
   return {
     hash: effectiveEngineInputHash,
     effectiveEngineInputHash,
+    engineRevision: M8_ENGINE_REVISION,
     diagnosticHash,
     hashIncludesDiagnostics: false,
     manualLocalAdjustmentsAffectEngine,

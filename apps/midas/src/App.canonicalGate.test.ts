@@ -12,6 +12,18 @@ assert.match(
 
 assert.match(
   appSource,
+  /hashJson\(\{ \.\.\.effectiveEngineInput, engine_revision: M8_ENGINE_REVISION \}\)/,
+  'the automatic run gate must include the canonical M8 revision in its effective input hash',
+);
+
+assert.match(
+  appSource,
+  /setLastRenderedEngineRevision\(M8_ENGINE_REVISION\)/,
+  'completed results must retain the engine revision that produced them',
+);
+
+assert.match(
+  appSource,
   /if \(!snapshot\) \{[\s\S]*?lastAppliedSnapshotSignatureRef\.current = null;[\s\S]*?setLastAppliedAurumSnapshotSignature\(null\);/,
   'an invalid or missing Aurum snapshot must clear the applied signature so the canonical gate cannot reuse it',
 );

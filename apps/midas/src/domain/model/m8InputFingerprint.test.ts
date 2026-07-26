@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { buildM8InputFingerprint, canonicalizeM8FingerprintValue } from './m8InputFingerprint';
+import { buildM8EngineFingerprintHash, buildM8EngineFingerprintInput, buildM8InputFingerprint, canonicalizeM8FingerprintValue } from './m8InputFingerprint';
 import type { M8InputFingerprintInput } from './m8InputFingerprint';
 import { DEFAULT_PARAMETERS } from './defaults';
 import type { ModelParameters } from './types';
+import { M8_ENGINE_REVISION } from '../simulation/m8EngineRevision';
 
 const clone = (value: ModelParameters): ModelParameters => JSON.parse(JSON.stringify(value)) as ModelParameters;
 
@@ -85,6 +86,20 @@ const baseInput = (): M8InputFingerprintInput => {
   const first = buildM8InputFingerprint(baseInput());
   const second = buildM8InputFingerprint(baseInput());
   assert.equal(first.effectiveEngineInputHash, second.effectiveEngineInputHash, 'same effective input must produce same hash');
+  assert.equal(first.engineRevision, M8_ENGINE_REVISION, 'fingerprint records the canonical M8 revision');
+  assert.equal(first.normalizedInput.engine_revision, M8_ENGINE_REVISION, 'revision is part of the evaluated input');
+})();
+
+(() => {
+  const engineInput = baseInput().effectiveEngineInput as Record<string, unknown>;
+  const legacy = buildM8EngineFingerprintInput(engineInput, 'm8-legacy-before-risk-quality');
+  const current = buildM8EngineFingerprintInput(engineInput);
+  assert.notDeepEqual(current, legacy, 'a functional M8 revision changes the evaluated fingerprint input');
+  assert.notEqual(
+    buildM8EngineFingerprintHash(engineInput),
+    buildM8EngineFingerprintHash(engineInput, 'm8-legacy-before-risk-quality'),
+    'same inputs with a different M8 revision must produce a different fingerprint',
+  );
 })();
 
 (() => {

@@ -1,3 +1,5 @@
+import { M8_ENGINE_REVISION } from '../simulation/m8EngineRevision';
+
 export type SimulationResultDigestMetrics = {
   success40: number | null;
   ruin40: number | null;
@@ -27,6 +29,8 @@ export type SimulationResultDiagnostics = {
   maxDrawdownP50: number | null;
   completedAt: string | null;
   engineVersion: string;
+  engineRevision: string;
+  resultEngineRevision: string | null;
   workerVersion: string;
   resultPathCount: number | null;
   isFinalForCurrentInput: boolean;
@@ -49,6 +53,8 @@ export type BuildSimulationResultDiagnosticsInput = {
   lastRunInputHash: string | null;
   lastRenderedResultHash: string | null;
   engineVersion?: string;
+  engineRevision?: string;
+  resultEngineRevision?: string | null;
   workerVersion?: string;
   previousResultDigest?: string | null;
   previousResultInputHash?: string | null;
@@ -190,6 +196,10 @@ export function buildSimulationResultDigest(params: {
 export function buildSimulationResultDiagnostics(
   input: BuildSimulationResultDiagnosticsInput,
 ): SimulationResultDiagnostics {
+  const engineRevision = input.engineRevision ?? M8_ENGINE_REVISION;
+  const resultEngineRevision = input.resultEngineRevision === undefined
+    ? engineRevision
+    : input.resultEngineRevision;
   const metrics = resolveMetrics(input.result);
   const resultSeed = normalizeNumber(input.resultSeed);
   const expectedSeed = normalizeNumber(input.expectedSeed);
@@ -215,7 +225,8 @@ export function buildSimulationResultDiagnostics(
       && input.simulationRunStatus === 'completed'
       && input.resultMetricsAvailable
       && input.lastRunInputHash === input.effectiveEngineInputHash
-      && input.lastRenderedResultHash === input.effectiveEngineInputHash,
+      && input.lastRenderedResultHash === input.effectiveEngineInputHash
+      && resultEngineRevision === engineRevision,
   );
 
   return {
@@ -229,6 +240,8 @@ export function buildSimulationResultDiagnostics(
     maxDrawdownP50: metrics.maxDrawdownP50 ?? null,
     completedAt: input.completedAt,
     engineVersion: input.engineVersion ?? 'm8-central-wrapper',
+    engineRevision,
+    resultEngineRevision,
     workerVersion: input.workerVersion ?? 'primary-recalc-worker',
     resultPathCount: normalizeNumber(input.result?.nTotal ?? null),
     isFinalForCurrentInput,

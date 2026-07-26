@@ -82,6 +82,7 @@ import {
   type SimulationConfigHydrationStatus,
 } from './integrations/midas/simulationConfigCanonical';
 import { buildM8InputFingerprint, type M8InputFingerprint } from './domain/model/m8InputFingerprint';
+import { M8_ENGINE_REVISION } from './domain/simulation/m8EngineRevision';
 import {
   buildSimulationActionStatus,
   buildSimulationInputSyncState,
@@ -415,7 +416,7 @@ function computeEffectiveEngineInputHashForParams(params: ModelParameters): stri
   try {
     const capitalResolution = resolveCapital({ params });
     const effectiveEngineInput = toM8Input(params, capitalResolution);
-    return `fnv1a-${hashJson(effectiveEngineInput)}`;
+    return `fnv1a-${hashJson({ ...effectiveEngineInput, engine_revision: M8_ENGINE_REVISION })}`;
   } catch {
     return null;
   }
@@ -1057,6 +1058,7 @@ export default function App() {
   const [simulationRunBlockedReason, setSimulationRunBlockedReason] = useState<string | null>(null);
   const [lastRunInputHash, setLastRunInputHash] = useState<string | null>(null);
   const [lastRenderedResultHash, setLastRenderedResultHash] = useState<string | null>(null);
+  const [lastRenderedEngineRevision, setLastRenderedEngineRevision] = useState<string | null>(null);
   const [runAttemptCount, setRunAttemptCount] = useState(0);
   const [duplicateRunSkippedCount, setDuplicateRunSkippedCount] = useState(0);
   const [duplicateSnapshotSkippedCount, setDuplicateSnapshotSkippedCount] = useState(0);
@@ -2836,6 +2838,7 @@ export default function App() {
         if (requestId !== recalcRequestIdRef.current) return;
         setSimResult(nextResult);
         setLastRenderedResultHash(runInputHash);
+        setLastRenderedEngineRevision(M8_ENGINE_REVISION);
         lastStableCentralRef.current = nextResult;
         setLastStableCentral(nextResult);
         setAppliedRecalcRequestId(requestId);
@@ -4642,6 +4645,8 @@ export default function App() {
       lastRunInputHash,
       lastRenderedResultHash,
       engineVersion: 'm8-central-wrapper',
+      engineRevision: M8_ENGINE_REVISION,
+      resultEngineRevision: lastRenderedEngineRevision,
       workerVersion: 'primary-recalc-worker',
       previousResultDigest: null,
       previousResultInputHash: null,
@@ -4652,6 +4657,7 @@ export default function App() {
 	    heroPhase,
 	    heroVisibleResult,
     lastRenderedResultHash,
+    lastRenderedEngineRevision,
     lastRunInputHash,
     effectiveRunInputHash,
     simResult,
@@ -4739,6 +4745,8 @@ export default function App() {
     if (!heroVisibleResult) return null;
     return heroVisibleResult.success40 ?? (1 - (heroVisibleResult.probRuin40 ?? heroVisibleResult.probRuin));
   }, [heroVisibleResult]);
+  const engineRevisionStale = Boolean(simResult || lastStableCentral)
+    && lastRenderedEngineRevision !== M8_ENGINE_REVISION;
   const headerShowsDefinitiveNumber = (
     simulationRunStatus === 'completed'
     && simulationRunError === null
@@ -4759,7 +4767,9 @@ export default function App() {
     hasVisibleScenarioChanges,
     hasBlockingError: resultConfidence.status === 'not_decisional' && !headerHasOnlyRunResultBlockingReasons,
   }), [hasVisibleScenarioChanges, headerHasOnlyRunResultBlockingReasons, resultConfidence.status, simulationInputSync.status]);
-  const headerMetricText = canonicalInputBlockDisplay
+  const headerMetricText = engineRevisionStale && canonicalInputBlockedReason === 'aurum_snapshot_pending_apply'
+    ? 'Motor actualizado; pendiente aplicar snapshot'
+    : canonicalInputBlockDisplay
     ? canonicalInputBlockDisplay.metricText
     : headerShowsStaleResult
     ? headerSuccess40 !== null && Number.isFinite(headerSuccess40)
@@ -4770,7 +4780,9 @@ export default function App() {
       : headerShowsDefinitiveNumber
       ? `Sostenibilidad ${formatSuccessPct(headerSuccess40)}`
       : 'Calculando…';
-  const headerConfidenceLabel = canonicalInputBlockDisplay
+  const headerConfidenceLabel = engineRevisionStale && canonicalInputBlockedReason === 'aurum_snapshot_pending_apply'
+    ? 'Aplicación requerida'
+    : canonicalInputBlockDisplay
     ? canonicalInputBlockDisplay.confidenceLabel
     : headerShowsStaleResult
     ? 'Recalcular'

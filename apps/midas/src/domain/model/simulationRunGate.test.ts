@@ -58,6 +58,28 @@ const base = () => ({
 })();
 
 (() => {
+  const result = evaluateSimulationRunGate({
+    ...base(),
+    simResultAvailable: true,
+    effectiveEngineInputHash: 'hash-m8-current',
+    lastRenderedResultHash: 'hash-m8-legacy',
+    lastRequestedRunHash: 'hash-m8-legacy',
+  });
+  assert.equal(result.status, 'should_run', 'a changed M8 revision hash schedules one replacement run');
+})();
+
+(() => {
+  const result = evaluateSimulationRunGate({
+    ...base(),
+    aurumSnapshotResolution: 'pending_apply',
+    simResultAvailable: true,
+    effectiveEngineInputHash: 'hash-m8-current',
+    lastRenderedResultHash: 'hash-m8-legacy',
+  });
+  assert.deepEqual(result, { status: 'blocked', blockedReason: 'aurum_snapshot_pending_apply' });
+})();
+
+(() => {
   const result = evaluateCanonicalInputReadiness({ ...base() });
   assert.deepEqual(result, { ready: true });
 })();

@@ -91,6 +91,58 @@ const baseDigestInput = {
       maxDrawdownPercentiles: { 50: baseDigestInput.maxDrawdownP50 },
       nTotal: 3000,
     },
+    resultInputHash: baseDigestInput.resultInputHash,
+    effectiveEngineInputHash: baseDigestInput.resultInputHash,
+    resultSeed: baseDigestInput.resultSeed,
+    expectedSeed: baseDigestInput.resultSeed,
+    resultNSim: baseDigestInput.resultNSim,
+    expectedNSim: baseDigestInput.resultNSim,
+    completedAt: '2026-05-12T00:00:00.000Z',
+    simulationRunStatus: 'completed',
+    resultMetricsAvailable: true,
+    lastRunInputHash: baseDigestInput.resultInputHash,
+    lastRenderedResultHash: baseDigestInput.resultInputHash,
+    engineRevision: 'm8-current',
+    resultEngineRevision: null,
+  });
+  assert.equal(diagnostics.isFinalForCurrentInput, false, 'a legacy result without engine revision is stale');
+})();
+
+(() => {
+  const diagnostics = buildSimulationResultDiagnostics({
+    result: {
+      success40: baseDigestInput.success40,
+      probRuin40: baseDigestInput.ruin40,
+      houseSalePct: baseDigestInput.houseSalePct,
+      maxDrawdownPercentiles: { 50: baseDigestInput.maxDrawdownP50 },
+      nTotal: 3000,
+    },
+    resultInputHash: baseDigestInput.resultInputHash,
+    effectiveEngineInputHash: baseDigestInput.resultInputHash,
+    resultSeed: baseDigestInput.resultSeed,
+    expectedSeed: baseDigestInput.resultSeed,
+    resultNSim: baseDigestInput.resultNSim,
+    expectedNSim: baseDigestInput.resultNSim,
+    completedAt: '2026-05-12T00:00:00.000Z',
+    simulationRunStatus: 'completed',
+    resultMetricsAvailable: true,
+    lastRunInputHash: baseDigestInput.resultInputHash,
+    lastRenderedResultHash: baseDigestInput.resultInputHash,
+    engineRevision: 'm8-current',
+    resultEngineRevision: 'm8-previous',
+  });
+  assert.equal(diagnostics.isFinalForCurrentInput, false, 'a result from a prior engine revision is stale');
+})();
+
+(() => {
+  const diagnostics = buildSimulationResultDiagnostics({
+    result: {
+      success40: baseDigestInput.success40,
+      probRuin40: baseDigestInput.ruin40,
+      houseSalePct: baseDigestInput.houseSalePct,
+      maxDrawdownPercentiles: { 50: baseDigestInput.maxDrawdownP50 },
+      nTotal: 3000,
+    },
     resultInputHash: 'fnv1a-old',
     effectiveEngineInputHash: baseDigestInput.resultInputHash,
     resultSeed: baseDigestInput.resultSeed,

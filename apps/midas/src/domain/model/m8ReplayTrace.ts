@@ -3,6 +3,7 @@ import { buildSourceFreshnessPolicy, type SourceFreshnessPolicy } from './source
 
 export type M8ReplayTraceInput = {
   paramsLabel: string | null;
+  engineRevision?: string;
   effectiveEngineInput: Record<string, unknown>;
   effectiveEngineInputFingerprint: string;
   m8Fingerprint: string | null;
@@ -95,6 +96,7 @@ export type M8ReplayTrace = {
     resultMetricsAvailable: boolean;
   };
   engineSettings: {
+    engineRevision?: string | null;
     years: number | null;
     nPaths: number | null;
     seed: number | null;
@@ -227,6 +229,7 @@ export function buildM8ReplayTrace(input: M8ReplayTraceInput): M8ReplayTrace {
       resultMetricsAvailable: Boolean(runtime.resultMetricsAvailable),
     },
     engineSettings: {
+      engineRevision: input.engineRevision ?? stringOrNull(m8Input.engine_revision),
       years: numberOrNull(m8Input.years),
       nPaths: numberOrNull(m8Input.n_paths),
       seed: numberOrNull(m8Input.seed),
