@@ -626,6 +626,7 @@ function SurfaceSemanticRow({
 export function SimulationPage({
   resultCentral,
   params,
+  baseModelParams,
   simOverrides,
   simActive,
   simWorking,
@@ -707,12 +708,14 @@ export function SimulationPage({
   onRestoreOfficialDistribution,
   onSimOverridesChange,
   onUpdateParams,
+  onCommitModelBase,
   onRunSimulation,
   onResetSim,
   onOpenOptimization,
 }: {
   resultCentral: SimulationResults | null;
   params: ModelParameters;
+  baseModelParams: ModelParameters;
   simOverrides: SimulationOverrides | null;
   simActive: boolean;
   simWorking: boolean;
@@ -833,6 +836,7 @@ export function SimulationPage({
   onRestoreOfficialDistribution: () => void;
   onSimOverridesChange: (next: SimulationOverrides | null) => void;
   onUpdateParams: (patcher: (prev: ModelParameters) => ModelParameters) => void;
+  onCommitModelBase: (draft: ModelParameters) => Promise<{ ok: true } | { ok: false; reason: string }>;
   onRunSimulation: () => void;
   onResetSim: () => void;
   onOpenOptimization: () => void;
@@ -853,13 +857,30 @@ export function SimulationPage({
   const [keyMetricsOpen, setKeyMetricsOpen] = useState(true);
   const [moreMetricsOpen, setMoreMetricsOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [dataTrustOpen, setDataTrustOpen] = useState(false);
   const [modelBaseOpen, setModelBaseOpen] = useState(false);
+  const [modelBaseDraft, setModelBaseDraft] = useState<ModelParameters | null>(null);
+  const [modelBaseAwaitingConfirmation, setModelBaseAwaitingConfirmation] = useState(false);
+  const [modelBaseConfirmation, setModelBaseConfirmation] = useState('');
+  const [modelBaseSaveError, setModelBaseSaveError] = useState<string | null>(null);
+  const [modelBaseSaving, setModelBaseSaving] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth <= 760 : false
   );
   const [isCompactViewport, setIsCompactViewport] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth <= 390 : false
   );
+  useEffect(() => {
+    const focusDataTrust = () => {
+      setDiagnosticsOpen(true);
+      setDataTrustOpen(true);
+      window.requestAnimationFrame(() => {
+        document.getElementById('midas-data-trust')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    };
+    window.addEventListener('midas:focus-data-trust', focusDataTrust);
+    return () => window.removeEventListener('midas:focus-data-trust', focusDataTrust);
+  }, []);
   const [savingMovement, setSavingMovement] = useState(false);
   const [capitalLedgerOpen, setCapitalLedgerOpen] = useState(false);
   const [longevityOpen, setLongevityOpen] = useState(false);
@@ -921,8 +942,66 @@ export function SimulationPage({
     setSavingMovement(false);
     setEditingMovementId(null);
   }, []);
+  const beginModelBaseEdit = useCallback(() => {
+    setModelBaseDraft(cloneModelParams({
+      ...baseModelParams,
+      spendingPhases: normalizeModelSpendingPhases(baseModelParams),
+    }));
+    setModelBaseConfirmation('');
+    setModelBaseAwaitingConfirmation(false);
+    setModelBaseSaveError(null);
+  }, [baseModelParams]);
+  const cancelModelBaseEdit = useCallback(() => {
+    setModelBaseDraft(null);
+    setModelBaseConfirmation('');
+    setModelBaseAwaitingConfirmation(false);
+    setModelBaseSaveError(null);
+  }, []);
+  const updateModelBaseDraft = useCallback((patcher: (current: ModelParameters) => ModelParameters) => {
+    setModelBaseDraft((current) => current ? patcher(current) : current);
+    setModelBaseSaveError(null);
+  }, []);
+  const requestModelBaseSave = useCallback(() => {
+    setModelBaseAwaitingConfirmation(true);
+    setModelBaseConfirmation('');
+    setModelBaseSaveError(null);
+  }, []);
+  const saveModelBaseDraft = useCallback(async () => {
+    if (!modelBaseDraft) return;
+    if (modelBaseConfirmation.trim().toUpperCase() !== 'CONFIRMAR') {
+      setModelBaseSaveError('Escribe CONFIRMAR para guardar el nuevo Modelo Base.');
+      return;
+    }
+    const horizonMonths = Number(modelBaseDraft.simulation?.horizonMonths ?? 0);
+    const nSim = Number(modelBaseDraft.simulation?.nSim ?? 0);
+    const seed = Number(modelBaseDraft.simulation?.seed ?? 0);
+    const bucketMonths = Number(modelBaseDraft.bucketMonths ?? 0);
+    const feeAnnual = Number(modelBaseDraft.feeAnnual ?? NaN);
+    const phases = normalizeModelSpendingPhases(modelBaseDraft);
+    const invalid = !Number.isInteger(horizonMonths) || horizonMonths <= 0 || horizonMonths % 12 !== 0
+      || !Number.isInteger(nSim) || nSim < 100
+      || !Number.isInteger(seed) || seed <= 0
+      || !Number.isInteger(bucketMonths) || bucketMonths <= 0
+      || !Number.isFinite(feeAnnual) || feeAnnual < 0
+      || phases.some((phase) => !Number.isFinite(phase.amountReal) || phase.amountReal <= 0);
+    if (invalid) {
+      setModelBaseSaveError('Revisa el horizonte, Monte Carlo, seed, bucket, fee y los cuatro gastos antes de guardar.');
+      return;
+    }
+    setModelBaseSaving(true);
+    setModelBaseSaveError(null);
+    const result = await onCommitModelBase({ ...modelBaseDraft, spendingPhases: phases });
+    setModelBaseSaving(false);
+    if (!result.ok) {
+      setModelBaseSaveError(result.reason);
+      return;
+    }
+    setModelBaseDraft(null);
+    setModelBaseConfirmation('');
+    setModelBaseAwaitingConfirmation(false);
+  }, [modelBaseConfirmation, modelBaseDraft, onCommitModelBase]);
   const baseReturn = useMemo(() => computeWeightedReturn(params), [params]);
-  const baseYears = Math.round(params.simulation.horizonMonths / 12);
+  const baseYears = Math.round(baseModelParams.simulation.horizonMonths / 12);
   const baseCapital = params.capitalInitial;
   const scenarioFromParamsRaw = params.activeScenario as unknown;
   const activeScenarioForUi: ScenarioVariantId =
@@ -1635,6 +1714,11 @@ export function SimulationPage({
     ? formatWeightMix(instrumentBaseReferenceWeights)
     : 'No disponible';
   const spendingPhases = useMemo(() => normalizeModelSpendingPhases(params), [params]);
+  const baseModelSpendingPhases = useMemo(() => normalizeModelSpendingPhases(baseModelParams), [baseModelParams]);
+  const baseModelSpendingPhaseLabels = useMemo(
+    () => buildSpendingPhaseUiLabels(baseModelSpendingPhases),
+    [baseModelSpendingPhases],
+  );
   const spendingPhaseLabels = useMemo(() => buildSpendingPhaseUiLabels(spendingPhases), [spendingPhases]);
   const formatPct = (value: number | null | undefined, digits = 1) =>
     value !== null && value !== undefined && Number.isFinite(value)
@@ -1729,20 +1813,6 @@ export function SimulationPage({
     () => formatRelativePublishedAt(aurumSnapshotPublishedAt),
     [aurumSnapshotPublishedAt],
   );
-  const mixTrustSourceLabel = useMemo(() => {
-    if (isOfficialInstrumentUniverseMode(weightsSourceMode)) {
-      return universeSourceOrigin === 'firestore'
-        ? 'Mix aperturado por instrumento · cloud'
-        : universeSourceOrigin === 'bundled'
-          ? 'Mix aperturado por instrumento · versión interna de respaldo'
-          : 'Mix aperturado por instrumento · copia local';
-    }
-    if (isLegacyInstrumentUniverseMode(weightsSourceMode)) return 'Mix por instrumento · legacy recovery';
-    if (weightsSourceMode === 'missing-instrument-universe') return 'Mix por instrumento · falta universe oficial';
-    if (weightsSourceMode === 'system-defaults') return 'Mix por instrumento · defaults no auditados';
-    if (weightsSourceMode === 'simulation') return 'Mix agregado M8 · override temporal';
-    return weightsSourceLabel;
-  }, [universeSourceOrigin, weightsSourceLabel, weightsSourceMode]);
   const riskFxMismatchPct = useMemo(() => {
     const riskFx = Number(riskCapitalUsdSnapshotCLP ?? NaN);
     const operativeFx = Number(operativeFxResolution.appliedClp ?? NaN);
@@ -2225,9 +2295,9 @@ export function SimulationPage({
       : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale'
         ? 'alert'
         : 'warning';
-    const mixLevel = weightsSourceMode === 'instrument-universe' && instrumentUniverseCloudReadStatus === 'loaded' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled')
+    const mixLevel = mixSourceTone === 'ok'
       ? 'ok'
-      : weightsSourceMode === 'instrument-universe'
+      : mixSourceTone === 'warning'
         ? 'warning'
         : 'alert';
     const riskLevel = riskFxMismatchPct === null || riskCapitalUsdSnapshotCLP <= 0 || riskFxMismatchPct <= 0.02
@@ -2246,9 +2316,7 @@ export function SimulationPage({
     riskCapitalUsdSnapshotCLP,
     riskFxMismatchPct,
     snapshotFreshness,
-    instrumentUniverseCloudReadStatus,
-    universeSourceOrigin,
-    weightsSourceMode,
+    mixSourceTone,
   ]);
   const toggleTraceRow = useCallback((id: string) => {
     setOpenTraceRows((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -3195,6 +3263,7 @@ export function SimulationPage({
       {appliedDataTechnicalBlock}
       {inputM8TechnicalBlock}
       <div
+        id="midas-data-trust"
         style={{
           background: T.surface,
           border: `1px solid ${T.border}`,
@@ -3224,7 +3293,7 @@ export function SimulationPage({
           ]}
         />
         {isMobileViewport ? (
-          <details>
+          <details open={dataTrustOpen} onToggle={(e) => setDataTrustOpen((e.currentTarget as HTMLDetailsElement).open)}>
             <summary
               style={{
                 cursor: 'pointer',
@@ -3287,20 +3356,12 @@ export function SimulationPage({
               <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                   <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix agregado M8</div>
-                  <span style={{ color: weightsSourceMode === 'instrument-universe' && instrumentUniverseCloudReadStatus === 'loaded' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, border: `1px solid ${weightsSourceMode === 'instrument-universe' && instrumentUniverseCloudReadStatus === 'loaded' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}33`, background: `${weightsSourceMode === 'instrument-universe' && instrumentUniverseCloudReadStatus === 'loaded' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
-                    {instrumentUniverseCloudReadStatus === 'loading' ? 'Cargando' : instrumentUniverseCloudReadStatus === 'timeout' ? 'Timeout' : instrumentUniverseCloudReadStatus === 'missing' ? 'Falta' : weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? 'OK' : weightsSourceMode === 'instrument-universe' ? 'Copia local' : 'Respaldo'}
-                  </span>
+                  <SourceBadge label={mixSourceCompactLabel} tone={mixSourceTone} />
                 </div>
                 <div style={{ color: T.textMuted, fontSize: 10 }}>
-                  Fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{mixTrustSourceLabel}</span> · Aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{activeWeightSummary}</span>
+                  Aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{activeWeightSummary}</span>
                 </div>
-                {(weightsSourceMode !== 'instrument-universe' || (universeSourceOrigin !== 'firestore' && universeSourceOrigin !== 'bundled')) && (
-                  <div style={{ color: weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, fontSize: 10 }}>
-                    {weightsSourceMode === 'instrument-universe'
-                      ? 'El mix aperturado por instrumento está usando una copia local.'
-                      : 'El mix aperturado por instrumento está en modo de respaldo.'}
-                  </div>
-                )}
+                {mixSourceWarning ? <div style={{ color: mixSourceTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>{mixSourceWarning}</div> : null}
               </div>
             </div>
           </details>
@@ -3353,23 +3414,12 @@ export function SimulationPage({
             <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                 <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix agregado M8</div>
-                <span style={{ color: weightsSourceMode === 'instrument-universe' && instrumentUniverseCloudReadStatus === 'loaded' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, border: `1px solid ${weightsSourceMode === 'instrument-universe' && instrumentUniverseCloudReadStatus === 'loaded' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}33`, background: `${weightsSourceMode === 'instrument-universe' && instrumentUniverseCloudReadStatus === 'loaded' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
-                  {instrumentUniverseCloudReadStatus === 'loading' ? 'Cargando' : instrumentUniverseCloudReadStatus === 'timeout' ? 'Timeout' : instrumentUniverseCloudReadStatus === 'missing' ? 'Falta' : weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? 'OK' : weightsSourceMode === 'instrument-universe' ? 'Copia local' : 'Respaldo'}
-                </span>
-              </div>
-              <div style={{ color: T.textMuted, fontSize: 10 }}>
-                Fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{mixTrustSourceLabel}</span>
+                <SourceBadge label={mixSourceCompactLabel} tone={mixSourceTone} />
               </div>
               <div style={{ color: T.textMuted, fontSize: 10 }}>
                 Aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{activeWeightSummary}</span>
               </div>
-              {(weightsSourceMode !== 'instrument-universe' || (universeSourceOrigin !== 'firestore' && universeSourceOrigin !== 'bundled')) && (
-                <div style={{ color: weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, fontSize: 10 }}>
-                  {weightsSourceMode === 'instrument-universe'
-                    ? 'El mix aperturado por instrumento está usando una copia local.'
-                    : 'El mix aperturado por instrumento está en modo de respaldo.'}
-                </div>
-              )}
+              {mixSourceWarning ? <div style={{ color: mixSourceTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>{mixSourceWarning}</div> : null}
             </div>
           </div>
         )}
@@ -3626,93 +3676,62 @@ export function SimulationPage({
           ))}
         </div>
         <div style={{ marginTop: 10, display: 'grid', gap: 12 }}>
-          <div>
-            <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Horizonte base</div>
-            <div
-              style={{
-                border: `1px solid ${T.border}`,
-                background: T.surfaceEl,
-                borderRadius: 10,
-                padding: '8px 10px',
-                color: T.textPrimary,
-                fontSize: 12,
-                fontWeight: 700,
-              }}
-            >
-              {baseYears} años
-            </div>
-          </div>
-          <div>
-            <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Gasto por tramos</div>
-            <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0, 1fr)' : 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
-              {spendingPhases.map((phase, idx) => (
-                <label key={idx} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', alignItems: 'center', gap: 6 }}>
-                  <span style={{ color: T.textSecondary, fontSize: 11, whiteSpace: 'nowrap' }}>
-                    {spendingPhaseLabels[idx]?.title ?? `F${idx + 1}`}
-                  </span>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={Object.prototype.hasOwnProperty.call(spendingDraftByIndex, idx)
-                      ? (spendingDraftByIndex[idx] ?? '')
-                      : formatCLP(phase.amountReal)}
-                    onFocus={() => beginSpendingEdit(idx, phase.amountReal)}
-                    onChange={(e) => updateSpendingDraft(idx, e.target.value)}
-                    onBlur={() => commitSpendingDraft(idx)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.currentTarget.blur();
-                      }
-                    }}
-                    style={{
-                      background: T.surfaceEl,
-                      border: `1px solid ${T.border}`,
-                      borderRadius: 8,
-                      padding: '6px 8px',
-                      color: T.textPrimary,
-                      fontSize: 12,
-                    }}
-                  />
-                </label>
-              ))}
-            </div>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
-            <label style={{ display: 'grid', gridTemplateColumns: 'auto 120px', alignItems: 'center', gap: 6 }}>
-              <span style={{ color: T.textMuted, fontSize: 11 }}>Fee anual</span>
-              <input
-                type="number"
-                value={(params.feeAnnual * 100).toFixed(2)}
-                onChange={(e) => onUpdateParams((prev) => ({ ...prev, feeAnnual: Number(e.target.value) / 100 }))}
-                style={{
-                  background: T.surfaceEl,
-                  border: `1px solid ${T.border}`,
-                  borderRadius: 8,
-                  padding: '6px 8px',
-                  color: T.textPrimary,
-                  fontSize: 12,
-                }}
-              />
-            </label>
-            <div style={{ display: 'grid', gap: 6 }}>
-              <div style={{ color: T.textMuted, fontSize: 11 }}>Monte Carlo oficial</div>
-              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '6px 8px', color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
-                {Number(params.simulation?.nSim ?? 0).toLocaleString('es-CL')}
+          {!modelBaseDraft ? (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(4, minmax(0,1fr))', gap: 8 }}>
+                {[
+                  ['Horizonte', `${baseYears} años`],
+                  ['Monte Carlo', Number(baseModelParams.simulation?.nSim ?? 0).toLocaleString('es-CL')],
+                  ['Seed', Number(baseModelParams.simulation?.seed ?? 0).toLocaleString('es-CL')],
+                  ['Bucket', `${Number(baseModelParams.bucketMonths ?? 0).toLocaleString('es-CL')} meses`],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>{label}</div>
+                    <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700, marginTop: 3 }}>{value}</div>
+                  </div>
+                ))}
               </div>
-            </div>
-            <div style={{ display: 'grid', gap: 6 }}>
-              <div style={{ color: T.textMuted, fontSize: 11 }}>Seed oficial</div>
-              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '6px 8px', color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
-                {Number(params.simulation?.seed ?? 0).toLocaleString('es-CL')}
+              <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                Gasto F1–F4: {baseModelSpendingPhases.map((phase, idx) => `F${idx + 1} ${formatCLP(phase.amountReal)}`).join(' · ')} · Fee {(baseModelParams.feeAnnual * 100).toFixed(2)}%
               </div>
-            </div>
-            <div style={{ display: 'grid', gap: 6 }}>
-              <div style={{ color: T.textMuted, fontSize: 11 }}>Bucket months</div>
-              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '6px 8px', color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
-                {Number(params.bucketMonths ?? 0).toLocaleString('es-CL')}
+              <button type="button" onClick={beginModelBaseEdit} style={{ justifySelf: 'start', background: T.primary, border: `1px solid ${T.primary}`, color: '#fff', borderRadius: 999, padding: '7px 12px', fontSize: 11, fontWeight: 800, cursor: 'pointer' }}>
+                Editar Modelo Base
+              </button>
+            </>
+          ) : (
+            <>
+              <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
+                Borrador local: no modifica la simulación ni cloud hasta confirmar el guardado.
               </div>
-            </div>
-          </div>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(4, minmax(0,1fr))', gap: 8 }}>
+                <label style={{ display: 'grid', gap: 4 }}><span style={{ color: T.textMuted, fontSize: 10 }}>Horizonte (años)</span><input type="number" min="1" step="1" value={Math.round(modelBaseDraft.simulation.horizonMonths / 12)} onChange={(e) => updateModelBaseDraft((current) => { const next = { ...current, simulation: { ...current.simulation, horizonMonths: Number(e.target.value) * 12 } }; return { ...next, spendingPhases: normalizeModelSpendingPhases(next) }; })} /></label>
+                <label style={{ display: 'grid', gap: 4 }}><span style={{ color: T.textMuted, fontSize: 10 }}>Monte Carlo</span><input type="number" min="100" step="100" value={modelBaseDraft.simulation.nSim} onChange={(e) => updateModelBaseDraft((current) => ({ ...current, simulation: { ...current.simulation, nSim: Number(e.target.value) } }))} /></label>
+                <label style={{ display: 'grid', gap: 4 }}><span style={{ color: T.textMuted, fontSize: 10 }}>Seed</span><input type="number" min="1" step="1" value={modelBaseDraft.simulation.seed} onChange={(e) => updateModelBaseDraft((current) => ({ ...current, simulation: { ...current.simulation, seed: Number(e.target.value) } }))} /></label>
+                <label style={{ display: 'grid', gap: 4 }}><span style={{ color: T.textMuted, fontSize: 10 }}>Bucket months</span><input type="number" min="1" step="1" value={modelBaseDraft.bucketMonths ?? ''} onChange={(e) => updateModelBaseDraft((current) => ({ ...current, bucketMonths: Number(e.target.value) }))} /></label>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+                {normalizeModelSpendingPhases(modelBaseDraft).map((phase, idx) => (
+                  <label key={idx} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0,1fr)', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: T.textSecondary, fontSize: 11, whiteSpace: 'nowrap' }}>{baseModelSpendingPhaseLabels[idx]?.title ?? `F${idx + 1}`}</span>
+                    <input type="number" min="1" value={Math.round(phase.amountReal)} onChange={(e) => updateModelBaseDraft((current) => ({ ...current, spendingPhases: normalizeModelSpendingPhases(current).map((item, itemIndex) => itemIndex === idx ? { ...item, amountReal: Number(e.target.value) } : item) }))} />
+                  </label>
+                ))}
+              </div>
+              <label style={{ display: 'grid', gridTemplateColumns: 'auto 120px', alignItems: 'center', gap: 6 }}><span style={{ color: T.textMuted, fontSize: 11 }}>Fee anual (%)</span><input type="number" min="0" step="0.01" value={(modelBaseDraft.feeAnnual * 100).toFixed(2)} onChange={(e) => updateModelBaseDraft((current) => ({ ...current, feeAnnual: Number(e.target.value) / 100 }))} /></label>
+              {modelBaseAwaitingConfirmation && (
+                <div style={{ border: `1px solid ${T.warning}`, background: 'rgba(255, 176, 32, 0.10)', borderRadius: 10, padding: '9px 10px', display: 'grid', gap: 7 }}>
+                  <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Este cambio reemplazará el Modelo Base canónico para próximas aperturas y simulaciones.</div>
+                  <label style={{ display: 'grid', gap: 4 }}><span style={{ color: T.textSecondary, fontSize: 11 }}>Escribe CONFIRMAR para guardar</span><input value={modelBaseConfirmation} onChange={(e) => setModelBaseConfirmation(e.target.value)} autoComplete="off" /></label>
+                  <button type="button" disabled={modelBaseSaving || modelBaseConfirmation.trim().toUpperCase() !== 'CONFIRMAR'} onClick={() => void saveModelBaseDraft()} style={{ justifySelf: 'start', background: modelBaseConfirmation.trim().toUpperCase() === 'CONFIRMAR' ? T.positive : T.surfaceEl, border: `1px solid ${modelBaseConfirmation.trim().toUpperCase() === 'CONFIRMAR' ? T.positive : T.border}`, color: modelBaseConfirmation.trim().toUpperCase() === 'CONFIRMAR' ? '#fff' : T.textMuted, borderRadius: 999, padding: '7px 12px', fontSize: 11, fontWeight: 800, cursor: modelBaseConfirmation.trim().toUpperCase() === 'CONFIRMAR' ? 'pointer' : 'not-allowed' }}>{modelBaseSaving ? 'Guardando…' : 'Confirmar y guardar Modelo Base'}</button>
+                </div>
+              )}
+              {modelBaseSaveError ? <div style={{ color: T.negative, fontSize: 11, fontWeight: 700 }}>{modelBaseSaveError}</div> : null}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                <button type="button" onClick={cancelModelBaseEdit} disabled={modelBaseSaving} style={{ background: 'transparent', border: `1px solid ${T.border}`, color: T.textSecondary, borderRadius: 999, padding: '7px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>Cancelar</button>
+                {!modelBaseAwaitingConfirmation ? <button type="button" onClick={requestModelBaseSave} style={{ background: T.primary, border: `1px solid ${T.primary}`, color: '#fff', borderRadius: 999, padding: '7px 12px', fontSize: 11, fontWeight: 800, cursor: 'pointer' }}>Guardar cambios</button> : null}
+              </div>
+            </>
+          )}
           <div
             style={{
               border: `1px solid ${T.border}`,
@@ -4043,7 +4062,6 @@ export function SimulationPage({
                     <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>{sourcePolicySummary}</span>
                   ) : null}
                   <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>{snapshotApplied ? 'Snapshot Aurum aplicado' : 'Snapshot Aurum no aplicado'}</span>
-                  <SourceBadge label={mixSourceCompactLabel} tone={mixSourceTone} />
                   <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
                     USD/CLP aplicado {Number.isFinite(backupFxClp) ? formatNumber(backupFxClp) : 'No disponible'}
                   </span>

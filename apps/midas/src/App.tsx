@@ -3754,6 +3754,39 @@ export default function App() {
     commitSimParamsAndRecalc(next, 'params-change');
   }, [commitSimParamsAndRecalc, markSimulationInteraction]);
 
+  const commitModelBaseParams = useCallback(async (draft: ModelParameters) => {
+    if (!isCanonicalUserSession) return { ok: false, reason: 'Inicia sesión con la cuenta canónica para guardar el Modelo Base.' };
+    if (localReadOnlyCloudFallbackEnabled) return { ok: false, reason: 'El modo local es de solo lectura; no puede modificar el Modelo Base.' };
+
+    const normalizedBase = applyActiveDistribution({
+      ...cloneParams(draft),
+      activeScenario: 'base',
+      spendingPhases: normalizeModelSpendingPhases(draft),
+    });
+    const nextCanonical = buildCanonicalSimParams(normalizedBase, normalizedBase, { applyCapital: true });
+    const persisted = await persistActiveSimulationConfigToFirestore({
+      params: nextCanonical,
+      source: 'model_base_confirmed',
+    });
+    if (!persisted.ok) return { ok: false, reason: `No se pudo guardar el Modelo Base: ${persisted.reason}` };
+
+    const hash = persisted.active.hash ?? buildSimulationConfigHash(nextCanonical);
+    cloudSimulationConfigHashRef.current = hash;
+    cloudConfigRecalcHashRef.current = hash;
+    setBaseParams(nextCanonical);
+    setSimParams(nextCanonical);
+    setSimulationActive(false);
+    setSimulationPreset('base');
+    setSimOverrides(null);
+    setSimulationConfigSource('cloud');
+    setSimulationConfigSavedAt(persisted.active.savedAt ?? new Date().toISOString());
+    setSimulationConfigHash(hash);
+    setSimulationConfigHydrationStatus('cloud');
+    setCloudSimulationHydrated(true);
+    startRecalculation('params-change', () => nextCanonical);
+    return { ok: true as const };
+  }, [applyActiveDistribution, buildCanonicalSimParams, isCanonicalUserSession, localReadOnlyCloudFallbackEnabled, startRecalculation]);
+
   const runSim = useCallback(() => {
     markSimulationInteraction(resolveScenarioVariantId(simParams.activeScenario));
     const sanitizedOverrides = sanitizeSimulationOverridesForParams(simParams, simOverrides);
@@ -4797,7 +4830,15 @@ export default function App() {
         ? T.warning
         : headerVisualStatus.status === 'error'
           ? T.negative
-          : T.positive;
+      : T.positive;
+  const focusDataTrust = useCallback(() => {
+    if (headerStatusColor === T.positive) return;
+    setActiveTab('sim');
+    syncProductTabRoute('sim');
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => window.dispatchEvent(new Event('midas:focus-data-trust')));
+    });
+  }, [headerStatusColor]);
 
   useEffect(() => {
     const effectiveHash = effectiveRunInputHash;
@@ -5069,22 +5110,11 @@ export default function App() {
     stateLabel,
     simulationResultDiagnostics.isFinalForCurrentInput,
   ]);
-  const headerQualityIndicator = dashboardModel.quality.find((item) => item.id === 'qualitySurvivalRate') ?? null;
-  const headerQualityLabel = productActiveTab === 'dashboard' && headerQualityIndicator?.status === 'negative'
-    ? 'Calidad crítica'
-    : productActiveTab === 'dashboard' && headerQualityIndicator?.status === 'warning'
-      ? 'Calidad frágil'
-      : null;
-  const headerDisplayStatusColor = headerQualityIndicator?.status === 'negative'
-    ? T.negative
-    : headerQualityIndicator?.status === 'warning'
-      ? T.warning
-      : headerStatusColor;
-
   const content = productActiveTab === 'sim' ? (
     <SimulationPage
       resultCentral={simResult}
       params={simParams}
+      baseModelParams={baseParams}
       simOverrides={simOverrides}
       simActive={simulationActive}
       simWorking={simWorking}
@@ -5169,6 +5199,7 @@ export default function App() {
       onRestoreOfficialDistribution={restoreOfficialDistribution}
       onSimOverridesChange={handleSimOverridesChange}
       onUpdateParams={patchSimParams}
+      onCommitModelBase={commitModelBaseParams}
       onRunSimulation={runSim}
       onResetSim={resetSimulationSession}
       onOpenOptimization={() => setActiveTab('opt')}
@@ -5380,10 +5411,10 @@ export default function App() {
           </>
         )}
         <Header
-          statusColor={headerDisplayStatusColor}
+          statusColor={headerStatusColor}
           metricText={headerMetricText}
           confidenceLabel={headerConfidenceLabel}
-          qualityLabel={headerQualityLabel}
+          onStatusClick={focusDataTrust}
         />
         <main
           style={{
@@ -5427,13 +5458,14 @@ function Header({
   statusColor,
   metricText,
   confidenceLabel,
-  qualityLabel,
+  onStatusClick,
 }: {
   statusColor: string;
   metricText: string;
   confidenceLabel: string;
-  qualityLabel: string | null;
+  onStatusClick: () => void;
 }) {
+  const canOpenDataTrust = statusColor !== T.positive;
   return (
     <header
       style={{
@@ -5455,19 +5487,18 @@ function Header({
         <span style={{ color: T.primary }}>◆</span>
         <span>Midas V1.2</span>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0, flex: '1 1 auto', overflow: 'hidden', marginLeft: 12 }}>
-        <div
-          title={`${metricText} · ${confidenceLabel}`}
-          style={{ minWidth: 0, maxWidth: '100%', textAlign: 'right', lineHeight: 1.15, overflow: 'hidden' }}
-        >
+      <button
+        type="button"
+        onClick={onStatusClick}
+        disabled={!canOpenDataTrust}
+        title={canOpenDataTrust ? `${metricText} · ${confidenceLabel}. Abrir Estado de datos.` : `${metricText} · ${confidenceLabel}`}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0, flex: '1 1 auto', overflow: 'hidden', marginLeft: 12, padding: 0, border: 0, background: 'transparent', cursor: canOpenDataTrust ? 'pointer' : 'default' }}
+      >
+        <span style={{ minWidth: 0, maxWidth: '100%', textAlign: 'right', lineHeight: 1.15, overflow: 'hidden', display: 'block' }}>
           <span style={{ display: 'block', overflow: 'hidden', color: T.textPrimary, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{metricText} · {confidenceLabel}</span>
-          {qualityLabel ? <span style={{ display: 'block', marginTop: 2, color: statusColor, fontSize: 10, fontWeight: 750 }}>{qualityLabel}</span> : null}
-        </div>
-        <div
-          title={confidenceLabel}
-          style={{ width: 10, height: 10, borderRadius: '50%', background: statusColor, flex: '0 0 auto' }}
-        />
-      </div>
+        </span>
+        <span style={{ width: 10, height: 10, borderRadius: '50%', background: statusColor, flex: '0 0 auto' }} />
+      </button>
     </header>
   );
 }

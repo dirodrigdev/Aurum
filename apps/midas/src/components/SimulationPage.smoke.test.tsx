@@ -372,6 +372,7 @@ function buildProps(mode: 'base' | 'pending' | 'scenario'): Parameters<typeof Si
   return {
     resultCentral: result,
     params,
+    baseModelParams: baseParams,
     simOverrides,
     simActive: mode !== 'base',
     simWorking: false,
@@ -498,6 +499,7 @@ function buildProps(mode: 'base' | 'pending' | 'scenario'): Parameters<typeof Si
     onRestoreOfficialDistribution: () => undefined,
     onSimOverridesChange: () => undefined,
     onUpdateParams: () => undefined,
+    onCommitModelBase: async () => ({ ok: true as const }),
     onRunSimulation: () => undefined,
     onResetSim: () => undefined,
     onOpenOptimization: () => undefined,
