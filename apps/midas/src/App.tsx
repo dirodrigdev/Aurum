@@ -706,6 +706,22 @@ export function buildAggregateDataTrustVerdict(input: {
   return { label: 'Online', subtitle: 'Todo online', tone: 'ok' };
 }
 
+export function buildAggregateDataTrustVisual(verdict: AggregateDataTrustVerdict) {
+  if (verdict.label === 'Online') {
+    return { accent: T.positive, border: T.positive, surface: 'rgba(48, 205, 139, 0.12)' };
+  }
+  if (verdict.label === 'Respaldo reciente') {
+    return { accent: T.warning, border: T.positive, surface: 'rgba(255, 176, 32, 0.12)' };
+  }
+  if (verdict.label === 'Respaldo antiguo') {
+    return { accent: '#f59e0b', border: '#f59e0b', surface: 'rgba(245, 158, 11, 0.14)' };
+  }
+  if (verdict.label === 'No comparable') {
+    return { accent: T.negative, border: T.warning, surface: 'rgba(255, 92, 92, 0.12)' };
+  }
+  return { accent: T.negative, border: T.negative, surface: 'rgba(255, 92, 92, 0.18)' };
+}
+
 function resolveCanonicalCloudHydrationReady(input: {
   isCanonicalUserSession: boolean;
   simulationConfigHydrationStatus: SimulationConfigHydrationStatus;
@@ -4846,6 +4862,7 @@ export default function App() {
     fxCanonical: headerFxIsCanonical,
     blocked: Boolean(canonicalInputBlockDisplay),
   });
+  const headerDataTrustVisual = buildAggregateDataTrustVisual(headerDataTrustVerdict);
   const headerVisualStatus = useMemo(() => buildSimulationVisualStatus({
     inputSyncStatus: simulationInputSync.status,
     hasVisibleScenarioChanges,
@@ -5458,6 +5475,9 @@ export default function App() {
         )}
         <Header
           statusColor={headerStatusColor}
+          statusAccentColor={headerDataTrustVisual.accent}
+          statusBorderColor={headerDataTrustVisual.border}
+          statusSurfaceColor={headerDataTrustVisual.surface}
           metricText={headerMetricText}
           confidenceLabel={headerConfidenceLabel}
           confidenceSubtitle={headerDataTrustVerdict.subtitle}
@@ -5503,12 +5523,18 @@ export default function App() {
 
 function Header({
   statusColor,
+  statusAccentColor,
+  statusBorderColor,
+  statusSurfaceColor,
   metricText,
   confidenceLabel,
   confidenceSubtitle,
   onStatusClick,
 }: {
   statusColor: string;
+  statusAccentColor: string;
+  statusBorderColor: string;
+  statusSurfaceColor: string;
   metricText: string;
   confidenceLabel: string;
   confidenceSubtitle: string;
@@ -5541,13 +5567,14 @@ function Header({
         onClick={onStatusClick}
         disabled={!canOpenDataTrust}
         title={canOpenDataTrust ? `${metricText} · ${confidenceLabel}. Abrir Estado de datos.` : `${metricText} · ${confidenceLabel}`}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0, flex: '1 1 auto', overflow: 'hidden', marginLeft: 12, padding: 0, border: 0, background: 'transparent', cursor: canOpenDataTrust ? 'pointer' : 'default' }}
+        aria-label={`${metricText} · ${confidenceLabel} · ${confidenceSubtitle}. Abrir Data Trust.`}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0, flex: '1 1 auto', overflow: 'hidden', marginLeft: 12, padding: '3px 7px', border: `1px solid ${statusBorderColor}`, borderRadius: 8, background: statusSurfaceColor, cursor: canOpenDataTrust ? 'pointer' : 'default' }}
       >
         <span style={{ minWidth: 0, maxWidth: '100%', textAlign: 'right', lineHeight: 1.15, overflow: 'hidden', display: 'block' }}>
           <span style={{ display: 'block', overflow: 'hidden', color: T.textPrimary, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{metricText} · {confidenceLabel}</span>
           <span style={{ display: 'block', overflow: 'hidden', color: T.textMuted, fontSize: 9, fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{confidenceSubtitle}</span>
         </span>
-        <span style={{ width: 10, height: 10, borderRadius: '50%', background: statusColor, flex: '0 0 auto' }} />
+        <span style={{ width: 10, height: 10, borderRadius: '50%', background: statusAccentColor || statusColor, boxShadow: `0 0 0 2px ${statusBorderColor}`, flex: '0 0 auto' }} />
       </button>
     </header>
   );

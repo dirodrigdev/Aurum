@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { buildAggregateDataTrustVerdict, buildCanonicalBaseSimulationParams } from '../App';
+import { buildAggregateDataTrustVerdict, buildAggregateDataTrustVisual, buildCanonicalBaseSimulationParams } from '../App';
 import { DEFAULT_PARAMETERS, SCENARIO_VARIANTS } from '../domain/model/defaults';
 import { buildSourceFreshnessPolicy } from '../domain/model/sourceFreshnessPolicy';
 import { applyScenarioVariant } from '../domain/simulation/engine';
@@ -852,6 +852,20 @@ assert.deepEqual(
   buildAggregateDataTrustVerdict({ sourcePolicy: buildMixSourcePolicy('2026-05-13T15:40:33.080Z'), fxCanonical: true, blocked: false }),
   { label: 'Online', subtitle: 'Todo online', tone: 'ok' },
 );
+const onlineTrustVisual = buildAggregateDataTrustVisual({ label: 'Online', subtitle: 'Todo online', tone: 'ok' });
+assert.equal(onlineTrustVisual.accent, onlineTrustVisual.border);
+const recentBackupTrustVisual = buildAggregateDataTrustVisual({ label: 'Respaldo reciente', subtitle: '1 respaldo válido', tone: 'warning' });
+assert.notEqual(recentBackupTrustVisual.accent, recentBackupTrustVisual.border);
+assert.match(recentBackupTrustVisual.surface, /255, 176, 32/);
+const oldBackupTrustVisual = buildAggregateDataTrustVisual({ label: 'Respaldo antiguo', subtitle: 'Datos antiguos', tone: 'warning' });
+assert.match(oldBackupTrustVisual.surface, /245, 158, 11/);
+const notComparableTrustVisual = buildAggregateDataTrustVisual({ label: 'No comparable', subtitle: 'Fuente crítica vencida', tone: 'alert' });
+assert.equal(notComparableTrustVisual.border, recentBackupTrustVisual.accent);
+const blockedTrustVisual = buildAggregateDataTrustVisual({ label: 'Bloqueado', subtitle: 'Falta información crítica', tone: 'alert' });
+assert.equal(blockedTrustVisual.accent, blockedTrustVisual.border);
+assert(appSource.includes('statusBorderColor'));
+assert(appSource.includes('statusSurfaceColor'));
+assert(appSource.includes('boxShadow: `0 0 0 2px ${statusBorderColor}`'));
 assert.equal(
   buildAggregateDataTrustVerdict({ sourcePolicy: buildMixSourcePolicy('2026-05-13T15:40:33.080Z'), fxCanonical: false, blocked: false }).label,
   'Respaldo reciente',
