@@ -671,6 +671,41 @@ function sourceStatusFromFx(resolution: OperativeFxResolution): SourceStatus {
   return 'fallback';
 }
 
+export type AggregateDataTrustVerdict = {
+  label: 'Online' | 'Respaldo reciente' | 'Respaldo antiguo' | 'No comparable' | 'Bloqueado';
+  subtitle: string;
+  tone: 'ok' | 'warning' | 'alert';
+};
+
+export function buildAggregateDataTrustVerdict(input: {
+  sourcePolicy: SourceFreshnessPolicy | null;
+  fxCanonical: boolean;
+  blocked: boolean;
+}): AggregateDataTrustVerdict {
+  if (input.blocked || !input.sourcePolicy) {
+    return { label: 'Bloqueado', subtitle: 'Falta información crítica', tone: 'alert' };
+  }
+  const criticalSources = input.sourcePolicy.sources.filter((entry) => entry.usedForRun);
+  const total = criticalSources.length + 1;
+  const onlineCount = criticalSources.filter((entry) => entry.source === 'cloud' && !entry.freshness.expired).length
+    + (input.fxCanonical ? 1 : 0);
+  const fallbackCount = Math.max(0, total - onlineCount);
+  if (input.sourcePolicy.status === 'not_comparable') {
+    return { label: 'No comparable', subtitle: 'Fuente crítica vencida', tone: 'alert' };
+  }
+  if (input.sourcePolicy.status === 'using_recent_fallback' || !input.fxCanonical) {
+    return {
+      label: 'Respaldo reciente',
+      subtitle: `${onlineCount}/${total} fuentes online · ${fallbackCount} respaldo válido`,
+      tone: 'warning',
+    };
+  }
+  if (input.sourcePolicy.status === 'canonical_with_warnings') {
+    return { label: 'Respaldo antiguo', subtitle: 'Datos antiguos', tone: 'warning' };
+  }
+  return { label: 'Online', subtitle: 'Todo online', tone: 'ok' };
+}
+
 function resolveCanonicalCloudHydrationReady(input: {
   isCanonicalUserSession: boolean;
   simulationConfigHydrationStatus: SimulationConfigHydrationStatus;
@@ -4806,15 +4841,11 @@ export default function App() {
     && operativeFxResolution.usingAurumCurrent
     && Number.isFinite(aurumFxSpotUsdEur)
     && Number(aurumFxSpotUsdEur) > 0;
-  const headerDataTrustVerdict = headerSourcePolicy
-    ? headerSourcePolicy.status === 'canonical_pure' && headerFxIsCanonical
-      ? { label: 'Online', tone: 'ok' as const }
-      : headerSourcePolicy.status === 'using_recent_fallback'
-        ? { label: 'Respaldo reciente', tone: 'warning' as const }
-        : headerSourcePolicy.status === 'canonical_with_warnings'
-          ? { label: 'Respaldo antiguo', tone: 'warning' as const }
-          : { label: 'No comparable', tone: 'alert' as const }
-    : null;
+  const headerDataTrustVerdict = buildAggregateDataTrustVerdict({
+    sourcePolicy: headerSourcePolicy,
+    fxCanonical: headerFxIsCanonical,
+    blocked: Boolean(canonicalInputBlockDisplay),
+  });
   const headerVisualStatus = useMemo(() => buildSimulationVisualStatus({
     inputSyncStatus: simulationInputSync.status,
     hasVisibleScenarioChanges,
@@ -4833,32 +4864,21 @@ export default function App() {
       : headerShowsDefinitiveNumber
       ? `Sostenibilidad ${formatSuccessPct(headerSuccess40)}`
       : 'Calculando…';
-  const headerConfidenceLabel = engineRevisionStale && canonicalInputBlockedReason === 'aurum_snapshot_pending_apply'
-    ? 'Aplicación requerida'
-    : canonicalInputBlockDisplay
-    ? canonicalInputBlockDisplay.confidenceLabel
-    : headerShowsStaleResult
-    ? 'Recalcular'
-    : headerDataTrustVerdict
-      ? headerDataTrustVerdict.label
-    : localReadOnlyCloudFallbackEnabled && !headerShowsDefinitiveNumber
-      ? 'Revisión local'
-    : headerVisualStatus.label;
-  const headerStatusColor = canonicalInputBlockDisplay
-    ? T.warning
+  const headerConfidenceLabel = headerShowsStaleResult
+    ? `${headerDataTrustVerdict.label} · Recalcular`
+    : headerDataTrustVerdict.label;
+  const headerStatusColor = headerDataTrustVerdict.tone === 'alert'
+    ? T.negative
     : headerShowsStaleResult
     ? T.warning
-      : headerDataTrustVerdict?.tone === 'alert'
-        ? T.negative
-        : headerDataTrustVerdict?.tone === 'warning'
-          ? T.warning
+      : headerDataTrustVerdict.tone === 'warning'
+        ? T.warning
       : headerVisualStatus.status === 'pending'
         ? T.warning
         : headerVisualStatus.status === 'error'
           ? T.negative
       : T.positive;
   const focusDataTrust = useCallback(() => {
-    if (headerStatusColor === T.positive) return;
     setActiveTab('sim');
     syncProductTabRoute('sim');
     window.requestAnimationFrame(() => {
@@ -5440,6 +5460,7 @@ export default function App() {
           statusColor={headerStatusColor}
           metricText={headerMetricText}
           confidenceLabel={headerConfidenceLabel}
+          confidenceSubtitle={headerDataTrustVerdict.subtitle}
           onStatusClick={focusDataTrust}
         />
         <main
@@ -5484,14 +5505,16 @@ function Header({
   statusColor,
   metricText,
   confidenceLabel,
+  confidenceSubtitle,
   onStatusClick,
 }: {
   statusColor: string;
   metricText: string;
   confidenceLabel: string;
+  confidenceSubtitle: string;
   onStatusClick: () => void;
 }) {
-  const canOpenDataTrust = statusColor !== T.positive;
+  const canOpenDataTrust = true;
   return (
     <header
       style={{
@@ -5522,6 +5545,7 @@ function Header({
       >
         <span style={{ minWidth: 0, maxWidth: '100%', textAlign: 'right', lineHeight: 1.15, overflow: 'hidden', display: 'block' }}>
           <span style={{ display: 'block', overflow: 'hidden', color: T.textPrimary, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{metricText} · {confidenceLabel}</span>
+          <span style={{ display: 'block', overflow: 'hidden', color: T.textMuted, fontSize: 9, fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{confidenceSubtitle}</span>
         </span>
         <span style={{ width: 10, height: 10, borderRadius: '50%', background: statusColor, flex: '0 0 auto' }} />
       </button>

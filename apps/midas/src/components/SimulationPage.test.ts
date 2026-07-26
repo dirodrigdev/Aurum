@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { buildCanonicalBaseSimulationParams } from '../App';
+import { buildAggregateDataTrustVerdict, buildCanonicalBaseSimulationParams } from '../App';
 import { DEFAULT_PARAMETERS, SCENARIO_VARIANTS } from '../domain/model/defaults';
 import { buildSourceFreshnessPolicy } from '../domain/model/sourceFreshnessPolicy';
 import { applyScenarioVariant } from '../domain/simulation/engine';
@@ -817,6 +817,9 @@ assert(source.includes('FX granular:'));
 assert(source.includes('fecha económica'));
 assert(source.includes('Modelo Base metadata:'));
 assert(source.includes('selectedReason'));
+assert(appSource.includes('buildAggregateDataTrustVerdict'));
+assert(appSource.includes('confidenceSubtitle'));
+assert(appSource.includes("midas:focus-data-trust"));
 assert(qualityOfLifeSource.includes('Qué mirar primero'));
 assert(qualityOfLifeSource.includes('Detalle de recortes y fases'));
 assert(qualityOfLifeSource.includes('Éxito con calidad de vida'));
@@ -844,5 +847,27 @@ assert.equal(buildMixSourceCompactLabel({
 
 assert.equal(buildSourcePolicyUserSummary(buildMixSourcePolicy('2026-05-13T15:40:33.080Z')), 'Fuente oficial trazable.');
 assert.equal(buildSourcePolicyUserSummary(buildMixSourcePolicy('2026-04-27T12:00:00.000Z')), 'Fuente oficial trazable.');
+
+assert.deepEqual(
+  buildAggregateDataTrustVerdict({ sourcePolicy: buildMixSourcePolicy('2026-05-13T15:40:33.080Z'), fxCanonical: true, blocked: false }),
+  { label: 'Online', subtitle: 'Todo online', tone: 'ok' },
+);
+assert.equal(
+  buildAggregateDataTrustVerdict({ sourcePolicy: buildMixSourcePolicy('2026-05-13T15:40:33.080Z'), fxCanonical: false, blocked: false }).label,
+  'Respaldo reciente',
+);
+assert.equal(
+  buildAggregateDataTrustVerdict({ sourcePolicy: buildMixSourcePolicy('2026-04-27T12:00:00.000Z'), fxCanonical: true, blocked: false }).label,
+  'Online',
+);
+assert.equal(
+  buildAggregateDataTrustVerdict({ sourcePolicy: buildMixSourcePolicy('2026-04-27T12:00:00.000Z'), fxCanonical: true, blocked: true }).label,
+  'Bloqueado',
+);
+const expiredMixPolicy = { ...buildMixSourcePolicy('2026-04-27T12:00:00.000Z'), status: 'not_comparable' as const };
+assert.equal(
+  buildAggregateDataTrustVerdict({ sourcePolicy: expiredMixPolicy, fxCanonical: true, blocked: false }).label,
+  'No comparable',
+);
 
 console.log('SimulationPage tests passed');
