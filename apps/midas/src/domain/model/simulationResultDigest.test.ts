@@ -80,6 +80,33 @@ const baseDigestInput = {
   });
   assert.equal(diagnostics.isFinalForCurrentInput, true);
   assert.equal(diagnostics.resultInputHash, baseDigestInput.resultInputHash);
+  assert.equal(diagnostics.calculatedAt, '2026-05-12T00:00:00.000Z');
+  assert.equal(diagnostics.completedAt, diagnostics.calculatedAt);
+})();
+
+(() => {
+  const diagnostics = buildSimulationResultDiagnostics({
+    result: {
+      success40: baseDigestInput.success40,
+      probRuin40: baseDigestInput.ruin40,
+      houseSalePct: baseDigestInput.houseSalePct,
+      maxDrawdownPercentiles: { 50: baseDigestInput.maxDrawdownP50 },
+      nTotal: 3000,
+    },
+    resultInputHash: baseDigestInput.resultInputHash,
+    effectiveEngineInputHash: baseDigestInput.resultInputHash,
+    resultSeed: baseDigestInput.resultSeed,
+    expectedSeed: baseDigestInput.resultSeed,
+    resultNSim: baseDigestInput.resultNSim,
+    expectedNSim: baseDigestInput.resultNSim,
+    completedAt: '2026-05-12T00:00:00.000Z',
+    simulationRunStatus: 'completed',
+    resultMetricsAvailable: true,
+    lastRunInputHash: baseDigestInput.resultInputHash,
+    lastRenderedResultHash: baseDigestInput.resultInputHash,
+  });
+  assert.equal(diagnostics.calculatedAt, '2026-05-12T00:00:00.000Z', 'legacy completedAt is accepted as calculatedAt');
+  assert.equal(diagnostics.completedAt, '2026-05-12T00:00:00.000Z');
 })();
 
 (() => {

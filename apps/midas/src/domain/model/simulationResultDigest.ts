@@ -27,6 +27,7 @@ export type SimulationResultDiagnostics = {
   ruin40: number | null;
   houseSalePct: number | null;
   maxDrawdownP50: number | null;
+  calculatedAt: string | null;
   completedAt: string | null;
   engineVersion: string;
   engineRevision: string;
@@ -47,6 +48,7 @@ export type BuildSimulationResultDiagnosticsInput = {
   expectedSeed: number | null;
   resultNSim: number | null;
   expectedNSim: number | null;
+  calculatedAt?: string | null;
   completedAt: string | null;
   simulationRunStatus: string;
   resultMetricsAvailable: boolean;
@@ -201,6 +203,7 @@ export function buildSimulationResultDiagnostics(
     ? engineRevision
     : input.resultEngineRevision;
   const metrics = resolveMetrics(input.result);
+  const calculatedAt = input.calculatedAt ?? input.completedAt;
   const resultSeed = normalizeNumber(input.resultSeed);
   const expectedSeed = normalizeNumber(input.expectedSeed);
   const resultNSim = normalizeNumber(input.resultNSim);
@@ -238,7 +241,8 @@ export function buildSimulationResultDiagnostics(
     ruin40: metrics.ruin40 ?? null,
     houseSalePct: metrics.houseSalePct ?? null,
     maxDrawdownP50: metrics.maxDrawdownP50 ?? null,
-    completedAt: input.completedAt,
+    calculatedAt,
+    completedAt: calculatedAt,
     engineVersion: input.engineVersion ?? 'm8-central-wrapper',
     engineRevision,
     resultEngineRevision,

@@ -4672,6 +4672,7 @@ export default function App() {
       expectedSeed,
       resultNSim,
       expectedNSim,
+      calculatedAt: simulationRunCompletedAt,
       completedAt: simulationRunCompletedAt,
       simulationRunStatus,
       resultMetricsAvailable: Boolean(heroVisibleResult),
