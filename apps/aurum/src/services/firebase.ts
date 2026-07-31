@@ -4,6 +4,7 @@ import {
   browserLocalPersistence,
   connectAuthEmulator,
   getAuth,
+  getRedirectResult,
   GoogleAuthProvider,
   onAuthStateChanged,
   setPersistence,
@@ -90,6 +91,7 @@ export const getGastappConfiguredProjectId = () =>
 
 let _authInitPromise: Promise<void> | null = null;
 let _persistenceInitPromise: Promise<void> | null = null;
+let _redirectResultPromise: Promise<{ user: ReturnType<typeof getAuth>['currentUser']; error: unknown | null }> | null = null;
 
 const withTimeout = async <T,>(promise: Promise<T>, ms: number): Promise<T | undefined> => {
   let timeoutId: number | null = null;
@@ -113,6 +115,26 @@ export function ensureAuthPersistence(): Promise<void> {
     .then(() => undefined)
     .catch(() => undefined);
   return _persistenceInitPromise;
+}
+
+/**
+ * Consume the OAuth callback before the auth gate subscribes to the session.
+ * Firebase returns null when the current page was not reached through a
+ * redirect. Errors are returned to the caller so the login screen can show a
+ * useful message instead of silently restarting the flow.
+ */
+export function consumeRedirectAuthResult() {
+  if (_redirectResultPromise) return _redirectResultPromise;
+  _redirectResultPromise = (async () => {
+    await ensureAuthPersistence();
+    try {
+      const result = await getRedirectResult(auth);
+      return { user: result?.user ?? auth.currentUser, error: null };
+    } catch (error) {
+      return { user: auth.currentUser, error };
+    }
+  })();
+  return _redirectResultPromise;
 }
 
 export async function ensureE2EEmulatorAuthentication(): Promise<void> {
@@ -186,30 +208,14 @@ export function getCurrentUid(): string | null {
   return auth.currentUser?.uid ?? null;
 }
 
-const shouldUseRedirectSignIn = () => {
-  if (typeof navigator === 'undefined') return false;
-  const ua = navigator.userAgent || '';
-  const isIos = /iPad|iPhone|iPod/.test(ua);
-  const isIosBrowser = /CriOS|FxiOS|EdgiOS/.test(ua);
-  const isMobileSafari = /Mobile/.test(ua) && /Safari/.test(ua) && !/Chrome|Chromium|Android/.test(ua);
-  return isIos || isIosBrowser || isMobileSafari;
-};
-
 export async function signInWithGoogle(): Promise<void> {
   await ensureAuthPersistence();
-  if (shouldUseRedirectSignIn()) {
-    await signInWithRedirect(auth, googleProvider);
-    return;
-  }
-
   try {
     await signInWithPopup(auth, googleProvider);
   } catch (err: any) {
     const code = String(err?.code || '');
     const needsRedirect =
       code === 'auth/popup-blocked' ||
-      code === 'auth/popup-closed-by-user' ||
-      code === 'auth/cancelled-popup-request' ||
       code === 'auth/operation-not-supported-in-this-environment';
 
     if (!needsRedirect) throw err;

@@ -11,6 +11,7 @@ import { EcosystemAurum } from './pages/EcosystemAurum';
 import { WEALTH_DELTA_TOAST_TRIGGER_EVENT } from './hooks/useWealthDelta';
 import {
   auth,
+  consumeRedirectAuthResult,
   ensureAuthPersistence,
   ensureE2EEmulatorAuthentication,
   signInWithGoogle,
@@ -232,6 +233,11 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
     const startAuthListener = async () => {
       await ensureAuthPersistence();
+      const redirectState = await consumeRedirectAuthResult();
+      const redirectError = redirectState.error
+        ? String((redirectState.error as any)?.message || 'No pude completar el retorno desde Google.')
+        : '';
+      if (redirectError) setAuthError(redirectError);
       await ensureE2EEmulatorAuthentication();
       if (!alive) return;
 
@@ -247,13 +253,13 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         auth,
         (nextUser) => {
           if (timeout) window.clearTimeout(timeout);
-          setAuthError('');
+          if (!redirectError) setAuthError('');
           setUser(nextUser);
           setLoading(false);
         },
         (err) => {
           if (timeout) window.clearTimeout(timeout);
-          setAuthError(String(err?.message || 'Error inicializando autenticación.'));
+          setAuthError(redirectError || String(err?.message || 'Error inicializando autenticación.'));
           setLoading(false);
         },
       );
