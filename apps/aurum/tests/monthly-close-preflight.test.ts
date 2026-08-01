@@ -670,6 +670,10 @@ describe('monthly close preflight diagnostic', () => {
         key: 'banks_fintoc',
         label: 'Configuración de cierre · Bancos (Fintoc): última actualización 5 días atrás (máximo 3).',
         level: 'error',
+      }, {
+        key: 'cards_used',
+        label: 'Configuración de cierre · Cupos tarjetas: valor arrastrado (toggle OFF, no bloquea).',
+        level: 'warning',
       }],
     });
 
@@ -677,6 +681,10 @@ describe('monthly close preflight diagnostic', () => {
     expect(diagnostic.decisionReason).toBe('closing-gate');
     expect(diagnostic.checks.find((check) => check.key.startsWith('close_gate_'))).toMatchObject({
       status: 'fail',
+    });
+    expect(diagnostic.checks.find((check) => check.key.includes('cards_used'))).toMatchObject({
+      label: expect.stringContaining('Advertencia del cierre oficial'),
+      status: 'warn',
     });
     expect(buildMonthlyClosePreflightReport(diagnostic)).toContain('validaciones de cierre');
   });

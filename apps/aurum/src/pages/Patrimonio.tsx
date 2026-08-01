@@ -7047,7 +7047,9 @@ export const Patrimonio: React.FC = () => {
     closeValidationDraft.issues,
   ]);
   const closePreflightGateChecks = useMemo(
-    () => closePreflightDiagnostic?.checks.filter((check) => check.key.startsWith('close_gate_')) || [],
+    () => closePreflightDiagnostic?.checks.filter(
+      (check) => check.key.startsWith('close_gate_') && check.status === 'fail',
+    ) || [],
     [closePreflightDiagnostic],
   );
   const closePreflightReport = useMemo(

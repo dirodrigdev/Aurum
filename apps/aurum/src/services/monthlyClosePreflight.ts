@@ -1144,7 +1144,7 @@ export const buildMonthlyClosePreflightDiagnostic = (
     checks.push(
       buildCheck(
         `close_gate_${issue.key}_${index}`,
-        `Bloqueo del cierre oficial: ${issue.label}`,
+        `${issue.level === 'error' ? 'Bloqueo' : 'Advertencia'} del cierre oficial: ${issue.label}`,
         issue.level === 'error' ? 'fail' : 'warn',
         issue.level === 'error'
           ? 'Este bloqueo también impedirá confirmar el cierre definitivo.'
