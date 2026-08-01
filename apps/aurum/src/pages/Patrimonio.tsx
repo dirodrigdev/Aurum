@@ -8436,6 +8436,68 @@ export const Patrimonio: React.FC = () => {
                         : 'Usando referencia automática'}
                   </span>
                 </div>
+
+                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-950">
+                  <div className="font-semibold">Confirmaciones para simular el cierre</div>
+                  <div className="mt-1 text-amber-900">
+                    Estas confirmaciones sólo actualizan este preflight. El cierre definitivo las volverá a pedir antes de guardar.
+                  </div>
+                  <div className="mt-2 space-y-2">
+                    <label className="flex cursor-pointer items-start gap-2">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-4 w-4"
+                        checked={closeFxConfirmations.economic}
+                        onChange={(event) =>
+                          setCloseFxConfirmations((previous) => ({
+                            ...previous,
+                            economic: event.target.checked,
+                          }))
+                        }
+                      />
+                      <span>
+                        Confirmo que las tasas utilizadas corresponden al cierre económico de{' '}
+                        {monthLabel(closeMonthDraft).toLowerCase()}.
+                      </span>
+                    </label>
+                    {closePreflightDiagnostic.fxContext.selection.requiresManualConfirmation && (
+                      <label className="flex cursor-pointer items-start gap-2">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4"
+                          checked={closeFxConfirmations.manual}
+                          disabled={!closeFxManualReason.trim()}
+                          onChange={(event) =>
+                            setCloseFxConfirmations((previous) => ({
+                              ...previous,
+                              manual: event.target.checked,
+                            }))
+                          }
+                        />
+                        <span>
+                          Confirmo que deseo utilizar tasas particulares distintas de las sugeridas.
+                          {!closeFxManualReason.trim() ? ' Primero indica el motivo.' : ''}
+                        </span>
+                      </label>
+                    )}
+                    {closePreflightDiagnostic.fxContext.selection.requiresFallbackConfirmation && (
+                      <label className="flex cursor-pointer items-start gap-2">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4"
+                          checked={closeFxConfirmations.fallback}
+                          onChange={(event) =>
+                            setCloseFxConfirmations((previous) => ({
+                              ...previous,
+                              fallback: event.target.checked,
+                            }))
+                          }
+                        />
+                        <span>Confirmo que revisé manualmente las tasas utilizadas sin referencia automática.</span>
+                      </label>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
 

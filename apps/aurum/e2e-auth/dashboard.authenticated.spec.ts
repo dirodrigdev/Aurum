@@ -64,6 +64,36 @@ test('authenticated Settings can regenerate the canonical MIDAS publication', as
   expect(consoleErrors, `console errors: ${consoleErrors.join(' | ')}`).toEqual([]);
 });
 
+test('monthly-close preflight exposes temporary confirmations before final close', async ({ page }, testInfo) => {
+  await page.goto('/#/dashboard');
+  const dismissIncompleteClosure = page.getByRole('button', { name: 'Omitir', exact: true });
+  await expect(dismissIncompleteClosure).toBeVisible({ timeout: 30_000 });
+  await dismissIncompleteClosure.click();
+
+  await page.getByRole('link', { name: 'Patrimonio', exact: true }).click();
+  const preflightToggle = page.getByRole('button', { name: 'Simular cierre / Preflight', exact: true });
+  await expect(preflightToggle).toBeVisible({ timeout: 30_000 });
+  await preflightToggle.click();
+
+  await expect(page.getByText('Confirmaciones para simular el cierre', { exact: true })).toBeVisible();
+  const economicConfirmation = page.getByRole('checkbox', {
+    name: /tasas utilizadas corresponden al cierre económico/i,
+  });
+  await expect(economicConfirmation).toBeVisible();
+  await economicConfirmation.check();
+
+  const fallbackConfirmation = page.getByRole('checkbox', {
+    name: /revisé manualmente las tasas utilizadas sin referencia automática/i,
+  });
+  if (await fallbackConfirmation.count()) await fallbackConfirmation.check();
+
+  await page.screenshot({ path: testInfo.outputPath('aurum-close-preflight-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-close-preflight-mobile.png'), fullPage: true });
+});
+
 test('Ecosystem is reachable from Aurum Dashboard and works on mobile', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const pageErrors: string[] = [];
