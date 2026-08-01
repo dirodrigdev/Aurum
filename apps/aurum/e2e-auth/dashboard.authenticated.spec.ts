@@ -266,7 +266,25 @@ test('monthly close keeps final FX stable and carries July balances into August'
 
   await expect(page.getByRole('button', { name: 'Entrar a Inversiones' })).toContainText('+$0 (+0,0%)');
   await expect(page.getByRole('button', { name: 'Entrar a Bancos' })).toContainText('+$0 (+0,0%)');
+  const activeFxCard = page.getByTestId('patrimonio-active-fx');
+  await expect(activeFxCard).toContainText('Heredadas del cierre de julio de 2026');
+  await expect(activeFxCard).toContainText('USD/CLP');
+  await expect(activeFxCard).toContainText('930');
+  await expect(activeFxCard).toContainText('EUR/CLP');
+  await expect(activeFxCard).toContainText('1.066,4');
+  await expect(activeFxCard).toContainText('UF/CLP');
+  await expect(activeFxCard).toContainText('40.844,79');
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
   await page.screenshot({ path: testInfo.outputPath('aurum-august-carry-mobile.png'), fullPage: true });
+
+  await page.setViewportSize({ width: 768, height: 900 });
+  await expect(activeFxCard).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-active-fx-tablet.png'), fullPage: true });
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect(activeFxCard).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-active-fx-desktop.png'), fullPage: true });
 });

@@ -5124,6 +5124,13 @@ export const Patrimonio: React.FC = () => {
         : null;
     return inheritedClosureFx || fx;
   }, [activeClosure, fx, monthKey, previousClosureForAutoCarry, startMonthCheckpoint?.explicitMonthStarted]);
+  const activeDisplayFxContext = activeClosure
+    ? `Cierre de ${monthLabel(monthKey).toLowerCase()}`
+    : !startMonthCheckpoint?.explicitMonthStarted &&
+        previousClosureForAutoCarry?.monthKey === monthBeforeKey(monthKey) &&
+        previousClosureForAutoCarry.fxRates
+      ? `Heredadas del cierre de ${monthLabel(previousClosureForAutoCarry.monthKey).toLowerCase()}`
+      : 'Tasas operativas del mes iniciado';
 
   const sectionAmounts = useMemo(() => {
     if (activeClosure) return resolveSectionAmountsFromClosure(activeClosure);
@@ -7997,6 +8004,34 @@ export const Patrimonio: React.FC = () => {
           </div>
           <div className="pointer-events-none absolute bottom-2 right-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-rose-300 bg-white/35 text-rose-700/80">
             <ArrowRight size={11} />
+          </div>
+        </div>
+        <div
+          className="rounded-2xl border border-sky-200 bg-gradient-to-br from-sky-50 to-slate-50 px-3 py-3 shadow-[0_6px_16px_rgba(70,120,170,0.10)]"
+          data-testid="patrimonio-active-fx"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-sky-950">TC y UF utilizados</div>
+              <div className="mt-0.5 text-[11px] text-sky-700">{activeDisplayFxContext}</div>
+            </div>
+            <div className="rounded-full border border-sky-200 bg-white px-2 py-1 text-[10px] font-semibold text-sky-700">
+              En patrimonio
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+            {([
+              ['USD/CLP', activeDisplayFx.usdClp],
+              ['EUR/CLP', activeDisplayFx.eurClp],
+              ['UF/CLP', activeDisplayFx.ufClp],
+            ] as const).map(([label, value]) => (
+              <div key={label} className="min-w-0 rounded-xl border border-slate-200 bg-white px-2 py-2">
+                <div className="truncate text-[10px] font-medium text-slate-500">{label}</div>
+                <div className="mt-0.5 truncate text-sm font-semibold tabular-nums text-slate-900">
+                  {Number(value || 0).toLocaleString('es-CL', { maximumFractionDigits: 2 })}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
