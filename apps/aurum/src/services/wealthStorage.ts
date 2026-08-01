@@ -5760,10 +5760,23 @@ export const closeMonthlyWithCheckpoint = async (input: {
     }
     const wealthRef = await getWealthCloudRef();
     if (wealthRef) {
-      const cloudSnap = await getDocFromServer(wealthRef);
-      const cloudState = cloudSnap.exists() ? normalizeCloudWealthState(cloudSnap.data() || {}) : null;
-      const persisted = cloudState?.closures.find((item) => item.monthKey === normalizedMonthKey) || null;
-      if (!persisted) {
+      let cloudVerificationCompleted = false;
+      let persisted: WealthMonthlyClosure | null = null;
+      try {
+        const cloudSnap = await getDocFromServer(wealthRef);
+        const cloudState = cloudSnap.exists() ? normalizeCloudWealthState(cloudSnap.data() || {}) : null;
+        persisted = cloudState?.closures.find((item) => item.monthKey === normalizedMonthKey) || null;
+        cloudVerificationCompleted = true;
+      } catch (verificationError) {
+        // setDoc already acknowledged the write through syncWealthNow. A transient
+        // read-after-write failure must not turn that confirmed write into a false
+        // negative or roll back only the local copy of the closure.
+        console.warn(
+          '[Aurum][monthly-close] cloud read-after-write verification unavailable; keeping confirmed close',
+          verificationError,
+        );
+      }
+      if (cloudVerificationCompleted && !persisted) {
         throw new Error('El cierre no quedó guardado. No se actualizó el historial.');
       }
     }

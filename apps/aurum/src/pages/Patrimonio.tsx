@@ -4761,6 +4761,7 @@ export const Patrimonio: React.FC = () => {
     emptySuggestedClosureRates(deriveOperationalMonthKeyFromClosures(loadClosures(), currentMonthKey())),
   );
   const [closeFxSuggestionLoading, setCloseFxSuggestionLoading] = useState(false);
+  const closeFxSuggestionCacheRef = useRef<Map<string, SuggestedClosureRates>>(new Map());
   const [closeFxTouched, setCloseFxTouched] = useState<Record<ClosureFxRateKey, boolean>>({
     usd: false,
     eur: false,
@@ -4838,11 +4839,12 @@ export const Patrimonio: React.FC = () => {
   useEffect(() => {
     if (!closeConfirmOpen && !closePreflightVisible) return;
     let cancelled = false;
-    const closureForDraft = closures.find((closure) => closure.monthKey === closeMonthDraft) || null;
-    const sourceFx = closureForDraft?.fxRates || fx;
+    const closureForDraft = loadClosures().find((closure) => closure.monthKey === closeMonthDraft) || null;
+    const sourceFx = closureForDraft?.fxRates || loadFxRates();
     const savedDraft = loadClosureFxDraft(closeMonthDraft);
+    const cachedSuggestion = closeFxSuggestionCacheRef.current.get(closeMonthDraft) || null;
     setCloseFxDraft(buildCloseFxDraft(savedDraft?.fxRates || sourceFx));
-    setCloseFxSuggestion(emptySuggestedClosureRates(closeMonthDraft));
+    setCloseFxSuggestion(cachedSuggestion || emptySuggestedClosureRates(closeMonthDraft));
     setCloseFxTouched(savedDraft
       ? { usd: true, eur: true, uf: true }
       : { usd: false, eur: false, uf: false });
@@ -4852,6 +4854,7 @@ export const Patrimonio: React.FC = () => {
     setCloseFxSuggestionLoading(true);
     void loadSuggestedClosureRates(closeMonthDraft).then((suggestion) => {
       if (cancelled) return;
+      closeFxSuggestionCacheRef.current.set(closeMonthDraft, suggestion);
       setCloseFxSuggestion(suggestion);
       if (savedDraft) {
         setCloseFxTouched({
@@ -4873,7 +4876,7 @@ export const Patrimonio: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [closeConfirmOpen, closePreflightVisible, closeMonthDraft, closures, fx]);
+  }, [closeConfirmOpen, closePreflightVisible, closeMonthDraft]);
 
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_DISPLAY_CURRENCY_KEY, displayCurrency);
@@ -6407,9 +6410,9 @@ export const Patrimonio: React.FC = () => {
     }
     setCloseError('');
     setCloseInfo('');
-    setCloseConfirmOpen(false);
+    let createdClosure: WealthMonthlyClosure;
     try {
-      await closeMonthlyWithCheckpoint({
+      createdClosure = await closeMonthlyWithCheckpoint({
         monthKey: targetMonthKey,
         records: targetRecords,
         fxRates: fxForClose,
@@ -6422,6 +6425,7 @@ export const Patrimonio: React.FC = () => {
       });
       clearClosureFxDraft(targetMonthKey);
       setCloseFxDraftSaved(false);
+      setCloseConfirmOpen(false);
     } catch (error: any) {
       const message = String(error?.message || 'No se pudo guardar el checkpoint de cierre en la nube.');
       setCloseError(message);
@@ -6429,7 +6433,7 @@ export const Patrimonio: React.FC = () => {
     }
     refreshRecords();
     refreshClosures();
-    const persistedClosure = loadClosures().find((closure) => closure.monthKey === targetMonthKey) || null;
+    const persistedClosure = loadClosures().find((closure) => closure.monthKey === targetMonthKey) || createdClosure;
     const persistedFx = persistedClosure?.fxRates || null;
     const fxMatches =
       !!persistedFx &&

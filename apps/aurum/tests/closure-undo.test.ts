@@ -301,6 +301,25 @@ describe('monthly close undo checkpoint', () => {
     expect(loadClosures().some((closure) => closure.monthKey === '2026-05')).toBe(false);
   });
 
+  it('keeps a confirmed close when only the cloud read-after-write verification is unavailable', async () => {
+    vi.mocked(getDocFromServer).mockRejectedValueOnce(new Error('unavailable'));
+
+    const created = await closeMonthlyWithCheckpoint({
+      monthKey: '2026-05',
+      records: recordsForMonth('2026-05', 12_000_000, 93_200_000),
+      fxRates,
+      closedAt: '2026-05-31T23:59:59.000Z',
+    });
+
+    expect(created.monthKey).toBe('2026-05');
+    expect(loadClosures().some((closure) => closure.monthKey === '2026-05')).toBe(true);
+    expect(
+      (cloudStore.get('aurum_wealth/test-user')?.closures || []).some(
+        (closure: WealthMonthlyClosure) => closure.monthKey === '2026-05',
+      ),
+    ).toBe(true);
+  });
+
   it('persists non-whitelisted debt block records in the saved close summary', async () => {
     const records = [
       ...recordsForMonth('2026-05', 21_007_516, 0).filter((record) => record.label !== DEBT_CARD_CLP_LABEL),
