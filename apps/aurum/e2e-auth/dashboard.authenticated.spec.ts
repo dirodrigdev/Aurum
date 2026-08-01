@@ -137,3 +137,113 @@ test('Ecosystem is reachable from Aurum Dashboard and works on mobile', async ({
   expect(pageErrors, `page errors: ${pageErrors.join(' | ')}`).toEqual([]);
   expect(consoleErrors, `console errors: ${consoleErrors.join(' | ')}`).toEqual([]);
 });
+
+test('monthly close keeps final FX stable and carries July balances into August', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    window.localStorage.setItem('aurum.banks.update.mode.v1', 'manual');
+    window.localStorage.setItem('aurum.closing.config.v1', JSON.stringify({
+      rules: {
+        investments_value: { enabled: false, maxAgeDays: null },
+        banks_fintoc: { enabled: false, maxAgeDays: null },
+        tenencia: { enabled: false, maxAgeDays: null },
+        cards_used: { enabled: false, maxAgeDays: null },
+        property_value: { enabled: false, maxAgeDays: null },
+        mortgage_balance: { enabled: false, maxAgeDays: null },
+        mortgage_amortization: { enabled: false, maxAgeDays: null },
+      },
+    }));
+  });
+
+  let fxRequestCount = 0;
+  await page.route('**/api/fx/closure?**', async (route) => {
+    fxRequestCount += 1;
+    if (fxRequestCount > 1) await new Promise((resolve) => setTimeout(resolve, 750));
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        monthKey: '2026-07',
+        economicDate: '2026-07-31',
+        rates: { usdClp: 924.78, eurClp: 1066.4, ufClp: 40844.79 },
+        sources: { usd: 'e2e-official', eur: 'e2e-official', uf: 'e2e-official' },
+        effectiveDates: { usd: '2026-07-31', eur: '2026-07-31', uf: '2026-07-31' },
+        references: {
+          usd: { value: 924.78, availability: 'final', effectiveDate: '2026-07-31', source: 'e2e-official' },
+          eur: { value: 1066.4, availability: 'final', effectiveDate: '2026-07-31', source: 'e2e-official' },
+          uf: { value: 40844.79, availability: 'final', effectiveDate: '2026-07-31', source: 'e2e-official' },
+        },
+        retrievedAt: '2026-08-01T12:00:00.000Z',
+        warnings: [],
+      }),
+    });
+  });
+
+  await page.goto('/#/dashboard');
+  const dismissIncompleteClosure = page.getByRole('button', { name: 'Omitir', exact: true });
+  await expect(dismissIncompleteClosure).toBeVisible({ timeout: 30_000 });
+  await dismissIncompleteClosure.click();
+  await page.getByRole('link', { name: 'Patrimonio', exact: true }).click();
+  await page.evaluate(() => {
+    const config = JSON.parse(window.localStorage.getItem('aurum.closing.config.v1') || '{"rules":{}}');
+    const instruments = JSON.parse(window.localStorage.getItem('wealth_investment_instruments_v1') || '[]');
+    instruments.forEach((instrument: { id?: string }) => {
+      if (instrument.id) config.rules[`investment:${instrument.id}`] = { enabled: false, maxAgeDays: null };
+    });
+    window.localStorage.setItem('aurum.closing.config.v1', JSON.stringify(config));
+  });
+
+  const preflightToggle = page.getByRole('button', { name: 'Simular cierre / Preflight', exact: true });
+  await expect(preflightToggle).toBeVisible({ timeout: 30_000 });
+  await preflightToggle.click();
+  await expect(page.getByText('Final al 2026-07-31', { exact: true })).toHaveCount(3);
+
+  await page.getByRole('button', { name: 'Cerrar mes', exact: true }).click();
+  await expect(page.getByText('Confirmar cierre mensual', { exact: true })).toBeVisible();
+  const closeModal = page.locator('div.fixed.inset-0').filter({ hasText: 'Confirmar cierre mensual' });
+  await page.waitForTimeout(300);
+  await expect(closeModal.getByText('No disponible', { exact: true })).toHaveCount(0);
+  await expect(closeModal.getByText('Final al 2026-07-31', { exact: true })).toHaveCount(3);
+  await expect(page.locator('#close-fx-eur')).toHaveValue('1066.4');
+  await expect(page.locator('#close-fx-uf')).toHaveValue('40844.79');
+
+  await page.locator('#close-fx-usd').fill('930');
+  await page.locator('#close-fx-manual-reason').fill('Corrección valor E2E');
+  await closeModal.getByRole('checkbox', { name: /tasas utilizadas corresponden al cierre económico/i }).check();
+  await closeModal.getByRole('checkbox', { name: /deseo utilizar tasas particulares distintas/i }).check();
+  await page.screenshot({ path: testInfo.outputPath('aurum-monthly-close-mobile.png'), fullPage: true });
+  await closeModal.getByRole('button', { name: /Confirmar cierre|Cerrar con arrastres/ }).click();
+
+  await expect(page.getByText('Confirmar cierre mensual', { exact: true })).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.getByText(/Resumen estratégico agosto de 2026/i)).toBeVisible();
+
+  const persisted = await page.evaluate(() => {
+    const closures = JSON.parse(window.localStorage.getItem('wealth_closures_v1') || '[]');
+    const records = JSON.parse(window.localStorage.getItem('wealth_records_v1') || '[]');
+    const julyClosure = closures.find((closure: { monthKey?: string }) => closure.monthKey === '2026-07');
+    const augustRecords = records.filter((record: { snapshotDate?: string }) =>
+      String(record.snapshotDate || '').startsWith('2026-08-'));
+    const amountByBlock = (block: string) => augustRecords
+      .filter((record: { block?: string }) => record.block === block)
+      .reduce((sum: number, record: { amount?: number }) => sum + Number(record.amount || 0), 0);
+    return {
+      julyUsdClp: julyClosure?.fxRates?.usdClp || 0,
+      julyEconomicDate: julyClosure?.fxMetadata?.economicDate || '',
+      augustInvestment: amountByBlock('investment'),
+      augustBank: amountByBlock('bank'),
+      augustRealEstate: amountByBlock('real_estate'),
+    };
+  });
+
+  expect(persisted).toMatchObject({
+    julyUsdClp: 930,
+    julyEconomicDate: '2026-07-31',
+  });
+  expect(persisted.augustInvestment).toBeGreaterThan(0);
+  expect(persisted.augustBank).toBeGreaterThan(0);
+  expect(persisted.augustRealEstate).toBeGreaterThan(0);
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-august-carry-mobile.png'), fullPage: true });
+});

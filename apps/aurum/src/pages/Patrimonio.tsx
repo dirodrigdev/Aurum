@@ -4767,6 +4767,20 @@ export const Patrimonio: React.FC = () => {
     eur: false,
     uf: false,
   });
+  const closeFxTouchedRef = useRef<Record<ClosureFxRateKey, boolean>>({
+    usd: false,
+    eur: false,
+    uf: false,
+  });
+  const updateCloseFxTouched = (
+    next: Record<ClosureFxRateKey, boolean> | ((previous: Record<ClosureFxRateKey, boolean>) => Record<ClosureFxRateKey, boolean>),
+  ) => {
+    setCloseFxTouched((previous) => {
+      const resolved = typeof next === 'function' ? next(previous) : next;
+      closeFxTouchedRef.current = resolved;
+      return resolved;
+    });
+  };
   const [closeFxManualReason, setCloseFxManualReason] = useState('');
   const [closeFxDraftSaved, setCloseFxDraftSaved] = useState(false);
   const [closeFxConfirmations, setCloseFxConfirmations] = useState<ClosureFxConfirmations>({
@@ -4843,9 +4857,16 @@ export const Patrimonio: React.FC = () => {
     const sourceFx = closureForDraft?.fxRates || loadFxRates();
     const savedDraft = loadClosureFxDraft(closeMonthDraft);
     const cachedSuggestion = closeFxSuggestionCacheRef.current.get(closeMonthDraft) || null;
-    setCloseFxDraft(buildCloseFxDraft(savedDraft?.fxRates || sourceFx));
+    const cachedFx = cachedSuggestion
+      ? {
+          usdClp: cachedSuggestion.suggestedFxRates.usdClp || sourceFx.usdClp,
+          eurClp: cachedSuggestion.suggestedFxRates.eurClp || sourceFx.eurClp,
+          ufClp: cachedSuggestion.suggestedFxRates.ufClp || sourceFx.ufClp,
+        }
+      : sourceFx;
+    setCloseFxDraft(buildCloseFxDraft(savedDraft?.fxRates || cachedFx));
     setCloseFxSuggestion(cachedSuggestion || emptySuggestedClosureRates(closeMonthDraft));
-    setCloseFxTouched(savedDraft
+    updateCloseFxTouched(savedDraft
       ? { usd: true, eur: true, uf: true }
       : { usd: false, eur: false, uf: false });
     setCloseFxManualReason(savedDraft?.manualReason || '');
@@ -4857,19 +4878,22 @@ export const Patrimonio: React.FC = () => {
       closeFxSuggestionCacheRef.current.set(closeMonthDraft, suggestion);
       setCloseFxSuggestion(suggestion);
       if (savedDraft) {
-        setCloseFxTouched({
+        updateCloseFxTouched({
           usd: suggestion.suggestedFxRates.usdClp !== savedDraft.fxRates.usdClp,
           eur: suggestion.suggestedFxRates.eurClp !== savedDraft.fxRates.eurClp,
           uf: suggestion.suggestedFxRates.ufClp !== savedDraft.fxRates.ufClp,
         });
       } else if (!closureForDraft) {
-        setCloseFxDraft(
-          buildCloseFxDraft({
+        const suggestedDraft = buildCloseFxDraft({
             usdClp: suggestion.suggestedFxRates.usdClp || sourceFx.usdClp,
             eurClp: suggestion.suggestedFxRates.eurClp || sourceFx.eurClp,
             ufClp: suggestion.suggestedFxRates.ufClp || sourceFx.ufClp,
-          }),
-        );
+        });
+        setCloseFxDraft((previous) => ({
+          usdClp: closeFxTouchedRef.current.usd ? previous.usdClp : suggestedDraft.usdClp,
+          eurClp: closeFxTouchedRef.current.eur ? previous.eurClp : suggestedDraft.eurClp,
+          ufClp: closeFxTouchedRef.current.uf ? previous.ufClp : suggestedDraft.ufClp,
+        }));
       }
       setCloseFxSuggestionLoading(false);
     });
@@ -7107,7 +7131,7 @@ export const Patrimonio: React.FC = () => {
       eurClp: suggested.eurClp,
       ufClp: suggested.ufClp,
     }));
-    setCloseFxTouched({ usd: false, eur: false, uf: false });
+    updateCloseFxTouched({ usd: false, eur: false, uf: false });
     setCloseFxManualReason('');
     setCloseFxConfirmations({ economic: false, manual: false, fallback: false });
     clearClosureFxDraft(closeMonthDraft);
@@ -8426,7 +8450,7 @@ export const Patrimonio: React.FC = () => {
                               value={closeFxDraft[field]}
                               onChange={(event) => {
                                 setCloseFxDraft((previous) => ({ ...previous, [field]: event.target.value }));
-                                setCloseFxTouched((previous) => ({ ...previous, [key]: true }));
+                                updateCloseFxTouched((previous) => ({ ...previous, [key]: true }));
                                 setCloseFxDraftSaved(false);
                                 setCloseFxConfirmations((previous) => ({ ...previous, economic: false, manual: false }));
                               }}
@@ -8738,7 +8762,7 @@ export const Patrimonio: React.FC = () => {
             eurClp: next.eurClp ?? prev.eurClp,
             ufClp: next.ufClp ?? prev.ufClp,
           }));
-          setCloseFxTouched((previous) => ({
+          updateCloseFxTouched((previous) => ({
             usd: next.usdClp === undefined ? previous.usd : true,
             eur: next.eurClp === undefined ? previous.eur : true,
             uf: next.ufClp === undefined ? previous.uf : true,
