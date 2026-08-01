@@ -6604,6 +6604,7 @@ export const Patrimonio: React.FC = () => {
     const issues: CloseValidationIssue[] = [];
     const targetRecords = buildCanonicalCloseTargetRecords(records, targetMonthKey);
     const realCurrentMonth = calendarMonthKey;
+    const banksUpdateModeForClose = readBanksUpdateMode();
 
     if (targetMonthKey > realCurrentMonth) {
       issues.push({
@@ -6694,6 +6695,19 @@ export const Patrimonio: React.FC = () => {
 
     const isMortgageDebtLabel = (label: string) =>
       isMortgagePrincipalDebtLabel(label) || isMortgageMetaDebtLabel(label);
+    const configuredBanksFintocRule = resolveClosingConfigRule(
+      closeConfigSnapshot,
+      'banks_fintoc',
+      true,
+      3,
+    );
+    // Fintoc is only an active closing source when automatic bank updates are enabled.
+    // In manual mode the operator's bank values are the source of truth, so an old
+    // Fintoc timestamp must not block the close.
+    const banksFintocRule: ClosingConfigRule = {
+      ...configuredBanksFintocRule,
+      enabled: banksUpdateModeForClose === 'auto' && configuredBanksFintocRule.enabled,
+    };
 
     const configChecks: ConfigFieldCheck[] = [
       {
@@ -6712,8 +6726,11 @@ export const Patrimonio: React.FC = () => {
         key: 'banks_fintoc',
         label: 'Bancos (Fintoc)',
         section: 'bank',
-        rule: resolveClosingConfigRule(closeConfigSnapshot, 'banks_fintoc', true, 3),
-        records: targetRecords.filter((record) => record.block === 'bank'),
+        rule: banksFintocRule,
+        records:
+          banksUpdateModeForClose === 'auto'
+            ? targetRecords.filter((record) => record.block === 'bank' && isApiSource(record.source))
+            : [],
       },
       {
         key: 'tenencia',
@@ -7010,6 +7027,11 @@ export const Patrimonio: React.FC = () => {
       targetMonthKey: closeMonthDraft,
       calendarMonthKey,
       investmentInstruments,
+      closeValidationIssues: closeValidationDraft.issues.map((issue) => ({
+        key: issue.type,
+        label: issue.label,
+        level: issue.level,
+      })),
     });
   }, [
     closePreflightVisible,
@@ -7022,7 +7044,12 @@ export const Patrimonio: React.FC = () => {
     closeMonthDraft,
     calendarMonthKey,
     investmentInstruments,
+    closeValidationDraft.issues,
   ]);
+  const closePreflightGateChecks = useMemo(
+    () => closePreflightDiagnostic?.checks.filter((check) => check.key.startsWith('close_gate_')) || [],
+    [closePreflightDiagnostic],
+  );
   const closePreflightReport = useMemo(
     () => (closePreflightDiagnostic ? buildMonthlyClosePreflightReport(closePreflightDiagnostic) : ''),
     [closePreflightDiagnostic],
@@ -8285,6 +8312,8 @@ export const Patrimonio: React.FC = () => {
                       ? 'NO-GO: mes económico aún abierto'
                       : closePreflightDiagnostic.decision === 'NO_GO_PENDING_CONFIRMATIONS'
                         ? 'NO-GO: confirmaciones pendientes'
+                        : closePreflightDiagnostic.decision === 'NO_GO_CLOSING_GATE'
+                          ? 'NO-GO: validaciones de cierre'
                         : 'NO-GO: fuentes no reconciliadas'}
               </div>
             </div>
@@ -8321,6 +8350,23 @@ export const Patrimonio: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            {!!closePreflightGateChecks.length && (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-900">
+                <div className="font-semibold">Bloqueos que también impedirían el cierre oficial</div>
+                <div className="mt-2 space-y-1">
+                  {closePreflightGateChecks.map((check) => (
+                    <div key={check.key} className="flex items-start gap-2">
+                      <span className="font-semibold">•</span>
+                      <span>{check.label}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-2 text-red-800">
+                  Estos bloqueos requieren resolver la fuente o configuración indicada; no se pueden aprobar sólo con una confirmación.
+                </div>
+              </div>
+            )}
 
             {closePreflightDiagnostic.fxContext && (
               <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 p-3">

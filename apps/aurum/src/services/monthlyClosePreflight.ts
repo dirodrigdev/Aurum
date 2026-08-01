@@ -43,17 +43,25 @@ export type MonthlyClosePreflightDecision =
   | 'GO_PARA_CERRAR'
   | 'NO_GO_ECONOMIC_MONTH_OPEN'
   | 'NO_GO_PENDING_CONFIRMATIONS'
+  | 'NO_GO_CLOSING_GATE'
   | 'NO_GO_SOURCE_OF_TRUTH_UNCLEAR'
   | 'NO_GO_DATA_QUALITY';
 
 export type PreflightDecisionReason =
   | 'economic-month-open'
   | 'pending-confirmations'
+  | 'closing-gate'
   | 'data-quality'
   | 'reconciliation'
   | 'ready';
 
 export type MonthlyClosePreflightStatus = 'ok' | 'warn' | 'fail';
+
+export interface MonthlyCloseValidationGateIssue {
+  key: string;
+  label: string;
+  level: 'error' | 'warning';
+}
 
 export interface MonthlyClosePreflightAssetRow {
   assetId: string;
@@ -153,6 +161,7 @@ interface MonthlyClosePreflightInput {
   targetMonthKey?: string;
   calendarMonthKey?: string;
   investmentInstruments?: WealthInvestmentInstrument[];
+  closeValidationIssues?: MonthlyCloseValidationGateIssue[];
   todayYmd?: string;
 }
 
@@ -433,6 +442,7 @@ const formatPreflightDecision = (decision: MonthlyClosePreflightDecision) => {
   if (decision === 'GO_PARA_CERRAR') return 'GO PARA CERRAR';
   if (decision === 'NO_GO_ECONOMIC_MONTH_OPEN') return 'NO-GO: mes económico aún abierto';
   if (decision === 'NO_GO_PENDING_CONFIRMATIONS') return 'NO-GO: confirmaciones pendientes';
+  if (decision === 'NO_GO_CLOSING_GATE') return 'NO-GO: validaciones de cierre';
   if (decision === 'NO_GO_DATA_QUALITY') return 'NO-GO: calidad de datos';
   return 'NO-GO: fuentes no reconciliadas';
 };
@@ -1129,6 +1139,20 @@ export const buildMonthlyClosePreflightDiagnostic = (
     ),
   ];
 
+  const closeValidationIssues = input.closeValidationIssues || [];
+  closeValidationIssues.forEach((issue, index) => {
+    checks.push(
+      buildCheck(
+        `close_gate_${issue.key}_${index}`,
+        `Bloqueo del cierre oficial: ${issue.label}`,
+        issue.level === 'error' ? 'fail' : 'warn',
+        issue.level === 'error'
+          ? 'Este bloqueo también impedirá confirmar el cierre definitivo.'
+          : 'Advertencia del cierre definitivo; no bloquea por sí sola.',
+      ),
+    );
+  });
+
   const warnings = checks
     .filter((check) => check.status !== 'ok')
     .map((check) => `${check.label}: ${check.message}`);
@@ -1158,6 +1182,7 @@ export const buildMonthlyClosePreflightDiagnostic = (
       'fx_fallback_confirmation',
     ].includes(check.key) && check.status === 'fail',
   );
+  const hasClosingGateFailure = closeValidationIssues.some((issue) => issue.level === 'error');
 
   const decision: MonthlyClosePreflightDecision = hasDataQualityFailure
     ? 'NO_GO_DATA_QUALITY'
@@ -1167,16 +1192,20 @@ export const buildMonthlyClosePreflightDiagnostic = (
         ? 'NO_GO_ECONOMIC_MONTH_OPEN'
         : hasPendingConfirmations
           ? 'NO_GO_PENDING_CONFIRMATIONS'
+          : hasClosingGateFailure
+            ? 'NO_GO_CLOSING_GATE'
           : 'GO_PARA_CERRAR';
   const decisionReason: PreflightDecisionReason = hasDataQualityFailure
     ? 'data-quality'
     : hasSourceTruthFailure || fillMissingWarning.wouldRun || debtAlignmentWarning.wouldAlign
       ? 'reconciliation'
-      : economicMonthOpen
-        ? 'economic-month-open'
-        : hasPendingConfirmations
-          ? 'pending-confirmations'
-          : 'ready';
+    : economicMonthOpen
+      ? 'economic-month-open'
+      : hasPendingConfirmations
+        ? 'pending-confirmations'
+        : hasClosingGateFailure
+          ? 'closing-gate'
+        : 'ready';
 
   return {
     candidateMonthKey,

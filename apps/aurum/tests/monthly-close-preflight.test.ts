@@ -647,4 +647,37 @@ describe('monthly close preflight diagnostic', () => {
     expect(diagnostic.checks.find((check) => check.key === 'economic_month_open')).toMatchObject({ status: 'warn' });
     expect(buildMonthlyClosePreflightReport(diagnostic)).toContain('NO-GO: mes económico aún abierto');
   });
+
+  it('surfaces a closing validation gate separately from user confirmations', () => {
+    const diagnostic = buildMonthlyClosePreflightDiagnostic({
+      records: [record({
+        id: 'bank-jun-gate',
+        block: 'bank',
+        label: BANK_BCHILE_CLP_LABEL,
+        amount: 20_000_000,
+        currency: 'CLP',
+        snapshotDate: '2026-06-30',
+        createdAt: '2026-06-30T10:00:00Z',
+      })],
+      closures: [],
+      fxForClose: fx,
+      includeRiskCapitalInTotals: false,
+      uiMonthKey: '2026-06',
+      targetMonthKey: '2026-06',
+      calendarMonthKey: '2026-06',
+      investmentInstruments: [],
+      closeValidationIssues: [{
+        key: 'banks_fintoc',
+        label: 'Configuración de cierre · Bancos (Fintoc): última actualización 5 días atrás (máximo 3).',
+        level: 'error',
+      }],
+    });
+
+    expect(diagnostic.decision).toBe('NO_GO_CLOSING_GATE');
+    expect(diagnostic.decisionReason).toBe('closing-gate');
+    expect(diagnostic.checks.find((check) => check.key.startsWith('close_gate_'))).toMatchObject({
+      status: 'fail',
+    });
+    expect(buildMonthlyClosePreflightReport(diagnostic)).toContain('validaciones de cierre');
+  });
 });
