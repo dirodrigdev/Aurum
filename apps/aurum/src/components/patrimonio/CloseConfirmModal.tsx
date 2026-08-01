@@ -35,6 +35,7 @@ interface CloseConfirmModalProps {
   closeWarningIssues: CloseValidationIssueView[];
   closeInfo: string;
   closeError: string;
+  closeRunning?: boolean;
   closeFxReady: boolean;
   closePreview: {
     banks: number;
@@ -93,6 +94,7 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
   closeWarningIssues,
   closeInfo,
   closeError,
+  closeRunning = false,
   closeFxReady,
   closePreview,
   closeFxDraft,
@@ -153,6 +155,16 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
       <div className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
         <div className="text-base font-semibold text-slate-900">Confirmar cierre mensual</div>
         <div className="mt-1 text-sm text-slate-600">Selecciona el mes que quieres cerrar y resuelve bloqueos aquí mismo.</div>
+
+        {closeRunning && (
+          <div
+            className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-800"
+            role="status"
+            aria-live="polite"
+          >
+            Guardando cierre… Creando respaldo, persistiendo y verificando. No cierres esta ventana.
+          </div>
+        )}
 
         <div className="mt-3">
           <label className="text-xs text-slate-600">Mes a cerrar</label>
@@ -455,14 +467,16 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
         )}
 
         <div className="mt-4 grid grid-cols-2 gap-2">
-          <Button variant="outline" onClick={onCancel}>
+          <Button variant="outline" onClick={onCancel} disabled={closeRunning}>
             Cancelar
           </Button>
           <Button
             onClick={() => onAttemptClose(closeMonthDraft)}
-            disabled={closeBlockingIssues.length > 0 || !closeFxReady || !fxGuidanceReady}
+            disabled={closeRunning || closeBlockingIssues.length > 0 || !closeFxReady || !fxGuidanceReady}
           >
-            {selectedClosureMonthKey
+            {closeRunning
+              ? 'Guardando cierre…'
+              : selectedClosureMonthKey
               ? closeWarningIssues.length
                 ? 'Sobrescribir con arrastres'
                 : 'Sobrescribir cierre'

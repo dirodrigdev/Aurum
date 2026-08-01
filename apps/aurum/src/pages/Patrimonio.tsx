@@ -269,7 +269,7 @@ export const buildMonthStartConfirmationCopy = (input: {
     input.previousClosureMonthKey,
   ).toUpperCase()}.`,
   details:
-    'Solo se aplicará el roll-forward hipotecario. No se tocarán bancos, USD manual, inversiones, TC/UF, deuda no hipotecaria, valor propiedad ni el cierre anterior.',
+    'Se actualizarán TC/UF y se aplicará el roll-forward hipotecario. No se tocarán bancos, USD manual, inversiones, deuda no hipotecaria, valor propiedad ni el cierre anterior.',
   confirmText: `Iniciar ${monthLabel(input.monthKey).toLowerCase()}`,
 });
 
@@ -4800,6 +4800,8 @@ export const Patrimonio: React.FC = () => {
   const [closePreflightCopied, setClosePreflightCopied] = useState(false);
   const [closeBackupCheck, setCloseBackupCheck] = useState<MonthlyCloseCheckpointReadinessResult | null>(null);
   const [closeBackupRunning, setCloseBackupRunning] = useState(false);
+  const [closeRunning, setCloseRunning] = useState(false);
+  const closeRunningRef = useRef(false);
   const [startMonthRunning, setStartMonthRunning] = useState(false);
   const [startMonthFlowError, setStartMonthFlowError] = useState('');
   const [startMonthFailedStep, setStartMonthFailedStep] = useState<StartMonthActionKey | null>(null);
@@ -5113,10 +5115,20 @@ export const Patrimonio: React.FC = () => {
     };
   };
 
+  const activeDisplayFx = useMemo(() => {
+    if (activeClosure?.fxRates) return activeClosure.fxRates;
+    const inheritedClosureFx =
+      !startMonthCheckpoint?.explicitMonthStarted &&
+      previousClosureForAutoCarry?.monthKey === monthBeforeKey(monthKey)
+        ? previousClosureForAutoCarry.fxRates
+        : null;
+    return inheritedClosureFx || fx;
+  }, [activeClosure, fx, monthKey, previousClosureForAutoCarry, startMonthCheckpoint?.explicitMonthStarted]);
+
   const sectionAmounts = useMemo(() => {
     if (activeClosure) return resolveSectionAmountsFromClosure(activeClosure);
-    return computeWealthHomeSectionAmounts(monthRecordsForTotals, fx);
-  }, [activeClosure, monthRecordsForTotals, fx, includeRiskCapitalInTotals]);
+    return computeWealthHomeSectionAmounts(monthRecordsForTotals, activeDisplayFx);
+  }, [activeClosure, monthRecordsForTotals, activeDisplayFx, includeRiskCapitalInTotals]);
   const calendarMonthKey = useMemo(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -5241,8 +5253,6 @@ export const Patrimonio: React.FC = () => {
     return closure.summary.netConsolidatedClp;
   };
 
-  const activeDisplayFx = activeClosure?.fxRates || fx;
-
   const metrics = useMemo(() => {
     const convertNetToDisplay = (
       netClp: number,
@@ -5305,7 +5315,7 @@ export const Patrimonio: React.FC = () => {
       return null;
     }
     const currentRecords = activeClosure?.records || monthRecordsForTotals;
-    const currentFx = activeClosure?.fxRates || fx;
+    const currentFx = activeDisplayFx;
     if (!currentRecords?.length || !currentFx) return null;
 
     const expectedPrevious = fromClpUsingFx(
@@ -5333,7 +5343,7 @@ export const Patrimonio: React.FC = () => {
   }, [
     activeClosure,
     displayCurrency,
-    fx,
+    activeDisplayFx,
     includeRiskCapitalInTotals,
     monthKey,
     monthRecordsForTotals,
@@ -6145,8 +6155,8 @@ export const Patrimonio: React.FC = () => {
     }
   };
 
-  const runStartMonthFxUpdate = async () => {
-    if (startMonthRunning) return;
+  const runStartMonthFxUpdate = async (): Promise<boolean> => {
+    if (startMonthRunning) return false;
     const monthToStart = monthKey;
     setStartMonthFlowError('');
     setStartMonthFailedStep(null);
@@ -6156,10 +6166,12 @@ export const Patrimonio: React.FC = () => {
       refreshAllWealthState();
       setCarryMessage(result.updated ? 'TC/UF actualizados ✓' : 'TC/UF sin cambios.');
       markStartMonthStepApplied(monthToStart, 'fx');
+      return true;
     } catch (error: any) {
       const message = String(error?.message || 'No pude actualizar TC/UF.');
       markStartMonthStepFailed(monthToStart, 'fx', message);
       setCarryMessage(`Error al actualizar TC/UF: ${message}`);
+      return false;
     } finally {
       setStartMonthRunning(false);
     }
@@ -6280,7 +6292,7 @@ export const Patrimonio: React.FC = () => {
     setStartMonthConfirmOpen(true);
   };
 
-  const confirmStartMonthInitialize = () => {
+  const confirmStartMonthInitialize = async () => {
     const runtime = evaluateMonthStartRuntimeState(monthKey);
     if (!runtime.eligibility.canStart) {
       setStartMonthConfirmOpen(false);
@@ -6288,6 +6300,8 @@ export const Patrimonio: React.FC = () => {
       return;
     }
     setStartMonthConfirmOpen(false);
+    const fxReady = await runStartMonthFxUpdate();
+    if (!fxReady) return;
     runStartMonthRealEstateUpdate(monthKey);
   };
 
@@ -6523,18 +6537,28 @@ export const Patrimonio: React.FC = () => {
     fxSelection: ClosureFxSelection,
     carriedCount: number,
   ) => {
+    if (closeRunningRef.current) return;
+    closeRunningRef.current = true;
+    setCloseRunning(true);
+    setCloseInfo('Guardando cierre… Creando respaldo, persistiendo y verificando.');
     setPendingCloseOverwrite(null);
     setCloseOverwriteConfirmOpen(false);
-    const result = await completeMonthlyClose(targetMonthKey, fxForClose, fxSelection);
-    if (result.ok === false) {
-      setCarryMessage('');
-      setCloseError(result.errorMessage);
-      return;
-    }
-    if (carriedCount) {
-      setCarryMessage(
-        `Cierre realizado con ${carriedCount} valor(es) arrastrados de mes anterior. Puedes actualizarlos luego para el mes en curso.`,
-      );
+    try {
+      const result = await completeMonthlyClose(targetMonthKey, fxForClose, fxSelection);
+      if (result.ok === false) {
+        setCarryMessage('');
+        setCloseError(result.errorMessage);
+        return;
+      }
+      setCloseInfo('');
+      if (carriedCount) {
+        setCarryMessage(
+          `Cierre realizado con ${carriedCount} valor(es) arrastrados de mes anterior. Puedes actualizarlos luego para el mes en curso.`,
+        );
+      }
+    } finally {
+      closeRunningRef.current = false;
+      setCloseRunning(false);
     }
   };
 
@@ -7642,9 +7666,9 @@ export const Patrimonio: React.FC = () => {
           includeRiskCapitalInTotals={includeRiskCapitalInTotals}
           onToggleRiskCapitalView={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
           investmentInstruments={investmentInstruments}
-          usdClp={fx.usdClp}
-          eurClp={fx.eurClp}
-          ufClp={fx.ufClp}
+          usdClp={activeDisplayFx.usdClp}
+          eurClp={activeDisplayFx.eurClp}
+          ufClp={activeDisplayFx.ufClp}
           carryMessage={carryMessage}
           onBack={() => {
             setActiveSection(null);
@@ -8726,6 +8750,7 @@ export const Patrimonio: React.FC = () => {
         closeWarningIssues={closeWarningIssues}
         closeInfo={closeInfo}
         closeError={closeError}
+        closeRunning={closeRunning}
         closeFxReady={closeFxReady}
         closePreview={closePreview}
         closeFxDraft={closeFxDraft}

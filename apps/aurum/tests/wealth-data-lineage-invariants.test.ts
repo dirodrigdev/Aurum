@@ -927,6 +927,7 @@ describe('wealth data lineage invariants', () => {
     expect(copy.message).toContain('MAYO DE 2026');
     expect(copy.confirmText).toBe('Iniciar junio de 2026');
     expect(copy.details).toContain('No se tocarán bancos');
+    expect(copy.details).toContain('Se actualizarán TC/UF');
   });
 
   it('gates the FX reflection popup until the month has been explicitly started', () => {

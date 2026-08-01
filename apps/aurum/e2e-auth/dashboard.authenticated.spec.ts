@@ -214,6 +214,8 @@ test('monthly close keeps final FX stable and carries July balances into August'
   await closeModal.getByRole('checkbox', { name: /deseo utilizar tasas particulares distintas/i }).check();
   await page.screenshot({ path: testInfo.outputPath('aurum-monthly-close-mobile.png'), fullPage: true });
   await closeModal.getByRole('button', { name: /Confirmar cierre|Cerrar con arrastres/ }).click();
+  await expect(closeModal.getByRole('status')).toContainText('Guardando cierre');
+  await expect(closeModal.getByRole('button', { name: 'Guardando cierre…', exact: true })).toBeDisabled();
 
   await expect(page.getByText('Confirmar cierre mensual', { exact: true })).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByText(/Resumen estratégico agosto de 2026/i)).toBeVisible();
@@ -227,12 +229,22 @@ test('monthly close keeps final FX stable and carries July balances into August'
     const amountByBlock = (block: string) => augustRecords
       .filter((record: { block?: string }) => record.block === block)
       .reduce((sum: number, record: { amount?: number }) => sum + Number(record.amount || 0), 0);
+    const allJulyRecordsCarried = (julyClosure?.records || []).every((source: {
+      block?: string; label?: string; currency?: string; amount?: number;
+    }) => augustRecords.some((target: {
+      block?: string; label?: string; currency?: string; amount?: number;
+    }) =>
+      target.block === source.block &&
+      target.label === source.label &&
+      target.currency === source.currency &&
+      Number(target.amount || 0) === Number(source.amount || 0)));
     return {
       julyUsdClp: julyClosure?.fxRates?.usdClp || 0,
       julyEconomicDate: julyClosure?.fxMetadata?.economicDate || '',
       augustInvestment: amountByBlock('investment'),
       augustBank: amountByBlock('bank'),
       augustRealEstate: amountByBlock('real_estate'),
+      allJulyRecordsCarried,
     };
   });
 
@@ -243,6 +255,17 @@ test('monthly close keeps final FX stable and carries July balances into August'
   expect(persisted.augustInvestment).toBeGreaterThan(0);
   expect(persisted.augustBank).toBeGreaterThan(0);
   expect(persisted.augustRealEstate).toBeGreaterThan(0);
+  expect(persisted.allJulyRecordsCarried).toBe(true);
+
+  const closeSummaryButton = page.getByRole('button', { name: 'Cerrar ventana', exact: true });
+  await expect(closeSummaryButton).toBeVisible();
+  await closeSummaryButton.click();
+  const snoozeButton = page.getByRole('button', { name: 'Recordarme después', exact: true }).last();
+  await expect(snoozeButton).toBeVisible();
+  await snoozeButton.click();
+
+  await expect(page.getByRole('button', { name: 'Entrar a Inversiones' })).toContainText('+$0 (+0,0%)');
+  await expect(page.getByRole('button', { name: 'Entrar a Bancos' })).toContainText('+$0 (+0,0%)');
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
   await page.screenshot({ path: testInfo.outputPath('aurum-august-carry-mobile.png'), fullPage: true });
