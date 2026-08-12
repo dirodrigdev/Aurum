@@ -86,6 +86,7 @@ import {
   saveFxRates,
   saveIncludeRiskCapitalInTotals,
   saveWealthRecords,
+  syncWealthNow,
   setInvestmentInstrumentMonthExcluded,
   upsertInvestmentInstrument,
   upsertWealthRecord,
@@ -1633,6 +1634,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   }>({ label: '', currency: 'CLP', amount: '', note: '' });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [fintocStatus, setFintocStatus] = useState('');
+  const [savingToCloud, setSavingToCloud] = useState(false);
   const [fintocDiscovering, setFintocDiscovering] = useState(false);
   const [fintocDiscovery, setFintocDiscovery] = useState<FintocDiscoverResponse | null>(null);
   const [fintocLastSync, setFintocLastSync] = useState<{
@@ -2106,6 +2108,24 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     return persisted;
   };
 
+  const confirmInvestmentCloudSave = async () => {
+    if (section !== 'investment') return true;
+
+    setSavingToCloud(true);
+    try {
+      const synced = await syncWealthNow();
+      if (!synced) {
+        setOcrError(
+          'El valor quedó guardado localmente, pero no pude confirmarlo en la nube. No se marcará como guardado; revisa la conexión y reintenta.',
+        );
+        return false;
+      }
+      return true;
+    } finally {
+      setSavingToCloud(false);
+    }
+  };
+
   const openImagePicker = () => {
     if (!hiddenUploadInputRef.current) return;
     hiddenUploadInputRef.current.click();
@@ -2290,7 +2310,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     }
   };
 
-  const saveSuggestion = (item: EditableSuggestion, idx?: number) => {
+  const saveSuggestion = async (item: EditableSuggestion, idx?: number) => {
     const snapshotNow = visualSnapshotDate;
     const normalizedBlock = normalizeSuggestionBlock(item.block);
     const existing = dedupedSectionRecords.find(
@@ -2335,6 +2355,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       setOcrError('Guardado, pero no pude reflejarlo en el mes seleccionado. Reintenta.');
       return;
     }
+    if (!(await confirmInvestmentCloudSave())) return;
     if (typeof idx === 'number') {
       setSuggestions((prev) => prev.filter((_, i) => i !== idx));
     }
@@ -2349,7 +2370,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     onDataChanged();
   };
 
-  const saveAllSuggestions = () => {
+  const saveAllSuggestions = async () => {
     const snapshotNow = visualSnapshotDate;
     let failed = false;
     for (const item of suggestions) {
@@ -2406,6 +2427,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       setOcrError('Guardado parcial: algunos valores no quedaron en el mes seleccionado. Reintenta.');
       return;
     }
+    if (!(await confirmInvestmentCloudSave())) return;
     markOperationalRowsSaved(
       suggestions.map((item) => ({ label: item.label, currency: item.currency })),
       'Guardado ✓',
@@ -3031,7 +3053,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     setOpenLoadPanel(true);
   };
 
-  const saveQuickFill = () => {
+  const saveQuickFill = async () => {
     if (!quickFill) return;
     const amount = parseStrictNumber(quickFill.amount);
     const normalizedAmount = quickFill.block === 'debt' ? Math.abs(amount) : amount;
@@ -3047,6 +3069,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       snapshotDate: quickFill.snapshotDate,
     }, 'saveQuickFill');
     if (!saved) return;
+    if (!(await confirmInvestmentCloudSave())) return;
     markOperationalRowsSaved([{ label: quickFill.label, currency: quickFill.currency }], 'Guardado ✓');
     setQuickFill(null);
     setActiveSourceContext(null);
@@ -3055,7 +3078,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     onDataChanged();
   };
 
-  const saveMultiQuickFill = () => {
+  const saveMultiQuickFill = async () => {
     if (!multiQuickFill) return;
     const parsedEntries = multiQuickFill.entries
       .map((entry) => ({
@@ -3078,6 +3101,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       }, 'saveMultiQuickFill');
       if (!saved) return;
     }
+    if (!(await confirmInvestmentCloudSave())) return;
     markOperationalRowsSaved(
       parsedEntries.map((entry) => ({ label: entry.label, currency: entry.currency })),
       'Guardado ✓',
@@ -4461,7 +4485,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                       value={quickFill.note || ''}
                       onChange={(e) => setQuickFill({ ...quickFill, note: e.target.value })}
                     />
-                    <Button onClick={saveQuickFill}>Guardar</Button>
+                    <Button onClick={saveQuickFill} disabled={savingToCloud}>Guardar</Button>
                   </div>
                 ) : multiQuickFill ? (
                   <div className="space-y-3">
@@ -4486,7 +4510,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                         </div>
                       ))}
                     </div>
-                    <Button onClick={saveMultiQuickFill}>Guardar</Button>
+                    <Button onClick={saveMultiQuickFill} disabled={savingToCloud}>Guardar</Button>
                   </div>
                 ) : (
                   <>
@@ -4567,7 +4591,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                           {formatCurrency(item.amount, item.currency)}
                         </div>
                         <div className="flex items-center gap-2">
-                          <Button size="sm" onClick={() => saveSuggestion(item, idx)}>
+                          <Button size="sm" onClick={() => void saveSuggestion(item, idx)} disabled={savingToCloud}>
                             Guardar
                           </Button>
                           <Button
@@ -4581,7 +4605,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                       </div>
                     ))}
                     <div className="flex items-center gap-2">
-                      <Button variant="secondary" onClick={saveAllSuggestions}>
+                      <Button variant="secondary" onClick={() => void saveAllSuggestions()} disabled={savingToCloud}>
                         Guardar todo
                       </Button>
                       <Button variant="outline" onClick={() => setSuggestions([])}>

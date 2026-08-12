@@ -550,6 +550,15 @@ const readWealthUpdatedAt = () => {
   }
 };
 
+/**
+ * Prevent an in-flight cloud sync from committing a snapshot captured before
+ * a newer local mutation (for example, an OCR-confirmed investment value).
+ */
+export const isWealthCloudWriteStale = (
+  capturedLocalUpdatedAt: string,
+  currentLocalUpdatedAt: string,
+) => capturedLocalUpdatedAt !== currentLocalUpdatedAt;
+
 const dispatchWealthDataUpdated = () => {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(WEALTH_DATA_UPDATED_EVENT));
@@ -5136,6 +5145,18 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       const mergedBankTokens = merged.bankTokens;
       const mergedFx = merged.fx;
       const mergedUpdatedAt = nextMonotonicIsoAgainstRemote();
+
+      // A save may have happened while the remote read/merge was in flight.
+      // Never let that older snapshot overwrite the newer local value.
+      if (isWealthCloudWriteStale(localUpdatedAt, readWealthUpdatedAt())) {
+        wealthCloudSyncRequestedWhileRunning = true;
+        saveWealthSyncUiState({
+          status: 'dirty',
+          at: nowIso(),
+          message: 'Cambios sin guardar',
+        });
+        return false;
+      }
 
       await setDoc(
         ref,

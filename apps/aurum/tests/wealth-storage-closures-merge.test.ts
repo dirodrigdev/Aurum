@@ -6,6 +6,7 @@ vi.mock('../src/services/firebase', () => ({
   getCurrentUid: () => null,
 }));
 import {
+  isWealthCloudWriteStale,
   mergeClosuresForSync,
   protectRemoteClosuresFromEmptyOverwrite,
   type WealthMonthlyClosure,
@@ -30,6 +31,11 @@ const makeClosure = (monthKey: string, id: string, closedAt: string): WealthMont
 });
 
 describe('wealth storage closures merge', () => {
+  it('detects a newer local revision before an in-flight cloud write', () => {
+    expect(isWealthCloudWriteStale('2026-07-13T10:00:00.001Z', '2026-07-13T10:00:00.001Z')).toBe(false);
+    expect(isWealthCloudWriteStale('2026-07-13T10:00:00.001Z', '2026-07-13T10:00:00.002Z')).toBe(true);
+  });
+
   it('preserves remote closures when local closures are empty and preferLocal=true', () => {
     const remote = [makeClosure('2026-04', 'remote-apr', '2026-05-01T00:00:00.000Z')];
     const merged = mergeClosuresForSync([], remote, true);
