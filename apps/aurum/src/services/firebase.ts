@@ -72,17 +72,72 @@ const hasGastappFirebaseConfig = () =>
   );
 
 let gastappDbSingleton: ReturnType<typeof getFirestore> | null = null;
+let gastappAuthSingleton: ReturnType<typeof getAuth> | null = null;
+let gastappGoogleProviderSingleton: GoogleAuthProvider | null = null;
+let gastappPersistencePromise: Promise<void> | null = null;
+
+const getGastappFirebaseApp = () => {
+  if (isE2EFirebaseEmulatorEnabled() || !hasGastappFirebaseConfig()) return null;
+  const appName = 'gastapp-shared';
+  return getApps().find((item) => item.name === appName) ?? initializeApp(gastappFirebaseConfig, appName);
+};
 
 export const getGastappFirestore = () => {
-  if (isE2EFirebaseEmulatorEnabled()) return null;
-  if (!hasGastappFirebaseConfig()) return null;
   if (gastappDbSingleton) return gastappDbSingleton;
-
-  const appName = 'gastapp-shared';
-  const existing = getApps().find((item) => item.name === appName);
-  const gastappApp = existing ?? initializeApp(gastappFirebaseConfig, appName);
+  const gastappApp = getGastappFirebaseApp();
+  if (!gastappApp) return null;
   gastappDbSingleton = getFirestore(gastappApp);
   return gastappDbSingleton;
+};
+
+export const getGastappAuth = () => {
+  if (gastappAuthSingleton) return gastappAuthSingleton;
+  const gastappApp = getGastappFirebaseApp();
+  if (!gastappApp) return null;
+  gastappAuthSingleton = getAuth(gastappApp);
+  return gastappAuthSingleton;
+};
+
+export const ensureGastappAuthPersistence = async (): Promise<void> => {
+  const gastappAuth = getGastappAuth();
+  if (!gastappAuth) throw new Error('gastapp_secondary_auth_unavailable');
+  if (!gastappPersistencePromise) {
+    gastappPersistencePromise = setPersistence(gastappAuth, browserLocalPersistence).catch((error) => {
+      gastappPersistencePromise = null;
+      throw error;
+    });
+  }
+  await gastappPersistencePromise;
+};
+
+export const waitForGastappAuthUser = async () => {
+  const gastappAuth = getGastappAuth();
+  if (!gastappAuth) return null;
+  await ensureGastappAuthPersistence();
+  if (gastappAuth.currentUser) return gastappAuth.currentUser;
+  return new Promise<typeof gastappAuth.currentUser>((resolve, reject) => {
+    let unsubscribe = () => undefined;
+    unsubscribe = onAuthStateChanged(
+      gastappAuth,
+      (user) => {
+        unsubscribe();
+        resolve(user);
+      },
+      (error) => {
+        unsubscribe();
+        reject(error);
+      },
+    );
+  });
+};
+
+export const signInWithGastappGoogle = async () => {
+  const gastappAuth = getGastappAuth();
+  if (!gastappAuth) throw new Error('gastapp_secondary_auth_unavailable');
+  await ensureGastappAuthPersistence();
+  if (!gastappGoogleProviderSingleton) gastappGoogleProviderSingleton = new GoogleAuthProvider();
+  const result = await signInWithPopup(gastappAuth, gastappGoogleProviderSingleton);
+  return result.user;
 };
 
 export const isGastappFirestoreConfigured = () => hasGastappFirebaseConfig();

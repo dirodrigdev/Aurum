@@ -1,8 +1,10 @@
-export const GASTAPP_CALENDAR_SHADOW_SCHEMA_VERSION = 'gastapp-calendar-shadow-v1' as const;
+export const GASTAPP_CALENDAR_SOURCE_CONTRACT = 'gastapp_aurum_calendar_source_v1' as const;
+export const GASTAPP_CALENDAR_SHADOW_SCHEMA_VERSION = 'gastapp-aurum-calendar-source-v1' as const;
+export const GASTAPP_CALENDAR_SOURCE_METHODOLOGY_VERSION = 'gastapp-calendar-expense-normalization-v1' as const;
 
 export const GASTAPP_CALENDAR_SHADOW_SUMMABLE_SOURCE_TYPES = [
-  'monthly_expenses',
-  'project_expenses',
+  'monthly_expense',
+  'project_expense',
   'legacy_csv',
 ] as const;
 
@@ -10,7 +12,8 @@ export type GastappCalendarShadowSummableSourceType =
   (typeof GASTAPP_CALENDAR_SHADOW_SUMMABLE_SOURCE_TYPES)[number];
 
 export type GastappCanonicalExpense = {
-  calendarMonthKey: string;
+  canonicalRowId: string;
+  calendarMonthKey: string | null;
   periodKeyOriginal: string | null;
   periodNumberOriginal: number | null;
   sourceType: string;
@@ -20,16 +23,26 @@ export type GastappCanonicalExpense = {
   category: string | null;
   description: string | null;
   projectId: string | null;
-  amountOriginal: number;
-  currencyOriginal: string;
+  amountOriginal: number | null;
+  currencyOriginal: string | null;
   exchangeRateUsed: number | null;
-  amountNormalized: number;
+  amountNormalized: number | null;
   normalizationStatus: string;
-  originalState: string | null;
+  originalState: string;
   parentState: string | null;
   periodAssignmentReason: string | null;
   includedInCanonicalTotals: boolean;
   warnings: readonly string[];
+  sourceUpdatedAt?: string | null;
+};
+
+export type GastappCalendarMonthCoverageStatus = 'complete' | 'partial_edge_month';
+
+export type GastappCalendarMonthCoverage = {
+  rowCount: number;
+  includedRowCount: number;
+  amountNormalized: number;
+  status: GastappCalendarMonthCoverageStatus;
 };
 
 export type GastappCalendarShadowReadiness = 'ready' | 'warning' | 'blocked';
@@ -47,6 +60,13 @@ export type GastappCalendarShadowManifest = {
   uniqueIdentityCount: number;
   duplicateIdentityCount: number;
   totalsByCalendarMonth: Readonly<Record<string, number>>;
+  comparableMonthKeys: readonly string[];
+  partialEdgeMonthKeys: readonly string[];
+  sourceHash?: string | null;
+  methodologyVersion?: string | null;
+  closingDay?: number | null;
+  latestClosedMonthKey?: string | null;
+  coverageByMonth?: Readonly<Record<string, GastappCalendarMonthCoverage>>;
 };
 
 export type GastappCalendarShadowSnapshot = {
@@ -70,11 +90,12 @@ export type GastappCalendarShadowBuildMetadata = {
 };
 
 const MONTH_KEY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+const PERIOD_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}__\d{4}-\d{2}-\d{2}$/;
 
 const isSummableSourceType = (sourceType: string): sourceType is GastappCalendarShadowSummableSourceType =>
   (GASTAPP_CALENDAR_SHADOW_SUMMABLE_SOURCE_TYPES as readonly string[]).includes(sourceType);
 
-const expenseIdentity = (row: GastappCanonicalExpense) => `${row.sourceType}:${row.sourceDocumentId}`;
+const expenseIdentity = (row: GastappCanonicalExpense) => row.canonicalRowId;
 
 const sortMonthKeys = (monthKeys: Iterable<string>) => [...monthKeys].sort((left, right) => left.localeCompare(right));
 
@@ -89,7 +110,8 @@ export const validateGastappCalendarShadowRows = (
 
   rows.forEach((row, index) => {
     const position = `row[${index}]`;
-    const identity = expenseIdentity(row);
+    const identity = String(expenseIdentity(row) || '');
+    const expectedIdentity = `${String(row.sourceType || '')}:${String(row.sourceDocumentId || '')}`;
 
     const isDuplicateIdentity = identities.has(identity);
     if (isDuplicateIdentity) {
@@ -99,42 +121,54 @@ export const validateGastappCalendarShadowRows = (
       identities.add(identity);
     }
 
-    if (!MONTH_KEY_PATTERN.test(row.calendarMonthKey)) {
-      errors.push(`${position}: invalid calendarMonthKey ${row.calendarMonthKey}`);
-    }
-    if (!row.sourceType.trim()) {
+    if (!identity.trim()) errors.push(`${position}: canonicalRowId is required`);
+    if (identity !== expectedIdentity) errors.push(`${position}: canonicalRowId must equal ${expectedIdentity}`);
+    if (!String(row.sourceType || '').trim()) {
       errors.push(`${position}: sourceType is required`);
     }
-    if (!row.sourceDocumentId.trim()) {
+    if (!String(row.sourceDocumentId || '').trim()) {
       errors.push(`${position}: sourceDocumentId is required`);
     }
-    if (!Number.isFinite(row.amountOriginal)) {
-      errors.push(`${position}: amountOriginal must be finite`);
-    }
-    if (!Number.isFinite(row.amountNormalized)) {
-      errors.push(`${position}: amountNormalized must be finite`);
-    }
-    if (!row.currencyOriginal.trim()) {
-      warnings.push(`${position}: currencyOriginal is empty`);
-    }
+    if (!Array.isArray(row.warnings)) errors.push(`${position}: warnings must be an array`);
 
     if (row.includedInCanonicalTotals && !isSummableSourceType(row.sourceType)) {
       errors.push(`${position}: non-summable source ${row.sourceType} cannot enter canonical totals`);
     }
-    if (row.includedInCanonicalTotals && row.normalizationStatus === 'excluded') {
-      errors.push(`${position}: excluded normalizationStatus cannot enter canonical totals`);
+    if (row.includedInCanonicalTotals) {
+      if (!row.calendarMonthKey || !MONTH_KEY_PATTERN.test(row.calendarMonthKey)) {
+        errors.push(`${position}: invalid calendarMonthKey ${row.calendarMonthKey}`);
+      }
+      if (!row.periodKeyOriginal || !PERIOD_KEY_PATTERN.test(row.periodKeyOriginal)) {
+        errors.push(`${position}: invalid periodKeyOriginal ${row.periodKeyOriginal}`);
+      }
+      if (!Number.isInteger(row.periodNumberOriginal) || Number(row.periodNumberOriginal) <= 0) {
+        errors.push(`${position}: periodNumberOriginal must be a positive integer`);
+      }
+      if (!Number.isFinite(row.amountOriginal)) errors.push(`${position}: amountOriginal must be finite`);
+      if (!Number.isFinite(row.amountNormalized)) errors.push(`${position}: amountNormalized must be finite`);
+      if (!row.currencyOriginal?.trim()) errors.push(`${position}: currencyOriginal is required`);
+      if (row.normalizationStatus !== 'ready') errors.push(`${position}: included normalizationStatus must be ready`);
+      if (!['expense_date', 'project_date', 'legacy_date'].includes(String(row.periodAssignmentReason))) {
+        errors.push(`${position}: invalid periodAssignmentReason ${row.periodAssignmentReason}`);
+      }
+      if (row.currencyOriginal !== 'EUR' && !(Number(row.exchangeRateUsed) > 0)) {
+        errors.push(`${position}: non-EUR included row requires exchangeRateUsed`);
+      }
+    } else if (!String(row.normalizationStatus || '').startsWith('excluded_')) {
+      errors.push(`${position}: excluded row must use an excluded_* normalizationStatus`);
     }
 
     if (
       row.includedInCanonicalTotals &&
       !isDuplicateIdentity &&
+      row.calendarMonthKey !== null &&
       MONTH_KEY_PATTERN.test(row.calendarMonthKey) &&
       Number.isFinite(row.amountNormalized) &&
       isSummableSourceType(row.sourceType)
     ) {
       totals.set(
         row.calendarMonthKey,
-        (totals.get(row.calendarMonthKey) || 0) + row.amountNormalized,
+        (totals.get(row.calendarMonthKey) || 0) + Number(row.amountNormalized),
       );
     }
   });
@@ -177,6 +211,8 @@ export const buildGastappCalendarShadowSnapshot = (
       uniqueIdentityCount: validation.uniqueIdentityCount,
       duplicateIdentityCount: validation.duplicateIdentityCount,
       totalsByCalendarMonth: validation.totalsByCalendarMonth,
+      comparableMonthKeys: monthKeys,
+      partialEdgeMonthKeys: [],
     },
     rows,
   };
