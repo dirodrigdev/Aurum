@@ -6,6 +6,9 @@ export const GASTAPP_CALENDAR_SHADOW_SUMMABLE_SOURCE_TYPES = [
   'monthly_expense',
   'project_expense',
   'legacy_csv',
+  'p1_p30_reconstructed_history',
+  'historical_consolidated_import',
+  'consolidated_control_delta',
 ] as const;
 
 export type GastappCalendarShadowSummableSourceType =
@@ -34,9 +37,12 @@ export type GastappCanonicalExpense = {
   includedInCanonicalTotals: boolean;
   warnings: readonly string[];
   sourceUpdatedAt?: string | null;
+  assignmentMethod?: string | null;
+  assignmentPrecision?: string | null;
+  historicalAssignmentWindow?: { startYMD: string; endYMD: string } | null;
 };
 
-export type GastappCalendarMonthCoverageStatus = 'complete' | 'partial_edge_month';
+export type GastappCalendarMonthCoverageStatus = 'complete' | 'complete_comparable' | 'partial_edge_month';
 
 export type GastappCalendarMonthCoverage = {
   rowCount: number;
@@ -91,6 +97,11 @@ export type GastappCalendarShadowBuildMetadata = {
 
 const MONTH_KEY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 const PERIOD_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}__\d{4}-\d{2}-\d{2}$/;
+const HISTORICAL_P30_SOURCE_TYPES = new Set([
+  'p1_p30_reconstructed_history',
+  'historical_consolidated_import',
+  'consolidated_control_delta',
+]);
 
 const isSummableSourceType = (sourceType: string): sourceType is GastappCalendarShadowSummableSourceType =>
   (GASTAPP_CALENDAR_SHADOW_SUMMABLE_SOURCE_TYPES as readonly string[]).includes(sourceType);
@@ -111,7 +122,10 @@ export const validateGastappCalendarShadowRows = (
   rows.forEach((row, index) => {
     const position = `row[${index}]`;
     const identity = String(expenseIdentity(row) || '');
-    const expectedIdentity = `${String(row.sourceType || '')}:${String(row.sourceDocumentId || '')}`;
+    const historicalP30 = HISTORICAL_P30_SOURCE_TYPES.has(row.sourceType);
+    const expectedIdentity = historicalP30
+      ? `p30_predecessor:${String(row.sourceType || '')}:${String(row.sourceDocumentId || '')}`
+      : `${String(row.sourceType || '')}:${String(row.sourceDocumentId || '')}`;
 
     const isDuplicateIdentity = identities.has(identity);
     if (isDuplicateIdentity) {
@@ -138,20 +152,20 @@ export const validateGastappCalendarShadowRows = (
       if (!row.calendarMonthKey || !MONTH_KEY_PATTERN.test(row.calendarMonthKey)) {
         errors.push(`${position}: invalid calendarMonthKey ${row.calendarMonthKey}`);
       }
-      if (!row.periodKeyOriginal || !PERIOD_KEY_PATTERN.test(row.periodKeyOriginal)) {
+      if (!row.periodKeyOriginal || (!PERIOD_KEY_PATTERN.test(row.periodKeyOriginal) && !(historicalP30 && row.periodKeyOriginal === 'P30'))) {
         errors.push(`${position}: invalid periodKeyOriginal ${row.periodKeyOriginal}`);
       }
       if (!Number.isInteger(row.periodNumberOriginal) || Number(row.periodNumberOriginal) <= 0) {
         errors.push(`${position}: periodNumberOriginal must be a positive integer`);
       }
-      if (!Number.isFinite(row.amountOriginal)) errors.push(`${position}: amountOriginal must be finite`);
       if (!Number.isFinite(row.amountNormalized)) errors.push(`${position}: amountNormalized must be finite`);
-      if (!row.currencyOriginal?.trim()) errors.push(`${position}: currencyOriginal is required`);
+      if (!historicalP30 && !Number.isFinite(row.amountOriginal)) errors.push(`${position}: amountOriginal must be finite`);
+      if (!historicalP30 && !row.currencyOriginal?.trim()) errors.push(`${position}: currencyOriginal is required`);
       if (row.normalizationStatus !== 'ready') errors.push(`${position}: included normalizationStatus must be ready`);
-      if (!['expense_date', 'project_date', 'legacy_date'].includes(String(row.periodAssignmentReason))) {
+      if (!historicalP30 && !['expense_date', 'project_date', 'legacy_date'].includes(String(row.periodAssignmentReason))) {
         errors.push(`${position}: invalid periodAssignmentReason ${row.periodAssignmentReason}`);
       }
-      if (row.currencyOriginal !== 'EUR' && !(Number(row.exchangeRateUsed) > 0)) {
+      if (!historicalP30 && row.currencyOriginal !== 'EUR' && !(Number(row.exchangeRateUsed) > 0)) {
         errors.push(`${position}: non-EUR included row requires exchangeRateUsed`);
       }
     } else if (!String(row.normalizationStatus || '').startsWith('excluded_')) {

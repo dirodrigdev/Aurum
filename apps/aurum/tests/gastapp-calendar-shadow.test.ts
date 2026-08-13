@@ -16,8 +16,13 @@ import type { WealthMonthlyClosure } from '../src/services/wealthStorage';
 import {
   authenticateGastappCalendarSourceV1,
   calculateGastappCalendarSourceHash,
+  GASTAPP_CALENDAR_PREDECESSOR_P30_CURRENT_PATH,
+  GASTAPP_CALENDAR_PREDECESSOR_P30_HASH,
+  GASTAPP_CALENDAR_PREDECESSOR_P30_SNAPSHOT_PATH,
   GastappCalendarSourceError,
+  integrateGastappCalendarPredecessorP30,
   loadGastappCalendarSourceV1,
+  validateGastappCalendarPredecessorP30,
   validateGastappCalendarSourceV1,
   type GastappCalendarSourceDependencies,
 } from '../src/services/gastappCalendarSourceV1';
@@ -87,12 +92,18 @@ const productRow = ({
 });
 
 const buildPublishedSource = () => {
+  const novemberRows = Array.from({ length: 41 }, (_, index) => productRow({
+    sourceType: index === 40 ? 'project_expense' : 'monthly_expense',
+    sourceDocumentId: `nov-${index + 1}`,
+    calendarMonthKey: '2025-11',
+    transactionDate: `2025-11-${String(12 + (index % 19)).padStart(2, '0')}`,
+    periodKeyOriginal: '2025-11-12__2025-12-11',
+    periodNumberOriginal: 31,
+    amountNormalized: index === 40 ? 465.52 : 100,
+    periodAssignmentReason: index === 40 ? 'project_date' : 'expense_date',
+  }));
   const rows: GastappCanonicalExpense[] = [
-    productRow({
-      sourceType: 'monthly_expense', sourceDocumentId: 'nov', calendarMonthKey: '2025-11',
-      transactionDate: '2025-11-12', periodKeyOriginal: '2025-11-12__2025-12-11',
-      periodNumberOriginal: 31, amountNormalized: 10,
-    }),
+    ...novemberRows,
     productRow({
       sourceType: 'monthly_expense', sourceDocumentId: 'dec', calendarMonthKey: '2025-12',
       transactionDate: '2025-12-15', periodKeyOriginal: '2025-12-12__2026-01-11',
@@ -110,13 +121,13 @@ const buildPublishedSource = () => {
     }),
   ];
   const coverageByMonth = {
-    '2025-11': { rowCount: 1, includedRowCount: 1, amountNormalized: 10 },
+    '2025-11': { rowCount: 41, includedRowCount: 41, amountNormalized: 4465.52 },
     '2025-12': { rowCount: 1, includedRowCount: 1, amountNormalized: 20 },
     '2026-07': { rowCount: 1, includedRowCount: 1, amountNormalized: 30 },
     '2026-08': { rowCount: 1, includedRowCount: 1, amountNormalized: 40 },
   };
   const coverageByOriginalPeriod = {
-    '2025-11-12__2025-12-11': { rowCount: 1, includedRowCount: 1, amountNormalized: 10 },
+    '2025-11-12__2025-12-11': { rowCount: 41, includedRowCount: 41, amountNormalized: 4465.52 },
     '2025-12-12__2026-01-11': { rowCount: 1, includedRowCount: 1, amountNormalized: 20 },
     '2026-07-12__2026-08-11': { rowCount: 2, includedRowCount: 2, amountNormalized: 70 },
   };
@@ -138,8 +149,8 @@ const buildPublishedSource = () => {
     },
     latestClosedMonthKey: '2026-07',
     counts: {
-      totalRows: 4, includedRows: 4, canonicalIdentities: 4, duplicateIdentities: 0,
-      warnings: 1, rowsWithMissingFx: 0, byNormalizationStatus: { ready: 4 },
+      totalRows: 44, includedRows: 44, canonicalIdentities: 44, duplicateIdentities: 0,
+      warnings: 1, rowsWithMissingFx: 0, byNormalizationStatus: { ready: 44 },
     },
     duplicates: [],
     warnings: ['accepted_control_residual:0.01'],
@@ -147,18 +158,18 @@ const buildPublishedSource = () => {
     coverageByOriginalPeriod,
     reconciliation: {
       status: 'accepted_control_residual', reconciliationStatus: 'accepted_control_residual',
-      controlSource: 'aurum_monthly_from_periods_v1', expectedTotalAmountNormalized: 99.99,
-      actualTotalAmountNormalized: 100, difference: 0.01, controlTotalEur: 99.99,
-      canonicalTotalEur: 100, residualEur: 0.01,
+      controlSource: 'aurum_monthly_from_periods_v1', expectedTotalAmountNormalized: 4555.51,
+      actualTotalAmountNormalized: 4555.52, difference: 0.01, controlTotalEur: 4555.51,
+      canonicalTotalEur: 4555.52, residualEur: 0.01,
       residualByPeriod: {
-        '2025-11-12__2025-12-11': 0,
-        '2025-12-12__2026-01-11': 0.01,
+        '2025-11-12__2025-12-11': 0.01,
+        '2025-12-12__2026-01-11': 0,
         '2026-07-12__2026-08-11': 0,
       },
       warnings: ['accepted_control_residual:0.01', 'period_residual:32:0.01'],
       rows: [
-        { periodKey: '2025-11-12__2025-12-11', periodNumber: 31, monthKey: '2025-11', expectedAmountNormalized: 10, actualAmountNormalized: 10, difference: 0, status: 'matched' },
-        { periodKey: '2025-12-12__2026-01-11', periodNumber: 32, monthKey: '2025-12', expectedAmountNormalized: 19.99, actualAmountNormalized: 20, difference: 0.01, status: 'mismatch' },
+        { periodKey: '2025-11-12__2025-12-11', periodNumber: 31, monthKey: '2025-11', expectedAmountNormalized: 4465.51, actualAmountNormalized: 4465.52, difference: 0.01, status: 'mismatch' },
+        { periodKey: '2025-12-12__2026-01-11', periodNumber: 32, monthKey: '2025-12', expectedAmountNormalized: 20, actualAmountNormalized: 20, difference: 0, status: 'matched' },
         { periodKey: '2026-07-12__2026-08-11', periodNumber: 39, monthKey: '2026-07', expectedAmountNormalized: 70, actualAmountNormalized: 70, difference: 0, status: 'matched' },
       ],
     },
@@ -183,12 +194,118 @@ const rehashPublishedSource = (snapshot: Record<string, any>) => {
   return { current, snapshot };
 };
 
+const buildPublishedPredecessor = (primaryHash: string) => {
+  const makeHistoricalRow = ({
+    id,
+    calendarMonthKey,
+    transactionDate,
+    amountNormalized,
+    sourceType = 'p1_p30_reconstructed_history',
+  }: {
+    id: string;
+    calendarMonthKey: '2025-10' | '2025-11';
+    transactionDate: string | null;
+    amountNormalized: number;
+    sourceType?: string;
+  }): GastappCanonicalExpense => ({
+    canonicalRowId: `p30_predecessor:${sourceType}:${id}`,
+    calendarMonthKey,
+    periodKeyOriginal: 'P30',
+    periodNumberOriginal: 30,
+    sourceType,
+    sourceDocumentId: id,
+    transactionDate,
+    accountingDate: transactionDate,
+    category: 'historical',
+    description: null,
+    projectId: null,
+    amountOriginal: amountNormalized,
+    currencyOriginal: 'EUR',
+    exchangeRateUsed: 1,
+    amountNormalized,
+    normalizationStatus: 'ready',
+    originalState: 'historical',
+    parentState: null,
+    periodAssignmentReason: null,
+    includedInCanonicalTotals: true,
+    warnings: transactionDate ? [] : ['historical_month_assignment_without_invented_day'],
+    assignmentMethod: transactionDate ? 'exact_date' : 'historical_period_anchor_month',
+    assignmentPrecision: transactionDate ? 'exact_day' : 'historical_inferred_month',
+    historicalAssignmentWindow: transactionDate ? null : { startYMD: '2025-10-12', endYMD: '2025-10-31' },
+  });
+  const octoberDated = Array.from({ length: 47 }, (_, index) => makeHistoricalRow({
+    id: `oct-${index + 1}`,
+    calendarMonthKey: '2025-10',
+    transactionDate: `2025-10-${String(12 + (index % 20)).padStart(2, '0')}`,
+    amountNormalized: index === 46 ? -49.14 : 100,
+  }));
+  const octoberInferred = [
+    makeHistoricalRow({ id: 'home-control', calendarMonthKey: '2025-10', transactionDate: null, amountNormalized: -18.54, sourceType: 'consolidated_control_delta' }),
+    makeHistoricalRow({ id: 'project-control', calendarMonthKey: '2025-10', transactionDate: null, amountNormalized: 1393.76, sourceType: 'consolidated_control_delta' }),
+  ];
+  const november = Array.from({ length: 27 }, (_, index) => makeHistoricalRow({
+    id: `nov-${index + 1}`,
+    calendarMonthKey: '2025-11',
+    transactionDate: `2025-11-${String(1 + (index % 11)).padStart(2, '0')}`,
+    amountNormalized: index === 26 ? 184.68 : 80,
+  }));
+  const rows = [...octoberDated, ...octoberInferred, ...november];
+  const manifest: Record<string, any> = {
+    contract: 'gastapp_aurum_calendar_source_v1',
+    schemaVersion: 'gastapp-aurum-calendar-source-v1',
+    methodologyVersion: 'gastapp-calendar-p30-predecessor-v1',
+    sourceCommit: '48b655d',
+    sourceRole: 'historical_predecessor',
+    generatedAt: '2026-08-13T15:16:21.573Z',
+    publicationState: 'complete',
+    snapshotId: GASTAPP_CALENDAR_PREDECESSOR_P30_SNAPSHOT_PATH.split('/').at(-1),
+    snapshotPath: GASTAPP_CALENDAR_PREDECESSOR_P30_SNAPSHOT_PATH,
+    currentPath: GASTAPP_CALENDAR_PREDECESSOR_P30_CURRENT_PATH,
+    primaryCurrentPath: 'gastapp_calendar_source_v1_private/source_v1_current',
+    primaryCurrentHashAtPublication: primaryHash,
+    replacesPrimaryCurrent: false,
+    closingConfig: { type: 'fixed_day', closingDay: 11, source: 'meta/closing_config' },
+    coveredRange: {
+      fromCalendarMonthKey: '2025-10', toCalendarMonthKey: '2025-11',
+      fromTransactionDate: '2025-10-12', toTransactionDate: '2025-11-11',
+      fromPeriodKey: 'P30', toPeriodKey: 'P30',
+    },
+    periodKey: 'P30', periodNumber: 30, periodStartYMD: '2025-10-12', periodEndYMD: '2025-11-11',
+    counts: {
+      totalRows: 76, includedRows: 76, canonicalIdentities: 76, duplicateIdentities: 0,
+      exactDateRows: 74, historicallyInferredMonthRows: 2,
+    },
+    duplicates: [],
+    warnings: ['Two consolidated control rows have no transaction date.'],
+    assignmentPolicy: {
+      exactDate: 'Use source date.', missingDate: 'Use historical anchor month.',
+      inferredRowsRemainTraceable: true, inferredDateInvented: false,
+    },
+    coverageByMonth: {
+      '2025-10': { rowCount: 49, includedRowCount: 49, amountNormalized: 5926.08 },
+      '2025-11': { rowCount: 27, includedRowCount: 27, amountNormalized: 2264.68 },
+    },
+    coverageByOriginalPeriod: { P30: { rowCount: 76, includedRowCount: 76, amountNormalized: 8190.76 } },
+    reconciliation: {
+      status: 'matched', officialControlPath: 'control/P30', officialTotalEur: 8190.76,
+      canonicalTotalEur: 8190.76, differenceEur: 0, octoberTotalEur: 5926.08,
+      november1To11TotalEur: 2264.68, monthConservationEur: 8190.76, rowsReconciled: 76,
+    },
+    hash: GASTAPP_CALENDAR_PREDECESSOR_P30_HASH,
+  };
+  const snapshot = { ...manifest, rows };
+  return { current: manifest, snapshot };
+};
+
 const makeDependencies = (overrides: Partial<GastappCalendarSourceDependencies> = {}) => {
   const source = buildPublishedSource();
+  const predecessor = buildPublishedPredecessor(source.snapshot.hash);
   const readDocument = vi.fn(async (path: string) => {
     if (path.startsWith('authorized_users/')) return { active: true, role: 'user' };
     if (path === 'gastapp_calendar_source_v1_private/source_v1_current') return source.current;
     if (path === source.current.snapshotPath) return source.snapshot;
+    if (path === GASTAPP_CALENDAR_PREDECESSOR_P30_CURRENT_PATH) return predecessor.current;
+    if (path === GASTAPP_CALENDAR_PREDECESSOR_P30_SNAPSHOT_PATH) return predecessor.snapshot;
     return null;
   });
   const dependencies: GastappCalendarSourceDependencies = {
@@ -200,7 +317,7 @@ const makeDependencies = (overrides: Partial<GastappCalendarSourceDependencies> 
     readDocument,
     ...overrides,
   };
-  return { dependencies, source, readDocument };
+  return { dependencies, source, predecessor, readDocument };
 };
 
 const expectSourceError = async (promise: Promise<unknown>, code: string) => {
@@ -352,10 +469,13 @@ describe('GastApp calendar source v1 authentication and loader', () => {
       'authorized_users/owner@example.com',
       'gastapp_calendar_source_v1_private/source_v1_current',
       source.current.snapshotPath,
+      GASTAPP_CALENDAR_PREDECESSOR_P30_CURRENT_PATH,
+      GASTAPP_CALENDAR_PREDECESSOR_P30_SNAPSHOT_PATH,
     ]);
     expect(result.sourceManifest.reconciliation.reconciliationStatus).toBe('accepted_control_residual');
     expect(result.sourceManifest.reconciliation.residualEur).toBe(0.01);
     expect(result.snapshot.manifest.sourceKind).toBe('stable');
+    expect(result.predecessorManifest.hash).toBe(GASTAPP_CALENDAR_PREDECESSOR_P30_HASH);
   });
 
   it('recalculates the hash and rejects modified content', () => {
@@ -398,6 +518,108 @@ describe('GastApp calendar source v1 authentication and loader', () => {
     expect(result.coverageByMonth['2025-11'].status).toBe('partial_edge_month');
     expect(result.coverageByMonth['2026-08'].status).toBe('partial_edge_month');
     expect(result.comparableMonthKeys).toEqual(['2025-12', '2026-07']);
+  });
+
+  it('integrates P30 and P31 without moving the official period assignments', () => {
+    const source = buildPublishedSource();
+    const predecessorSource = buildPublishedPredecessor(source.snapshot.hash);
+    const primary = validateGastappCalendarSourceV1(source.current, source.snapshot);
+    const predecessor = validateGastappCalendarPredecessorP30(
+      predecessorSource.current,
+      predecessorSource.snapshot,
+      source.snapshot.hash,
+    );
+    const result = integrateGastappCalendarPredecessorP30(primary, predecessor);
+
+    expect(predecessor.rows).toHaveLength(76);
+    expect(predecessor.rows.every((row) => row.periodKeyOriginal === 'P30' && row.periodNumberOriginal === 30)).toBe(true);
+    expect(primary.snapshot.rows.filter((row) => row.calendarMonthKey === '2025-11').every(
+      (row) => row.periodKeyOriginal === '2025-11-12__2025-12-11' && row.periodNumberOriginal === 31,
+    )).toBe(true);
+    expect(result.novemberBoundary).toEqual({
+      status: 'complete_comparable',
+      predecessorP30Rows: 76,
+      predecessorP30NovemberRows: 27,
+      predecessorP30NovemberAmountEur: 2264.68,
+      primaryP31NovemberRows: 41,
+      primaryP31NovemberAmountEur: 4465.52,
+      candidateRows: 117,
+      uniqueIdentities: 117,
+      duplicateIdentities: 0,
+      novemberRows: 68,
+      novemberAmountEur: 6730.20,
+      reconciliationResidualEur: 0,
+      coverageStartYMD: '2025-11-01',
+      coverageEndYMD: '2025-11-30',
+    });
+    expect(result.coverageByMonth['2025-10']).toMatchObject({ status: 'partial_edge_month', amountNormalized: 5926.08 });
+    expect(result.coverageByMonth['2025-11']).toMatchObject({ status: 'complete_comparable', amountNormalized: 6730.20 });
+    expect(result.coverageByMonth['2026-08'].status).toBe('partial_edge_month');
+    expect(result.comparableMonthKeys).toContain('2025-11');
+    expect(result.comparableMonthKeys).not.toContain('2025-10');
+    expect(result.comparableMonthKeys).not.toContain('2026-08');
+  });
+
+  it('accepts only the two traceable P30 historical month anchors without inventing dates', () => {
+    const source = buildPublishedSource();
+    const predecessorSource = buildPublishedPredecessor(source.snapshot.hash);
+    const result = validateGastappCalendarPredecessorP30(
+      predecessorSource.current,
+      predecessorSource.snapshot,
+      source.snapshot.hash,
+    );
+    const undated = result.rows.filter((row) => row.transactionDate === null);
+
+    expect(undated).toHaveLength(2);
+    expect(undated.every((row) =>
+      row.calendarMonthKey === '2025-10' &&
+      row.assignmentMethod === 'historical_period_anchor_month' &&
+      row.accountingDate === null,
+    )).toBe(true);
+  });
+
+  it('rejects duplicate identities across P30 and the P31 November boundary', () => {
+    const source = buildPublishedSource();
+    const predecessorSource = buildPublishedPredecessor(source.snapshot.hash);
+    const duplicateId = source.snapshot.rows[0].canonicalRowId;
+    predecessorSource.snapshot.rows[0].canonicalRowId = duplicateId;
+    predecessorSource.current.counts.canonicalIdentities = 76;
+    const primary = validateGastappCalendarSourceV1(source.current, source.snapshot);
+    const predecessor = validateGastappCalendarPredecessorP30(
+      predecessorSource.current,
+      predecessorSource.snapshot,
+      source.snapshot.hash,
+    );
+
+    expect(() => integrateGastappCalendarPredecessorP30(primary, predecessor)).toThrowError(
+      expect.objectContaining({ code: 'calendar_boundary_invalid' }),
+    );
+  });
+
+  it('rejects a predecessor hash or manifest that differs from the productive pin', () => {
+    const source = buildPublishedSource();
+    const predecessorSource = buildPublishedPredecessor(source.snapshot.hash);
+    predecessorSource.snapshot.hash = 'fnv1a64:0000000000000000';
+
+    expect(() => validateGastappCalendarPredecessorP30(
+      predecessorSource.current,
+      predecessorSource.snapshot,
+      source.snapshot.hash,
+    )).toThrowError(expect.objectContaining({ code: 'predecessor_invalid' }));
+  });
+
+  it('does not fall back to partial November when the P30 predecessor is missing', async () => {
+    const source = buildPublishedSource();
+    const readDocument = vi.fn(async (path: string) => {
+      if (path.startsWith('authorized_users/')) return { active: true, role: 'user' };
+      if (path === 'gastapp_calendar_source_v1_private/source_v1_current') return source.current;
+      if (path === source.current.snapshotPath) return source.snapshot;
+      return null;
+    });
+    const { dependencies } = makeDependencies({ readDocument });
+
+    await expectSourceError(loadGastappCalendarSourceV1(dependencies), 'predecessor_missing');
+    expect(readDocument).toHaveBeenCalledWith(GASTAPP_CALENDAR_PREDECESSOR_P30_CURRENT_PATH);
   });
 
   it('does not authenticate or fall back silently when the secondary session is absent', async () => {
