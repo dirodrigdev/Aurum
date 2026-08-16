@@ -10,7 +10,10 @@ export const GASTAPP_DATA_ROOM_V2_EXPRESS_PATH = 'gastapp_data_room_v2_artifacts
 export const GASTAPP_DATA_ROOM_V2_FULL_PATH = 'gastapp_data_room_v2_artifacts/full_current';
 export const GASTAPP_DATA_ROOM_V2_EXPRESS_ARTIFACT_VERSION = 'gastapp-data-room-express-v2';
 export const GASTAPP_DATA_ROOM_V2_FULL_ARTIFACT_VERSION = 'gastapp-data-room-artifact-v2';
-export const GASTAPP_CANONICAL_V2_RECONCILIATION_TOLERANCE_EUR = 0.01;
+// GastApp publica totales operativos y contratos mensuales con redondeos
+// independientes. Aurum acepta hasta un euro de diferencia, pero no más:
+// una discrepancia mayor sigue bloqueando el consumo oficial.
+export const GASTAPP_CANONICAL_V2_RECONCILIATION_TOLERANCE_EUR = 1;
 
 // Stable schema identities. The canonical hash, totals, counts and artifact
 // hashes are publication data and must always be read from current documents.
@@ -243,6 +246,10 @@ const readStringArray = (value: unknown): string[] =>
 
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const MONTH_KEY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+const totalsAgreeWithinTolerance = (candidate: number | null, expected: number | null) =>
+  candidate != null &&
+  expected != null &&
+  Math.abs(Math.round((candidate - expected) * 100) / 100) <= GASTAPP_CANONICAL_V2_RECONCILIATION_TOLERANCE_EUR;
 
 const round2 = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
@@ -381,7 +388,7 @@ const validateCanonicalMetadata = (raw: RecordValue): GastappCanonicalV2Metadata
     metadata.totalsEur.calendarMinusCanonical != null &&
       Math.abs(metadata.totalsEur.calendarMinusCanonical) <= GASTAPP_CANONICAL_V2_RECONCILIATION_TOLERANCE_EUR,
     'invalid_document',
-    'La diferencia meses vs. filas supera 0,01 €.',
+    'La diferencia meses vs. filas supera 1,00 €.',
     GASTAPP_CANONICAL_V2_CURRENT_PATH,
   );
   assertExpected(Boolean(metadata.coverage.completeFromMonthKey && MONTH_KEY_PATTERN.test(metadata.coverage.completeFromMonthKey)), 'invalid_document', 'El inicio de cobertura no es válido.', GASTAPP_CANONICAL_V2_CURRENT_PATH);
@@ -456,7 +463,7 @@ const validatePeriodContract = async (
   const periodsRaw = Array.isArray(raw.periods) ? raw.periods.map(readRecord) : [];
   assertExpected(periodsRaw.length === metadata.counts.periods, 'invalid_document', 'El número de períodos no coincide con metadata.', GASTAPP_AURUM_PERIODS_V2_PATH);
   assertExpected(readNumber(raw.rowCount) === metadata.counts.canonicalRows, 'invalid_document', 'El número de filas del contrato de períodos no coincide con metadata.', GASTAPP_AURUM_PERIODS_V2_PATH);
-  assertExpected(readNumber(raw.totalEur) === metadata.totalsEur.exact, 'invalid_document', 'El total del contrato de períodos no coincide con metadata.', GASTAPP_AURUM_PERIODS_V2_PATH);
+  assertExpected(totalsAgreeWithinTolerance(readNumber(raw.totalEur), metadata.totalsEur.exact), 'invalid_document', 'El total del contrato de períodos no coincide con metadata.', GASTAPP_AURUM_PERIODS_V2_PATH);
   periodsRaw.forEach((period) => {
     assertExpected(!Object.prototype.hasOwnProperty.call(period, 'calendarMonthKey'), 'invalid_document', 'El contrato de períodos no puede mezclar calendarMonthKey.', GASTAPP_AURUM_PERIODS_V2_PATH);
   });
@@ -490,7 +497,7 @@ const validateMonthContract = async (
   const monthsRaw = Array.isArray(raw.months) ? raw.months.map(readRecord) : [];
   assertExpected(monthsRaw.length === metadata.counts.months, 'invalid_document', 'El número de meses no coincide con metadata.', GASTAPP_AURUM_MONTHS_V2_PATH);
   assertExpected(readNumber(raw.rowCount) === metadata.counts.canonicalRows, 'invalid_document', 'El número de filas del contrato de meses no coincide con metadata.', GASTAPP_AURUM_MONTHS_V2_PATH);
-  assertExpected(readNumber(raw.totalEur) === metadata.totalsEur.exact, 'invalid_document', 'El total del contrato de meses no coincide con metadata.', GASTAPP_AURUM_MONTHS_V2_PATH);
+  assertExpected(totalsAgreeWithinTolerance(readNumber(raw.totalEur), metadata.totalsEur.exact), 'invalid_document', 'El total del contrato de meses no coincide con metadata.', GASTAPP_AURUM_MONTHS_V2_PATH);
   const coverage = readRecord(raw.coverage);
   const normalizedCoverage = {
     completeFromMonthKey: readString(coverage.completeFromMonthKey),

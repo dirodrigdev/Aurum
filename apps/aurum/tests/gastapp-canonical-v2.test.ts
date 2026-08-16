@@ -253,9 +253,11 @@ describe('GastApp Canónico V2', () => {
     expect(result.metadata.totalsEur.exact).toBe(nextTotal);
   });
 
-  it('acepta la diferencia operacional publicada dentro de la tolerancia de un centavo', async () => {
+  it('acepta la diferencia operacional publicada dentro de la tolerancia de un euro', async () => {
     const fixture = contractReader();
     (fixture.docs[GASTAPP_CANONICAL_V2_CURRENT_PATH].totalsEur as Record<string, unknown>).calendarMinusCanonical = -0.01;
+    fixture.docs[GASTAPP_AURUM_PERIODS_V2_PATH].totalEur = GASTAPP_CANONICAL_V2_EXPECTED.totalEur - 0.01;
+    fixture.docs[GASTAPP_AURUM_MONTHS_V2_PATH].totalEur = GASTAPP_CANONICAL_V2_EXPECTED.totalEur - 0.01;
 
     await expect(loadGastappCanonicalV2Contracts(fixture)).resolves.toBeDefined();
   });
@@ -271,12 +273,21 @@ describe('GastApp Canónico V2', () => {
     });
 
     const outOfToleranceFixture = contractReader();
-    (outOfToleranceFixture.docs[GASTAPP_CANONICAL_V2_CURRENT_PATH].totalsEur as Record<string, unknown>).calendarMinusCanonical = 0.02;
+    (outOfToleranceFixture.docs[GASTAPP_CANONICAL_V2_CURRENT_PATH].totalsEur as Record<string, unknown>).calendarMinusCanonical = 1.01;
 
     await expect(loadGastappCanonicalV2Contracts(outOfToleranceFixture)).rejects.toMatchObject({
       code: 'invalid_document',
       path: GASTAPP_CANONICAL_V2_CURRENT_PATH,
-      message: 'La diferencia meses vs. filas supera 0,01 €.',
+      message: 'La diferencia meses vs. filas supera 1,00 €.',
+    });
+
+    const outOfToleranceContractFixture = contractReader();
+    outOfToleranceContractFixture.docs[GASTAPP_AURUM_MONTHS_V2_PATH].totalEur = GASTAPP_CANONICAL_V2_EXPECTED.totalEur + 1.01;
+
+    await expect(loadGastappCanonicalV2Contracts(outOfToleranceContractFixture)).rejects.toMatchObject({
+      code: 'invalid_document',
+      path: GASTAPP_AURUM_MONTHS_V2_PATH,
+      message: 'El total del contrato de meses no coincide con metadata.',
     });
   });
 
