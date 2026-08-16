@@ -80,7 +80,7 @@ export const GastappCanonicalV2Section: React.FC<Props> = ({ state, onRefresh, o
             <div>Filas: <span className="font-semibold">{contracts.metadata.counts.canonicalRows?.toLocaleString('es-ES') || '—'}</span></div>
             <div>Total: <span className="font-semibold">{contracts.metadata.totalsEur.exact?.toLocaleString('es-ES', { minimumFractionDigits: 2 }) || '—'} €</span></div>
             <div>Períodos aceptados: <span className="font-semibold">{contracts.metadata.counts.acceptedPeriods ?? '—'}/{contracts.metadata.counts.periods ?? '—'}</span></div>
-            <div>Diferencia meses/filas: <span className="font-semibold">{contracts.metadata.totalsEur.calendarMinusCanonicalEur ?? '—'} €</span></div>
+            <div>Diferencia meses/filas: <span className="font-semibold">{contracts.metadata.totalsEur.calendarMinusCanonical ?? '—'} €</span></div>
             <div>Cobertura completa: <span className="font-semibold">{contracts.metadata.coverage.completeFromMonthKey || '—'} → {contracts.metadata.coverage.completeThroughMonthKey || '—'}</span></div>
             <div>Fronteras parciales: <span className="font-semibold">{contracts.metadata.coverage.partialBoundaryMonths.join(', ') || '—'}</span></div>
           </div>

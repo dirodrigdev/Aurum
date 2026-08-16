@@ -92,7 +92,7 @@ const metadata = () => ({
     dayToDay: GASTAPP_CANONICAL_V2_EXPECTED.dayToDayEur,
     trips: GASTAPP_CANONICAL_V2_EXPECTED.tripsEur,
     others: GASTAPP_CANONICAL_V2_EXPECTED.othersEur,
-    calendarMinusCanonicalEur: GASTAPP_CANONICAL_V2_EXPECTED.calendarMinusCanonicalEur,
+    calendarMinusCanonical: GASTAPP_CANONICAL_V2_EXPECTED.calendarMinusCanonicalEur,
   },
 });
 
@@ -253,17 +253,30 @@ describe('GastApp Canónico V2', () => {
     expect(result.metadata.totalsEur.exact).toBe(nextTotal);
   });
 
-  it('exige calendarMinusCanonicalEur y no acepta el nombre antiguo como compatibilidad silenciosa', async () => {
+  it('acepta la diferencia operacional publicada dentro de la tolerancia de un centavo', async () => {
     const fixture = contractReader();
-    const totals = fixture.docs[GASTAPP_CANONICAL_V2_CURRENT_PATH].totalsEur as Record<string, unknown>;
-    const reconciliation = totals.calendarMinusCanonicalEur;
-    delete totals.calendarMinusCanonicalEur;
-    totals.calendarMinusCanonical = reconciliation;
+    (fixture.docs[GASTAPP_CANONICAL_V2_CURRENT_PATH].totalsEur as Record<string, unknown>).calendarMinusCanonical = -0.01;
 
-    await expect(loadGastappCanonicalV2Contracts(fixture)).rejects.toMatchObject({
+    await expect(loadGastappCanonicalV2Contracts(fixture)).resolves.toBeDefined();
+  });
+
+  it('rechaza una metadata sin el campo contractual o fuera de la tolerancia', async () => {
+    const missingFieldFixture = contractReader();
+    delete (missingFieldFixture.docs[GASTAPP_CANONICAL_V2_CURRENT_PATH].totalsEur as Record<string, unknown>).calendarMinusCanonical;
+
+    await expect(loadGastappCanonicalV2Contracts(missingFieldFixture)).rejects.toMatchObject({
       code: 'invalid_document',
       path: GASTAPP_CANONICAL_V2_CURRENT_PATH,
       message: 'Los totales canónicos no son válidos.',
+    });
+
+    const outOfToleranceFixture = contractReader();
+    (outOfToleranceFixture.docs[GASTAPP_CANONICAL_V2_CURRENT_PATH].totalsEur as Record<string, unknown>).calendarMinusCanonical = 0.02;
+
+    await expect(loadGastappCanonicalV2Contracts(outOfToleranceFixture)).rejects.toMatchObject({
+      code: 'invalid_document',
+      path: GASTAPP_CANONICAL_V2_CURRENT_PATH,
+      message: 'La diferencia meses vs. filas supera 0,01 €.',
     });
   });
 

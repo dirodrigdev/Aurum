@@ -10,6 +10,7 @@ export const GASTAPP_DATA_ROOM_V2_EXPRESS_PATH = 'gastapp_data_room_v2_artifacts
 export const GASTAPP_DATA_ROOM_V2_FULL_PATH = 'gastapp_data_room_v2_artifacts/full_current';
 export const GASTAPP_DATA_ROOM_V2_EXPRESS_ARTIFACT_VERSION = 'gastapp-data-room-express-v2';
 export const GASTAPP_DATA_ROOM_V2_FULL_ARTIFACT_VERSION = 'gastapp-data-room-artifact-v2';
+export const GASTAPP_CANONICAL_V2_RECONCILIATION_TOLERANCE_EUR = 0.01;
 
 // Stable schema identities. The canonical hash, totals, counts and artifact
 // hashes are publication data and must always be read from current documents.
@@ -120,7 +121,7 @@ export type GastappCanonicalV2Metadata = {
     dayToDay: number | null;
     trips: number | null;
     others: number | null;
-    calendarMinusCanonicalEur: number | null;
+    calendarMinusCanonical: number | null;
   };
   raw: RecordValue;
 };
@@ -359,7 +360,7 @@ const normalizeCanonicalMetadata = (raw: RecordValue): GastappCanonicalV2Metadat
       dayToDay: readNumber(totals.dayToDay),
       trips: readNumber(totals.trips),
       others: readNumber(totals.others),
-      calendarMinusCanonicalEur: readNumber(totals.calendarMinusCanonicalEur),
+      calendarMinusCanonical: readNumber(totals.calendarMinusCanonical),
     },
     raw,
   };
@@ -376,7 +377,13 @@ const validateCanonicalMetadata = (raw: RecordValue): GastappCanonicalV2Metadata
   assertExpected(Number.isInteger(metadata.counts.acceptedPeriods) && metadata.counts.acceptedPeriods >= 0 && metadata.counts.acceptedPeriods <= metadata.counts.periods, 'invalid_document', 'La cobertura de períodos no es válida.', GASTAPP_CANONICAL_V2_CURRENT_PATH);
   assertExpected(Number.isInteger(metadata.counts.months) && metadata.counts.months >= 0, 'invalid_document', 'El conteo de meses no es válido.', GASTAPP_CANONICAL_V2_CURRENT_PATH);
   assertExpected(Object.values(metadata.totalsEur).every((value) => typeof value === 'number' && Number.isFinite(value)), 'invalid_document', 'Los totales canónicos no son válidos.', GASTAPP_CANONICAL_V2_CURRENT_PATH);
-  assertExpected(metadata.totalsEur.calendarMinusCanonicalEur === 0, 'invalid_document', 'La diferencia meses vs. filas debe ser cero.', GASTAPP_CANONICAL_V2_CURRENT_PATH);
+  assertExpected(
+    metadata.totalsEur.calendarMinusCanonical != null &&
+      Math.abs(metadata.totalsEur.calendarMinusCanonical) <= GASTAPP_CANONICAL_V2_RECONCILIATION_TOLERANCE_EUR,
+    'invalid_document',
+    'La diferencia meses vs. filas supera 0,01 €.',
+    GASTAPP_CANONICAL_V2_CURRENT_PATH,
+  );
   assertExpected(Boolean(metadata.coverage.completeFromMonthKey && MONTH_KEY_PATTERN.test(metadata.coverage.completeFromMonthKey)), 'invalid_document', 'El inicio de cobertura no es válido.', GASTAPP_CANONICAL_V2_CURRENT_PATH);
   assertExpected(Boolean(metadata.coverage.completeThroughMonthKey && MONTH_KEY_PATTERN.test(metadata.coverage.completeThroughMonthKey)), 'invalid_document', 'El final de cobertura no es válido.', GASTAPP_CANONICAL_V2_CURRENT_PATH);
   assertExpected(metadata.coverage.partialBoundaryMonths.every((value) => MONTH_KEY_PATTERN.test(value)), 'invalid_document', 'Las fronteras parciales no son válidas.', GASTAPP_CANONICAL_V2_CURRENT_PATH);

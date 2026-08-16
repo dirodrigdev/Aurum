@@ -36,7 +36,7 @@
       "observedMonths": 1
     },
     "counts": { "periods": 1, "acceptedPeriods": 1, "months": 1, "rowCount": 1, "canonicalRows": 1 },
-    "totalsEur": { "exact": 28, "dayToDay": 28, "trips": 0, "others": 0, "rowCount": 1, "canonicalRows": 1, "calendarMinusCanonicalEur": 0 }
+    "totalsEur": { "exact": 28, "dayToDay": 28, "trips": 0, "others": 0, "rowCount": 1, "canonicalRows": 1, "calendarMinusCanonical": 0 }
   },
   "periods_current": {
     "version": "gastapp-aurum-periods-v2",
