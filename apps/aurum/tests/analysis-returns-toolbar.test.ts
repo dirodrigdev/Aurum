@@ -5,6 +5,18 @@ import { createRoot, Root } from 'react-dom/client';
 import { act } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 
+const gastappMonthlyMock = vi.hoisted(() => ({
+  diagnostic: {
+    status: 'idle' as const,
+    mode: null as 'firestore' | 'e2e_fixture' | null,
+    error: null as string | null,
+    errorCode: null as string | null,
+    docsLoaded: 0,
+    lastUpdatedAt: null as string | null,
+  },
+  connect: vi.fn(async () => undefined),
+}));
+
 vi.mock('../src/components/analysis/ReturnsTab', () => ({
   ReturnsTab: () => React.createElement('div', null, 'ReturnsTab mock'),
 }));
@@ -139,14 +151,8 @@ vi.mock('../src/services/analysisSessionCache', () => ({
 
 vi.mock('../src/services/gastosMonthly', () => ({
   GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT: 'gastapp-source-updated',
-  getGastappMonthlyRuntimeDiagnostic: () => ({
-    status: 'idle',
-    mode: 'unconfigured',
-    error: null,
-    errorCode: null,
-    docsLoaded: 0,
-    lastUpdatedAt: null,
-  }),
+  connectGastappMonthlyContable: gastappMonthlyMock.connect,
+  getGastappMonthlyRuntimeDiagnostic: () => gastappMonthlyMock.diagnostic,
   warmGastappMonthlyContable: vi.fn(async () => undefined),
 }));
 
@@ -178,6 +184,15 @@ describe('AnalysisAurum returns toolbar', () => {
     container?.remove();
     container = null;
     document.body.innerHTML = '';
+    gastappMonthlyMock.diagnostic = {
+      status: 'idle',
+      mode: null,
+      error: null,
+      errorCode: null,
+      docsLoaded: 0,
+      lastUpdatedAt: null,
+    };
+    gastappMonthlyMock.connect.mockClear();
   });
 
   it('keeps the update strip compact while still showing time and action', async () => {
@@ -194,5 +209,28 @@ describe('AnalysisAurum returns toolbar', () => {
     expect(container.textContent).toMatch(/Act\.\s\d{2}:\d{2}/);
     expect(container.textContent).toContain('Actualizar');
     expect(container.textContent).not.toContain('Última actualización:');
+  });
+
+  it('shows the explicit GastApp connection action before monthly data is read', async () => {
+    gastappMonthlyMock.diagnostic = {
+      status: 'ready',
+      mode: null,
+      error: 'Conecta la cuenta autorizada de GastApp.',
+      errorCode: 'secondary_auth_required',
+      docsLoaded: 0,
+      lastUpdatedAt: '2026-08-16T17:00:00.000Z',
+    };
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        React.createElement(MemoryRouter, null, React.createElement(AnalysisAurum)),
+      );
+    });
+
+    expect(container.querySelector('[data-testid="gastapp-monthly-connect-card"]')?.textContent).toContain('Conecta GastApp');
+    expect(container.textContent).toContain('No abre Data Room ni requiere una ventana de 30 minutos');
   });
 });

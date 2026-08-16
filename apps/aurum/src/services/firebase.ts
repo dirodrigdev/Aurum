@@ -136,8 +136,18 @@ export const signInWithGastappGoogle = async () => {
   if (!gastappAuth) throw new Error('gastapp_secondary_auth_unavailable');
   await ensureGastappAuthPersistence();
   if (!gastappGoogleProviderSingleton) gastappGoogleProviderSingleton = new GoogleAuthProvider();
-  const result = await signInWithPopup(gastappAuth, gastappGoogleProviderSingleton);
-  return result.user;
+  try {
+    const result = await signInWithPopup(gastappAuth, gastappGoogleProviderSingleton);
+    return result.user;
+  } catch (error: any) {
+    const code = String(error?.code || '');
+    const needsRedirect =
+      code === 'auth/popup-blocked' ||
+      code === 'auth/operation-not-supported-in-this-environment';
+    if (!needsRedirect) throw error;
+    await signInWithRedirect(gastappAuth, gastappGoogleProviderSingleton);
+    return gastappAuth.currentUser;
+  }
 };
 
 export const isGastappFirestoreConfigured = () => hasGastappFirebaseConfig();

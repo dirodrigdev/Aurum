@@ -40,6 +40,7 @@ const loadFirebase = async () => {
 
 describe('Firebase Google authentication flow', () => {
   beforeEach(() => {
+    vi.unstubAllEnvs();
     mocks.auth.currentUser = null;
     mocks.getRedirectResult.mockReset().mockResolvedValue(null);
     mocks.signInWithPopup.mockReset().mockResolvedValue({ user: { uid: 'google-user' } });
@@ -60,6 +61,22 @@ describe('Firebase Google authentication flow', () => {
     const firebase = await loadFirebase();
     await firebase.signInWithGoogle();
 
+    expect(mocks.signInWithRedirect).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the same mobile-safe redirect fallback for the GastApp connection', async () => {
+    vi.stubEnv('VITE_GASTAPP_FIREBASE_API_KEY', 'test-key');
+    vi.stubEnv('VITE_GASTAPP_FIREBASE_AUTH_DOMAIN', 'gastapp-test.firebaseapp.com');
+    vi.stubEnv('VITE_GASTAPP_FIREBASE_PROJECT_ID', 'duofin-c1894');
+    vi.stubEnv('VITE_GASTAPP_FIREBASE_STORAGE_BUCKET', 'gastapp-test.appspot.com');
+    vi.stubEnv('VITE_GASTAPP_FIREBASE_MESSAGING_SENDER_ID', '123');
+    vi.stubEnv('VITE_GASTAPP_FIREBASE_APP_ID', '1:123:web:test');
+    mocks.signInWithPopup.mockRejectedValueOnce({ code: 'auth/popup-blocked' });
+    const firebase = await loadFirebase();
+
+    await firebase.signInWithGastappGoogle();
+
+    expect(mocks.signInWithPopup).toHaveBeenCalledTimes(1);
     expect(mocks.signInWithRedirect).toHaveBeenCalledTimes(1);
   });
 

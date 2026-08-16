@@ -86,20 +86,23 @@ export const describeGastappDataRoomV2Status = (input: {
 
 export const describeGastappAnalysisAccessIssue = (input: {
   status: 'idle' | 'loading' | 'ready' | 'error';
-  mode: 'firestore' | 'legacy' | 'e2e_fixture' | null;
+  mode: 'firestore' | 'e2e_fixture' | null;
   errorCode?: string | null;
   errorMessage?: string | null;
   missingMonths: string[];
 }) => {
-  if (
-    input.missingMonths.length > 0 &&
-    input.mode === 'legacy' &&
-    isGastappPermissionDenied(input.errorCode || null, input.errorMessage)
-  ) {
-    return buildGastappAccessGuidanceMessage(
-      '4. Vuelve a Aurum y presiona “Actualizar análisis”.',
-      `permission_denied al leer aurum_monthly_from_periods_v1. Meses afectados: ${input.missingMonths.join(', ')}.`,
-    );
+  if (input.missingMonths.length === 0) return null;
+  if (input.errorCode === 'secondary_auth_required' || input.errorCode === 'secondary_auth_failed') {
+    return 'Gasto mensual oficial de GastApp no conectado. Pulsa “Conectar GastApp” e inicia sesión con la misma cuenta autorizada. Esta lectura no usa Data Room ni requiere una ventana de 30 minutos.';
+  }
+  if (input.errorCode === 'missing_config') {
+    return 'Este entorno no tiene configurado el Firebase secundario de GastApp. Faltan VITE_GASTAPP_FIREBASE_* para leer months_current.';
+  }
+  if (isGastappPermissionDenied(input.errorCode || null, input.errorMessage)) {
+    return `GastApp denegó la lectura automática de months_current. Conecta la cuenta autorizada o revisa el permiso de ese contrato. No abras Data Room: no interviene en gastos mensuales. Meses afectados: ${input.missingMonths.join(', ')}.`;
+  }
+  if (input.status === 'error' || (input.status === 'ready' && input.mode === null && input.errorMessage)) {
+    return `No se pudo leer months_current de GastApp. No se usó Data Room ni legacy. Detalle: ${input.errorMessage || input.errorCode || 'no disponible'}.`;
   }
   return null;
 };

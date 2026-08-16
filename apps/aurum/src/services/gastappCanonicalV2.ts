@@ -289,7 +289,7 @@ const defaultReadDocument: DocumentReader = async (path) => {
     if (code === 'permission-denied' || code.endsWith('/permission-denied')) {
       throw new GastappCanonicalV2Error(
         'permission_denied',
-        'La ventana temporal de lectura de GastApp no está abierta o la sesión no está autorizada.',
+        'La sesión autorizada de GastApp no tiene permiso de lectura para este documento.',
         path,
         { cause: error },
       );

@@ -146,6 +146,9 @@ type GastappFirebaseBridge = {
   isGastappFirestoreConfigured: () => boolean;
   isE2EFirebaseEmulatorEnabled: () => boolean;
   getGastappFirestore: () => ReturnType<typeof import('firebase/firestore').getFirestore> | null;
+  ensureGastappAuthPersistence: () => Promise<void>;
+  waitForGastappAuthUser: () => Promise<{ email?: string | null } | null>;
+  signInWithGastappGoogle: () => Promise<{ email?: string | null } | null>;
 };
 
 const loadGastappFirebaseBridge = async (): Promise<GastappFirebaseBridge | null> => {
@@ -156,6 +159,9 @@ const loadGastappFirebaseBridge = async (): Promise<GastappFirebaseBridge | null
       isGastappFirestoreConfigured: mod.isGastappFirestoreConfigured,
       isE2EFirebaseEmulatorEnabled: mod.isE2EFirebaseEmulatorEnabled,
       getGastappFirestore: mod.getGastappFirestore,
+      ensureGastappAuthPersistence: mod.ensureGastappAuthPersistence,
+      waitForGastappAuthUser: mod.waitForGastappAuthUser,
+      signInWithGastappGoogle: mod.signInWithGastappGoogle,
     };
   } catch (error: any) {
     gastappMonthlyRuntime.error = `gastapp_firebase_bridge_unavailable:${String(error?.message || error || 'unknown_error')}`;
@@ -295,6 +301,25 @@ const emitGastappSourceUpdated = () => {
 
 const configuredProjectIdForLogs = () => gastappMonthlyRuntime.configuredProjectId || 'n/a';
 
+const markGastappMonthlyUnavailable = (errorCode: string, error: string) => {
+  gastappMonthlyRuntime.status = 'ready';
+  gastappMonthlyRuntime.mode = null;
+  gastappMonthlyRuntime.error = error;
+  gastappMonthlyRuntime.errorCode = errorCode;
+  gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
+  emitGastappSourceUpdated();
+};
+
+const resetGastappMonthlyRuntime = () => {
+  gastappMonthlyRuntime.status = 'idle';
+  gastappMonthlyRuntime.mode = null;
+  gastappMonthlyRuntime.map = {};
+  gastappMonthlyRuntime.loadPromise = null;
+  gastappMonthlyRuntime.error = null;
+  gastappMonthlyRuntime.errorCode = null;
+  gastappMonthlyRuntime.lastUpdatedAt = null;
+};
+
 const logSourceModeOnce = () => {
   if (gastappMonthlyDiag.didLogMode) return;
   if (gastappMonthlyRuntime.mode === 'firestore') {
@@ -404,11 +429,11 @@ const loadGastappMonthlyContable = async () => {
   gastappMonthlyRuntime.loadPromise = (async () => {
     const firebaseBridge = await loadGastappFirebaseBridge();
     if (!firebaseBridge) {
-      gastappMonthlyRuntime.status = 'ready';
-      gastappMonthlyRuntime.mode = null;
-      gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
+      markGastappMonthlyUnavailable(
+        gastappMonthlyRuntime.errorCode || 'bridge_unavailable',
+        gastappMonthlyRuntime.error || 'No pude iniciar la conexión de GastApp.',
+      );
       logSourceModeOnce();
-      emitGastappSourceUpdated();
       return;
     }
 
@@ -430,31 +455,43 @@ const loadGastappMonthlyContable = async () => {
     );
 
     if (!firestoreConfigured) {
-      gastappMonthlyRuntime.status = 'ready';
-      gastappMonthlyRuntime.mode = null;
-      gastappMonthlyRuntime.error = 'gastapp_firestore_not_configured';
-      gastappMonthlyRuntime.errorCode = 'missing_config';
-      gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
+      markGastappMonthlyUnavailable('missing_config', 'gastapp_firestore_not_configured');
       console.error(
         `${GASTAPP_DIAG_PREFIX} source=gastapp_canonical_v2_unavailable reason=gastapp_firestore_not_configured projectId_configured=${configuredProjectIdForLogs()}`,
       );
       logSourceModeOnce();
-      emitGastappSourceUpdated();
+      return;
+    }
+
+    let secondaryUser: { email?: string | null } | null;
+    try {
+      secondaryUser = await firebaseBridge.waitForGastappAuthUser();
+    } catch (error: any) {
+      markGastappMonthlyUnavailable(
+        'secondary_auth_unavailable',
+        `gastapp_secondary_auth_unavailable:${String(error?.message || error || 'unknown_error')}`,
+      );
+      logSourceModeOnce();
+      return;
+    }
+
+    if (!secondaryUser) {
+      markGastappMonthlyUnavailable(
+        'secondary_auth_required',
+        'Conecta la cuenta autorizada de GastApp para leer el resumen mensual oficial.',
+      );
+      diagInfo(`${GASTAPP_DIAG_PREFIX} source=gastapp_canonical_v2_unavailable reason=secondary_auth_required`);
+      logSourceModeOnce();
       return;
     }
 
     const db = firebaseBridge.getGastappFirestore();
     if (!db) {
-      gastappMonthlyRuntime.status = 'ready';
-      gastappMonthlyRuntime.mode = null;
-      gastappMonthlyRuntime.error = 'gastapp_firestore_unavailable';
-      gastappMonthlyRuntime.errorCode = 'unavailable';
-      gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
+      markGastappMonthlyUnavailable('unavailable', 'gastapp_firestore_unavailable');
       console.error(
         `${GASTAPP_DIAG_PREFIX} source=gastapp_canonical_v2_unavailable reason=gastapp_firestore_unavailable projectId_configured=${configuredProjectIdForLogs()}`,
       );
       logSourceModeOnce();
-      emitGastappSourceUpdated();
       return;
     }
 
@@ -556,6 +593,47 @@ const loadGastappMonthlyContable = async () => {
 
 export const warmGastappMonthlyContable = async () => {
   await loadGastappMonthlyContable();
+};
+
+/**
+ * User-initiated only. It establishes the persisted secondary Firebase session
+ * required by GastApp's private monthly contract, then reads the same two
+ * cacheable contract documents. It never opens Data Room or queries rows.
+ */
+export const connectGastappMonthlyContable = async () => {
+  const firebaseBridge = await loadGastappFirebaseBridge();
+  if (!firebaseBridge) {
+    markGastappMonthlyUnavailable(
+      gastappMonthlyRuntime.errorCode || 'bridge_unavailable',
+      gastappMonthlyRuntime.error || 'No pude iniciar la conexión de GastApp.',
+    );
+    return getGastappMonthlyRuntimeDiagnostic();
+  }
+  if (!firebaseBridge.isGastappFirestoreConfigured()) {
+    markGastappMonthlyUnavailable('missing_config', 'gastapp_firestore_not_configured');
+    return getGastappMonthlyRuntimeDiagnostic();
+  }
+
+  try {
+    await firebaseBridge.ensureGastappAuthPersistence();
+    const existingUser = await firebaseBridge.waitForGastappAuthUser();
+    const connectedUser = existingUser || await firebaseBridge.signInWithGastappGoogle();
+    // Redirect-based sign-in leaves the current page. Avoid any Firestore read
+    // until the redirected page restores the persisted GastApp session.
+    if (!connectedUser) return getGastappMonthlyRuntimeDiagnostic();
+
+    const canonical = await import('./gastappCanonicalV2');
+    canonical.clearGastappCanonicalV2Cache();
+    resetGastappMonthlyRuntime();
+    await loadGastappMonthlyContable();
+  } catch (error: any) {
+    markGastappMonthlyUnavailable(
+      'secondary_auth_failed',
+      `No pude conectar GastApp: ${String(error?.message || error || 'unknown_error')}`,
+    );
+  }
+
+  return getGastappMonthlyRuntimeDiagnostic();
 };
 
 export type GastappMonthlyRuntimeDiagnostic = {
