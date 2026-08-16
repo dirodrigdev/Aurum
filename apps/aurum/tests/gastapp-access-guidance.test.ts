@@ -50,21 +50,9 @@ describe('gastappAccessGuidance', () => {
       missingMonths: ['2026-03', '2026-04'],
     });
     expect(message).toContain('months_current');
-    expect(message).toContain('No abras Data Room');
+    expect(message).toContain('lectura pública');
+    expect(message).toContain('no abras Data Room');
     expect(message).toContain('2026-03, 2026-04');
-  });
-
-  it('explains that the first GastApp connection is not a Data Room window', () => {
-    const message = describeGastappAnalysisAccessIssue({
-      status: 'ready',
-      mode: null,
-      errorCode: 'secondary_auth_required',
-      errorMessage: 'Conecta GastApp.',
-      missingMonths: ['2026-03'],
-    });
-    expect(message).toContain('Conectar GastApp');
-    expect(message).toContain('no usa Data Room');
-    expect(message).toContain('ni requiere una ventana de 30 minutos');
   });
 
   it('keeps zip exports actionable when GastApp access is closed', () => {

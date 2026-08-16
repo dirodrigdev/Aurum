@@ -14,7 +14,6 @@ const gastappMonthlyMock = vi.hoisted(() => ({
     docsLoaded: 0,
     lastUpdatedAt: null as string | null,
   },
-  connect: vi.fn(async () => undefined),
 }));
 
 vi.mock('../src/components/analysis/ReturnsTab', () => ({
@@ -151,7 +150,6 @@ vi.mock('../src/services/analysisSessionCache', () => ({
 
 vi.mock('../src/services/gastosMonthly', () => ({
   GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT: 'gastapp-source-updated',
-  connectGastappMonthlyContable: gastappMonthlyMock.connect,
   getGastappMonthlyRuntimeDiagnostic: () => gastappMonthlyMock.diagnostic,
   warmGastappMonthlyContable: vi.fn(async () => undefined),
 }));
@@ -192,7 +190,6 @@ describe('AnalysisAurum returns toolbar', () => {
       docsLoaded: 0,
       lastUpdatedAt: null,
     };
-    gastappMonthlyMock.connect.mockClear();
   });
 
   it('keeps the update strip compact while still showing time and action', async () => {
@@ -211,7 +208,7 @@ describe('AnalysisAurum returns toolbar', () => {
     expect(container.textContent).not.toContain('Última actualización:');
   });
 
-  it('shows the explicit GastApp connection action before monthly data is read', async () => {
+  it('never presents a secondary GastApp login for the public monthly contract', async () => {
     gastappMonthlyMock.diagnostic = {
       status: 'ready',
       mode: null,
@@ -230,7 +227,7 @@ describe('AnalysisAurum returns toolbar', () => {
       );
     });
 
-    expect(container.querySelector('[data-testid="gastapp-monthly-connect-card"]')?.textContent).toContain('Conecta GastApp');
-    expect(container.textContent).toContain('No abre Data Room ni requiere una ventana de 30 minutos');
+    expect(container.querySelector('[data-testid="gastapp-monthly-connect-card"]')).toBeNull();
+    expect(container.textContent).not.toContain('Conectar GastApp');
   });
 });

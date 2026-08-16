@@ -51,7 +51,6 @@ import {
   getOrBuildAnalysisSessionValue,
 } from '../services/analysisSessionCache';
 import {
-  connectGastappMonthlyContable,
   GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT,
   getGastappMonthlyRuntimeDiagnostic,
   warmGastappMonthlyContable,
@@ -159,7 +158,6 @@ export const AnalysisAurum: React.FC = () => {
   const [wealthSourceVersion, setWealthSourceVersion] = useState(0);
   const [includeEstimatedMonth, setIncludeEstimatedMonth] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [isConnectingGastapp, setIsConnectingGastapp] = useState(false);
   const [exportMessage, setExportMessage] = useState('');
   const [exportingDataRoomKind, setExportingDataRoomKind] = useState<'consolidated' | 'transactions' | null>(null);
   const [analysisRefreshTick, setAnalysisRefreshTick] = useState(0);
@@ -268,9 +266,6 @@ export const AnalysisAurum: React.FC = () => {
     });
   }, [gastosSourceVersion]);
   const gastappRuntimeDiagnostic = useMemo(() => getGastappMonthlyRuntimeDiagnostic(), [gastosSourceVersion]);
-  const gastappConnectionRequired =
-    gastappRuntimeDiagnostic.errorCode === 'secondary_auth_required' ||
-    gastappRuntimeDiagnostic.errorCode === 'secondary_auth_failed';
   const analysisFingerprint = useMemo(
     () =>
       buildAnalysisFingerprint({
@@ -579,16 +574,6 @@ export const AnalysisAurum: React.FC = () => {
     }
   }, []);
 
-  const handleConnectGastapp = useCallback(async () => {
-    setIsConnectingGastapp(true);
-    try {
-      await connectGastappMonthlyContable();
-    } finally {
-      setIsConnectingGastapp(false);
-      setGastosSourceVersion((current) => current + 1);
-    }
-  }, []);
-
   const returnsTabProps: ReturnsTabProps = {
     heroSinceStart,
     heroLast12,
@@ -670,27 +655,6 @@ export const AnalysisAurum: React.FC = () => {
           </div>
         </div>
       </Card>
-
-      {gastappConnectionRequired && (
-        <Card
-          className="border-amber-200 bg-amber-50 p-3 text-xs text-amber-950"
-          data-testid="gastapp-monthly-connect-card"
-        >
-          <div className="font-semibold">Conecta GastApp para cargar gastos mensuales</div>
-          <div className="mt-1">
-            Aurum necesita la sesión autorizada de GastApp para leer sólo el resumen mensual oficial.
-            No abre Data Room ni requiere una ventana de 30 minutos.
-          </div>
-          <Button
-            size="sm"
-            className="mt-2"
-            onClick={handleConnectGastapp}
-            disabled={isConnectingGastapp}
-          >
-            {isConnectingGastapp ? 'Conectando GastApp…' : 'Conectar GastApp'}
-          </Button>
-        </Card>
-      )}
 
       {tab === 'lab' ? (
         <LabTab

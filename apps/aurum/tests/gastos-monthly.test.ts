@@ -30,12 +30,6 @@ const { loadGastappCanonicalV2MonthContractMock } = vi.hoisted(() => ({
   loadGastappCanonicalV2MonthContractMock: vi.fn(),
 }));
 
-const gastappAuthMock = vi.hoisted(() => ({
-  ensurePersistence: vi.fn(async () => undefined),
-  waitForUser: vi.fn(async () => ({ email: 'aurum@example.test' })),
-  signIn: vi.fn(async () => ({ email: 'aurum@example.test' })),
-}));
-
 vi.mock('../src/services/gastappCanonicalV2', () => ({
   loadGastappCanonicalV2MonthContract: loadGastappCanonicalV2MonthContractMock,
   loadGastappCanonicalV2MonthContractCached: loadGastappCanonicalV2MonthContractMock,
@@ -55,9 +49,6 @@ vi.mock('../src/services/firebase', () => ({
   isGastappFirestoreConfigured: () => true,
   isE2EFirebaseEmulatorEnabled: () => false,
   getGastappFirestore: () => firestoreMock.state.db,
-  ensureGastappAuthPersistence: gastappAuthMock.ensurePersistence,
-  waitForGastappAuthUser: gastappAuthMock.waitForUser,
-  signInWithGastappGoogle: gastappAuthMock.signIn,
 }));
 
 const resetFirestoreMock = () => {
@@ -69,11 +60,6 @@ const resetFirestoreMock = () => {
   firestoreMock.getDoc.mockClear();
   firestoreMock.getDocs.mockClear();
   firestoreMock.setDoc.mockClear();
-  gastappAuthMock.ensurePersistence.mockClear();
-  gastappAuthMock.waitForUser.mockReset();
-  gastappAuthMock.waitForUser.mockResolvedValue({ email: 'aurum@example.test' });
-  gastappAuthMock.signIn.mockReset();
-  gastappAuthMock.signIn.mockResolvedValue({ email: 'aurum@example.test' });
 };
 
 describe('gastosMonthly canonical source', () => {
@@ -151,51 +137,6 @@ describe('gastosMonthly canonical source', () => {
     expect(preview.status).toBe('unavailable');
     expect(preview.candidates).toEqual([]);
     expect(preview.error).toBe('period_legacy_backfill_disabled_for_calendar_contract');
-  });
-
-  it('requires the persisted GastApp session before reading the monthly contract', async () => {
-    gastappAuthMock.waitForUser.mockResolvedValue(null);
-    const { getGastappMonthlyRuntimeDiagnostic, resolveGastappMonthlySpend, warmGastappMonthlyContable } = await import(
-      '../src/services/gastosMonthly'
-    );
-
-    await warmGastappMonthlyContable();
-
-    expect(getGastappMonthlyRuntimeDiagnostic()).toMatchObject({
-      status: 'ready',
-      mode: null,
-      errorCode: 'secondary_auth_required',
-      docsLoaded: 0,
-    });
-    expect(resolveGastappMonthlySpend('2026-02').gastosEur).toBeNull();
-    expect(loadGastappCanonicalV2MonthContractMock).not.toHaveBeenCalled();
-    expect(firestoreMock.collection).not.toHaveBeenCalled();
-    expect(firestoreMock.getDocs).not.toHaveBeenCalled();
-  });
-
-  it('connects explicitly, then reads only the cacheable monthly contract', async () => {
-    gastappAuthMock.waitForUser.mockResolvedValueOnce(null).mockResolvedValue({ email: 'aurum@example.test' });
-    loadGastappCanonicalV2MonthContractMock.mockResolvedValue({
-      metadata: {},
-      months: {
-        version: 'gastapp-aurum-calendar-months-v2',
-        canonicalDataHash: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-        contractHash: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-        generatedAt: '2026-03-01T00:00:00.000Z',
-        raw: {},
-        months: [],
-      },
-    });
-    const { connectGastappMonthlyContable } = await import('../src/services/gastosMonthly');
-
-    const diagnostic = await connectGastappMonthlyContable();
-
-    expect(gastappAuthMock.ensurePersistence).toHaveBeenCalledTimes(1);
-    expect(gastappAuthMock.signIn).toHaveBeenCalledTimes(1);
-    expect(diagnostic).toMatchObject({ status: 'ready', mode: 'firestore', docsLoaded: 0 });
-    expect(loadGastappCanonicalV2MonthContractMock).toHaveBeenCalledTimes(1);
-    expect(firestoreMock.collection).not.toHaveBeenCalled();
-    expect(firestoreMock.getDocs).not.toHaveBeenCalled();
   });
 
   it('refuses to backfill period-labelled legacy values into the calendar contract', async () => {

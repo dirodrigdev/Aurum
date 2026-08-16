@@ -92,14 +92,11 @@ export const describeGastappAnalysisAccessIssue = (input: {
   missingMonths: string[];
 }) => {
   if (input.missingMonths.length === 0) return null;
-  if (input.errorCode === 'secondary_auth_required' || input.errorCode === 'secondary_auth_failed') {
-    return 'Gasto mensual oficial de GastApp no conectado. Pulsa “Conectar GastApp” e inicia sesión con la misma cuenta autorizada. Esta lectura no usa Data Room ni requiere una ventana de 30 minutos.';
-  }
   if (input.errorCode === 'missing_config') {
     return 'Este entorno no tiene configurado el Firebase secundario de GastApp. Faltan VITE_GASTAPP_FIREBASE_* para leer months_current.';
   }
   if (isGastappPermissionDenied(input.errorCode || null, input.errorMessage)) {
-    return `GastApp denegó la lectura automática de months_current. Conecta la cuenta autorizada o revisa el permiso de ese contrato. No abras Data Room: no interviene en gastos mensuales. Meses afectados: ${input.missingMonths.join(', ')}.`;
+    return `GastApp denegó la lectura pública de months_current. Debe revisarse la publicación del contrato agregado; no abras Data Room ni inicies sesión. Meses afectados: ${input.missingMonths.join(', ')}.`;
   }
   if (input.status === 'error' || (input.status === 'ready' && input.mode === null && input.errorMessage)) {
     return `No se pudo leer months_current de GastApp. No se usó Data Room ni legacy. Detalle: ${input.errorMessage || input.errorCode || 'no disponible'}.`;
