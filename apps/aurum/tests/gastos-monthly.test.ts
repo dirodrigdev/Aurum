@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { WealthMonthlyClosure } from '../src/services/wealthStorage';
 
 const firestoreMock = vi.hoisted(() => {
   const state = {
@@ -27,6 +26,15 @@ const firestoreMock = vi.hoisted(() => {
   };
 });
 
+const { loadGastappCanonicalV2MonthContractMock } = vi.hoisted(() => ({
+  loadGastappCanonicalV2MonthContractMock: vi.fn(),
+}));
+
+vi.mock('../src/services/gastappCanonicalV2', () => ({
+  loadGastappCanonicalV2MonthContract: loadGastappCanonicalV2MonthContractMock,
+  loadGastappCanonicalV2MonthContractCached: loadGastappCanonicalV2MonthContractMock,
+}));
+
 vi.mock('firebase/firestore', () => ({
   collection: firestoreMock.collection,
   doc: firestoreMock.doc,
@@ -45,6 +53,7 @@ vi.mock('../src/services/firebase', () => ({
 const resetFirestoreMock = () => {
   firestoreMock.state.docs = [];
   firestoreMock.state.writes = [];
+  loadGastappCanonicalV2MonthContractMock.mockReset();
   firestoreMock.collection.mockClear();
   firestoreMock.doc.mockClear();
   firestoreMock.getDoc.mockClear();
@@ -52,50 +61,35 @@ const resetFirestoreMock = () => {
   firestoreMock.setDoc.mockClear();
 };
 
-const makeClosure = (monthKey: string, netClp: number): WealthMonthlyClosure => ({
-  id: monthKey,
-  monthKey,
-  closedAt: `${monthKey}-28T23:59:59-03:00`,
-  summary: {
-    netByCurrency: { CLP: netClp, USD: 0, EUR: 0, UF: 0 },
-    assetsByCurrency: { CLP: netClp, USD: 0, EUR: 0, UF: 0 },
-    debtsByCurrency: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
-    netConsolidatedClp: netClp,
-    byBlock: {
-      bank: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
-      investment: { CLP: netClp, USD: 0, EUR: 0, UF: 0 },
-      real_estate: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
-      debt: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
-    },
-    netClp,
-    netClpWithRisk: netClp,
-  },
-  fxRates: {
-    usdClp: 900,
-    eurClp: 1000,
-    ufClp: 38000,
-  },
-});
-
 describe('gastosMonthly canonical source', () => {
   beforeEach(() => {
     vi.resetModules();
     resetFirestoreMock();
   });
 
-  it('uses Firestore docs from aurum_monthly_from_periods_v1 over legacy values', async () => {
-    firestoreMock.state.docs = [
-      {
-        id: '2026-02',
-        data: {
+  it('uses the validated calendar contract as the official Firestore source', async () => {
+    loadGastappCanonicalV2MonthContractMock.mockResolvedValue({
+      metadata: {},
+      months: {
+        version: 'gastapp-aurum-calendar-months-v2',
+        generatedAt: '2026-03-01T00:00:00.000Z',
+        raw: { dateSemantics: 'gastapp-canonical-calendar-offline-v2' },
+        months: [{
+          calendarMonthKey: '2026-02',
           status: 'complete',
-          total_contable_eur: 1234,
-          dataQuality: 'ok',
-          source: 'monthly_reports',
-          day_to_day_source: 'period_summaries',
-        },
+          calendarStatus: 'complete',
+          eligibleForAurumReturns: true,
+          fromYmd: '2026-02-01',
+          toYmd: '2026-02-28',
+          rowCount: 1,
+          totalEur: 1234,
+          byFamily: { day_to_day: 1234 },
+          byCategory: {},
+          byProject: {},
+          raw: {},
+        }],
       },
-    ];
+    });
     const { resolveGastappMonthlySpend, warmGastappMonthlyContable } = await import('../src/services/gastosMonthly');
 
     await warmGastappMonthlyContable();
@@ -103,11 +97,18 @@ describe('gastosMonthly canonical source', () => {
 
     expect(resolution.source).toBe('gastapp_firestore');
     expect(resolution.gastosEur).toBe(1234);
-    expect(resolution.contractSource).toBe('monthly_reports');
+    expect(resolution.contractSource).toBe('gastapp-aurum-calendar-months-v2');
+    expect(resolution.dayToDaySource).toBe('gastapp-canonical-calendar-v2');
+    expect(resolution.schemaVersion).toBe('gastapp-aurum-calendar-months-v2');
+    expect(resolution.methodologyVersion).toBe('gastapp-canonical-calendar-offline-v2');
+    expect(resolution.publishedAt).toBe('2026-03-01T00:00:00.000Z');
     expect(resolution.gastosEur).not.toBe(7928);
+    expect(firestoreMock.collection).not.toHaveBeenCalled();
+    expect(loadGastappCanonicalV2MonthContractMock).toHaveBeenCalledTimes(1);
   });
 
   it('does not use legacy as official when Firestore is loading or missing a canonical doc', async () => {
+    loadGastappCanonicalV2MonthContractMock.mockResolvedValue({ metadata: {}, months: { version: 'gastapp-aurum-calendar-months-v2', generatedAt: null, raw: {}, months: [] } });
     const { previewGastappMonthlyLegacyBackfill, resolveGastappMonthlySpend, warmGastappMonthlyContable } = await import(
       '../src/services/gastosMonthly'
     );
@@ -123,56 +124,52 @@ describe('gastosMonthly canonical source', () => {
     expect(missingCanonical.source).toBe('gastapp_firestore');
     expect(missingCanonical.status).toBe('missing');
     expect(missingCanonical.gastosEur).toBeNull();
-    expect(preview.candidates).toEqual([
-      expect.objectContaining({ monthKey: '2026-02', gastosEur: 7928, source: 'legacy_static' }),
-    ]);
+    expect(preview.status).toBe('unavailable');
+    expect(preview.candidates).toEqual([]);
+    expect(preview.error).toBe('period_legacy_backfill_disabled_for_calendar_contract');
   });
 
-  it('backfills legacy values into the canonical collection with audit metadata', async () => {
-    const { backfillGastappMonthlyFromLegacy, resolveGastappMonthlySpend } = await import('../src/services/gastosMonthly');
-    const { aggregateRows, computeMonthlyRows } = await import('../src/services/returnsAnalysis');
+  it('refuses to backfill period-labelled legacy values into the calendar contract', async () => {
+    const { backfillGastappMonthlyFromLegacy } = await import('../src/services/gastosMonthly');
 
     const result = await backfillGastappMonthlyFromLegacy(['2026-02']);
-    const resolution = resolveGastappMonthlySpend('2026-02', new Date('2026-05-09T12:00:00Z'));
-    const rows = computeMonthlyRows(
-      [
-        makeClosure('2026-01', 1_000_000_000),
-        makeClosure('2026-02', 1_050_000_000),
-      ],
-      false,
-      'CLP',
-    );
-    const summary = aggregateRows('backfilled', 'Backfilled', rows.slice(1), rows[1].prevNetDisplay, {
-      expectedMonthKeys: ['2026-02'],
-    });
 
-    expect(result.backfilled).toHaveLength(1);
-    expect(firestoreMock.setDoc).toHaveBeenCalledTimes(1);
-    expect(firestoreMock.state.writes[0].ref).toMatchObject({
-      path: 'aurum_monthly_from_periods_v1',
-      id: '2026-02',
+    expect(result.backfilled).toEqual([]);
+    expect(result.skipped).toEqual([{ monthKey: '2026-02', reason: 'period_legacy_backfill_disabled' }]);
+    expect(firestoreMock.getDoc).not.toHaveBeenCalled();
+    expect(firestoreMock.setDoc).not.toHaveBeenCalled();
+  });
+
+  it('does not use totals from partial calendar months', async () => {
+    loadGastappCanonicalV2MonthContractMock.mockResolvedValue({
+      metadata: {},
+      months: {
+        version: 'gastapp-aurum-calendar-months-v2',
+        generatedAt: null,
+        raw: {},
+        months: [{
+          calendarMonthKey: '2026-08',
+          status: 'pending',
+          calendarStatus: 'partial_boundary_end',
+          eligibleForAurumReturns: false,
+          fromYmd: '2026-08-01',
+          toYmd: '2026-08-11',
+          rowCount: 1,
+          totalEur: 2567.05,
+          byFamily: {},
+          byCategory: {},
+          byProject: {},
+          raw: {},
+        }],
+      },
     });
-    expect(firestoreMock.state.writes[0].payload).toMatchObject({
-      monthKey: '2026-02',
-      status: 'complete',
-      total_contable_eur: 7928,
-      dataQuality: 'ok',
-      source: 'gastapp_monthly_backfill',
-      day_to_day_source: 'legacy_static_backfill',
-      reason: 'gastapp_monthly_backfill',
-      migratedFrom: 'legacy_static',
-      backfillAudit: expect.objectContaining({
-        monthKey: '2026-02',
-        valueEur: 7928,
-        migratedFrom: 'legacy_static',
-        reason: 'gastapp_monthly_backfill',
-      }),
-    });
-    expect(resolution.source).toBe('gastapp_firestore');
-    expect(resolution.gastosEur).toBe(7928);
-    expect(resolution.dataQuality).toBe('ok');
-    expect(resolution.reason).toBe('gastapp_monthly_backfill');
-    expect(summary.validMonths).toBe(1);
-    expect(summary.coverage.status).toBe('complete');
+    const { resolveGastappMonthlySpend, warmGastappMonthlyContable } = await import('../src/services/gastosMonthly');
+
+    await warmGastappMonthlyContable();
+    const resolution = resolveGastappMonthlySpend('2026-08', new Date('2026-08-14T12:00:00Z'));
+
+    expect(resolution.status).toBe('pending');
+    expect(resolution.gastosEur).toBeNull();
+    expect(resolution.contractSource).toBe('gastapp-aurum-calendar-months-v2');
   });
 });

@@ -54,12 +54,12 @@ import {
 } from '../services/gastosMonthly';
 import {
   describeGastappAnalysisAccessIssue,
-  describeGastappZipExportStatus,
+  buildGastappAccessGuidanceMessage,
 } from '../services/dataRoom/gastappAccessGuidance';
 import {
-  exportFinancialDataRoomWithTransactionsZip,
-  exportFinancialDataRoomZip,
-} from '../services/dataRoom/exportDataRoomZip';
+  downloadGastappDataRoomV2Artifact,
+  GastappCanonicalV2Error,
+} from '../services/gastappCanonicalV2';
 
 const loadWealthClosures = () => loadClosures();
 
@@ -529,77 +529,32 @@ export const AnalysisAurum: React.FC = () => {
     setExportingDataRoomKind('consolidated');
     setExportMessage('');
     try {
-      const bundle = await exportFinancialDataRoomZip({
-        closures,
-        officialMonthlyRowsAsc: returnsSeriesView.officialRows,
-        wealthEvolutionModel,
-        periodSummaries,
-        yearlySummaries,
-        heroSinceStart,
-        heroLast12,
-        heroYtd2026,
-        heroLastMonth,
-      }, {
-        onProgress: setExportMessage,
-      });
-      const gastappStatus = bundle.manifest.source_status.gastapp_status;
-      const ledgerPreviewStatus = bundle.manifest.gastapp_ledger_preview_status;
-      setExportMessage(describeGastappZipExportStatus({
-        filename: bundle.filename,
-        gastappStatus,
-        ledgerPreviewStatus,
-      }));
+      const artifact = await downloadGastappDataRoomV2Artifact('express');
+      setExportMessage(`ZIP Express verificado: ${artifact.byteLength.toLocaleString('es-ES')} bytes · ${artifact.sha256} · 2 lecturas documentales · sin filas.`);
     } catch (error: any) {
-      setExportMessage(String(error?.message || error || 'No pude generar el ZIP.'));
+      setExportMessage(error instanceof GastappCanonicalV2Error && error.code === 'permission_denied'
+        ? buildGastappAccessGuidanceMessage('4. Vuelve a Aurum y presiona “Descargar Express”.', `${error.code} · ${error.path || 'Data Room Express'}`)
+        : String(error?.message || error || 'No pude descargar Express.'));
     } finally {
       setExportingDataRoomKind(null);
     }
-  }, [
-    closures,
-    returnsSeriesView.officialRows,
-    wealthEvolutionModel,
-    periodSummaries,
-    yearlySummaries,
-    heroSinceStart,
-    heroLast12,
-    heroYtd2026,
-    heroLastMonth,
-  ]);
+  }, []);
 
   const handleExportDataRoomWithTransactions = useCallback(async () => {
     setExportingDataRoomKind('transactions');
     setExportMessage('');
     try {
-      const bundle = await exportFinancialDataRoomWithTransactionsZip({
-        closures,
-        officialMonthlyRowsAsc: returnsSeriesView.officialRows,
-        wealthEvolutionModel,
-        periodSummaries,
-        yearlySummaries,
-        heroSinceStart,
-        heroLast12,
-        heroYtd2026,
-        heroLastMonth,
-      }, {
-        onProgress: setExportMessage,
-      });
-      setExportMessage(`ZIP generado: ${bundle.filename} · Incluye manifest, period summaries y rows de GastApp Data Room v2.`);
+      const artifact = await downloadGastappDataRoomV2Artifact('full');
+      const freshness = artifact.fullFreshness;
+      setExportMessage(`ZIP Full verificado: ${artifact.byteLength.toLocaleString('es-ES')} bytes · ${artifact.sha256} · 2 lecturas documentales · sin reconstrucción. ${freshness ? `Generado: ${freshness.generatedAt}. Hash operacional del snapshot: ${freshness.snapshotOperationalDataHash}. Hash operacional vigente: ${freshness.currentOperationalDataHash}. ${freshness.isStale ? 'Snapshot stale: no afecta gasto mensual, retornos ni Express.' : 'Snapshot fresco.'}` : 'Estado de frescura no disponible.'}`);
     } catch (error: any) {
-      setExportMessage(String(error?.message || error || 'No pude generar el ZIP con transacciones.'));
+      setExportMessage(error instanceof GastappCanonicalV2Error && error.code === 'permission_denied'
+        ? buildGastappAccessGuidanceMessage('4. Abre la ventana “Data Room para Aurum” durante 30 min y vuelve a Aurum.', `${error.code} · ${error.path || 'Data Room Full'}`)
+        : String(error?.message || error || 'No pude descargar Full.'));
     } finally {
       setExportingDataRoomKind(null);
     }
-  }, [
-    closures,
-    returnsSeriesView.officialRows,
-    wealthEvolutionModel,
-    periodSummaries,
-    yearlySummaries,
-    heroSinceStart,
-    heroLast12,
-    heroYtd2026,
-    heroLastMonth,
-  ]);
+  }, []);
 
   const returnsTabProps: ReturnsTabProps = {
     heroSinceStart,

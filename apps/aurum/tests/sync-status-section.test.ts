@@ -5,10 +5,11 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  describeGastappDataRoomV2DiagnosticState,
-  SyncStatusSection,
-  type GastappDataRoomV2DiagnosticViewState,
-} from '../src/components/settings/SyncStatusSection';
+  describeGastappCanonicalV2DiagnosticState,
+  GastappCanonicalV2Section,
+} from '../src/components/settings/GastappCanonicalV2Section';
+import { SyncStatusSection } from '../src/components/settings/SyncStatusSection';
+import type { GastappCanonicalV2DiagnosticViewState } from '../src/components/settings/GastappCanonicalV2Section';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -22,28 +23,72 @@ afterEach(async () => {
   container = null;
 });
 
-const base = (status: GastappDataRoomV2DiagnosticViewState['status']): GastappDataRoomV2DiagnosticViewState => ({
+const base = (status: GastappCanonicalV2DiagnosticViewState['status']): GastappCanonicalV2DiagnosticViewState => ({
   status,
-  sourceStatus: null,
   message: '',
   technicalDetail: null,
-  manifest: null,
-  summariesSample: [],
-  rowsSample: [],
+  errorCode: null,
+  contracts: null,
+  pointer: null,
+  downloads: {
+    express: { status: 'idle', message: '' },
+    full: { status: 'idle', message: '' },
+  },
 });
 
-describe('SyncStatusSection gastapp v2 diagnostic label', () => {
+describe('GastApp Canónico V2 diagnostic label', () => {
   it('maps loading to loading', () => {
-    expect(describeGastappDataRoomV2DiagnosticState(base('loading'))).toBe('loading');
+    expect(describeGastappCanonicalV2DiagnosticState(base('loading'))).toBe('loading');
   });
 
   it('maps ok to ok', () => {
-    expect(describeGastappDataRoomV2DiagnosticState(base('ok'))).toBe('ok');
+    expect(describeGastappCanonicalV2DiagnosticState(base('ok'))).toBe('ok');
   });
 
   it('maps idle and error to error fallback', () => {
-    expect(describeGastappDataRoomV2DiagnosticState(base('idle'))).toBe('error');
-    expect(describeGastappDataRoomV2DiagnosticState(base('error'))).toBe('error');
+    expect(describeGastappCanonicalV2DiagnosticState(base('idle'))).toBe('error');
+    expect(describeGastappCanonicalV2DiagnosticState(base('error'))).toBe('error');
+  });
+
+  it('muestra la frescura stale de Full sin atribuirla a las métricas mensuales', async () => {
+    const state = base('ok');
+    state.pointer = {
+      pointerVersion: 'gastapp-data-room-pointer-v2',
+      storageBackend: 'firestore_blob',
+      canonicalDataHash: `sha256:${'a'.repeat(64)}`,
+      operationalDataHash: `sha256:${'c'.repeat(64)}`,
+      operationalRevision: 7,
+      fullSnapshotHash: `sha256:${'f'.repeat(64)}`,
+      fullSnapshotOperationalDataHash: `sha256:${'d'.repeat(64)}`,
+      fullSnapshotGeneratedAt: '2026-08-01T00:00:00.000Z',
+      fullSnapshotStale: true,
+      express: { document: 'gastapp_data_room_v2_artifacts/express_current', hash: `sha256:${'b'.repeat(64)}`, bytes: 26, mediaType: 'application/zip', generatedAt: null, operationalDataHash: null, operationalRevision: null, staleAgainstOperationalHash: null },
+      full: { document: 'gastapp_data_room_v2_artifacts/full_current', hash: `sha256:${'f'.repeat(64)}`, bytes: 23, mediaType: 'application/zip', generatedAt: '2026-08-01T00:00:00.000Z', operationalDataHash: `sha256:${'d'.repeat(64)}`, operationalRevision: 6, staleAgainstOperationalHash: true },
+      fullFreshness: {
+        generatedAt: '2026-08-01T00:00:00.000Z',
+        isStale: true,
+        snapshotOperationalDataHash: `sha256:${'d'.repeat(64)}`,
+        currentOperationalDataHash: `sha256:${'c'.repeat(64)}`,
+        snapshotOperationalRevision: 6,
+        currentOperationalRevision: 7,
+      },
+      raw: {},
+    };
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(GastappCanonicalV2Section, {
+        state,
+        onRefresh: vi.fn(),
+        onDownload: vi.fn(),
+      }));
+    });
+
+    expect(container.textContent).toContain('Estado Full: Stale: snapshot anterior conservado');
+    expect(container.textContent).toContain('Hash operacional del snapshot:');
+    expect(container.textContent).toContain('Hash operacional vigente:');
+    expect(container.textContent).toContain('No afecta gasto mensual, retornos ni Express.');
   });
 });
 
@@ -60,7 +105,7 @@ describe('SyncStatusSection MIDAS publication recovery', () => {
         fsStatus: { state: 'ok', message: '', checkedAt: null },
         syncMessage: '',
         fsDebug: '',
-        gastappDataRoomV2: base('idle'),
+        gastappCanonicalV2: base('idle'),
         midasPublication: {
           status: 'idle',
           message: 'Listo para publicar 2026-05. El cierre 2026-06 no tiene FX canónico.',
@@ -68,7 +113,8 @@ describe('SyncStatusSection MIDAS publication recovery', () => {
         onToggle: vi.fn(),
         onSyncNow: vi.fn(),
         onSignOut: vi.fn(),
-        onRefreshGastappDataRoomV2: vi.fn(),
+        onRefreshGastappCanonicalV2: vi.fn(),
+        onDownloadGastappCanonicalV2: vi.fn(),
         onRepublishMidas,
       }));
     });

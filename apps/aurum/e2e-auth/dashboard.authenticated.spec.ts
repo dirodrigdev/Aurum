@@ -64,6 +64,81 @@ test('authenticated Settings can regenerate the canonical MIDAS publication', as
   expect(consoleErrors, `console errors: ${consoleErrors.join(' | ')}`).toEqual([]);
 });
 
+test('authenticated Settings exposes the GastApp Canonical V2 read-only panel responsively', async ({ page }, testInfo) => {
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+  const networkGuard = await installLocalNetworkGuard(page);
+
+  await page.goto('/#/settings');
+  const dismissIncompleteClosure = page.getByRole('button', { name: 'Omitir', exact: true });
+  await expect(dismissIncompleteClosure).toBeVisible({ timeout: 30_000 });
+  await dismissIncompleteClosure.click();
+  await page.getByRole('button', { name: /Sincronización/ }).click();
+
+  const canonicalSection = page.getByTestId('gastapp-canonical-v2-section');
+  await expect(canonicalSection).toBeVisible({ timeout: 30_000 });
+  await expect(canonicalSection).toContainText('GastApp Canónico V2');
+  await expect(canonicalSection).toContainText('sólo lectura');
+  await expect(page.getByText(/(?:Inversiones actualizadas|Patrimonio actualizado)/, { exact: false })).toHaveCount(0, { timeout: 5_000 });
+
+  await page.screenshot({ path: testInfo.outputPath('aurum-gastapp-canonical-v2-desktop.png'), fullPage: true });
+
+  await page.setViewportSize({ width: 768, height: 1024 });
+  const tabletOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(tabletOverflow).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-gastapp-canonical-v2-tablet.png'), fullPage: true });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(mobileOverflow).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-gastapp-canonical-v2-mobile.png'), fullPage: true });
+
+  await networkGuard.assertClean(testInfo);
+  expect(pageErrors, `page errors: ${pageErrors.join(' | ')}`).toEqual([]);
+  expect(consoleErrors, `console errors: ${consoleErrors.join(' | ')}`).toEqual([]);
+});
+
+test('authenticated Analysis keeps monthly validation audit-only and responsive', async ({ page }, testInfo) => {
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+  const networkGuard = await installLocalNetworkGuard(page);
+
+  await page.goto('/#/analysis');
+  const dismissIncompleteClosure = page.getByRole('button', { name: 'Omitir', exact: true });
+  await expect(dismissIncompleteClosure).toBeVisible({ timeout: 30_000 });
+  await dismissIncompleteClosure.click();
+  await expect(dismissIncompleteClosure).toHaveCount(0);
+  await page.getByRole('button', { name: 'Validación mensual', exact: true }).click();
+  const audit = page.getByTestId('gastapp-canonical-v2-audit');
+  await expect(audit).toBeVisible({ timeout: 30_000 });
+  await expect(audit).toContainText('Auditoría');
+  await expect(page.getByText('Data Room / Exportaciones', { exact: true })).toBeVisible();
+
+  await page.screenshot({ path: testInfo.outputPath('aurum-monthly-audit-desktop.png'), fullPage: true });
+
+  await page.setViewportSize({ width: 768, height: 1024 });
+  const tabletOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(tabletOverflow).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-monthly-audit-tablet.png'), fullPage: true });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(mobileOverflow).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-monthly-audit-mobile.png'), fullPage: true });
+
+  await networkGuard.assertClean(testInfo);
+  expect(pageErrors, `page errors: ${pageErrors.join(' | ')}`).toEqual([]);
+  expect(consoleErrors, `console errors: ${consoleErrors.join(' | ')}`).toEqual([]);
+});
+
 test('monthly-close preflight exposes temporary confirmations before final close', async ({ page }, testInfo) => {
   await page.goto('/#/dashboard');
   const dismissIncompleteClosure = page.getByRole('button', { name: 'Omitir', exact: true });

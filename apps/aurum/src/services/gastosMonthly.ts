@@ -1,6 +1,3 @@
-import { collection, doc, getDoc, getDocs, setDoc } from 'firebase/firestore';
-import { GASTAPP_TOTALS } from '../data/gastappTotals';
-
 export type GastosMonthStatus = 'complete' | 'pending' | 'missing';
 export type GastosContractStatus = GastosMonthStatus | 'stale';
 export type GastosMonthSource = 'gastapp_firestore' | 'legacy_static';
@@ -39,39 +36,6 @@ export type GastosMonthResolution = {
   migratedFrom?: 'legacy_static' | null;
 };
 
-type GastappMonthlyContableDoc = {
-  monthKey?: unknown;
-  status?: unknown;
-  total_contable_eur?: unknown;
-  dataQuality?: unknown;
-  data_quality?: unknown;
-  isStale?: unknown;
-  staleReason?: unknown;
-  stale_reason?: unknown;
-  schema_version?: unknown;
-  methodology_version?: unknown;
-  periodKey?: unknown;
-  source?: unknown;
-  day_to_day_source?: unknown;
-  closedAt?: unknown;
-  reportUpdatedAt?: unknown;
-  summaryUpdatedAt?: unknown;
-  lastExpenseUpdatedAt?: unknown;
-  publishedAt?: unknown;
-  updated_at?: unknown;
-  revision?: unknown;
-  reportTotalEur?: unknown;
-  summaryTotalEur?: unknown;
-  directExpenseTotalEur?: unknown;
-  reportVsDirectDiffEur?: unknown;
-  summaryVsDirectDiffEur?: unknown;
-  reportVsSummaryDiffEur?: unknown;
-  categoryGapEur?: unknown;
-  repairedAt?: unknown;
-  reason?: unknown;
-  migratedFrom?: unknown;
-};
-
 type GastappMonthlyContableEntry = {
   status: GastosMonthStatus;
   contractStatus: GastosContractStatus | null;
@@ -105,7 +69,7 @@ type GastappMonthlyContableEntry = {
 
 export const GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT = 'aurum:gastapp-monthly-source-updated';
 const GASTAPP_DIAG_PREFIX = '[AURUM][gastapp-monthly][diag]';
-const GASTAPP_MONTHLY_COLLECTION = 'aurum_monthly_from_periods_v1';
+const GASTAPP_MONTHLY_CONTRACT_PATH = 'gastapp_aurum_contracts_v2/months_current';
 const GASTAPP_DIAG_ENABLED = Boolean(import.meta.env.DEV || import.meta.env.VITE_GASTAPP_DIAG === '1');
 const E2E_GASTAPP_FIXTURE_REASON = 'e2e_gastapp_disabled';
 const USE_E2E_GASTAPP_FIXTURE = import.meta.env.VITE_E2E_USE_FIREBASE_EMULATOR === 'true';
@@ -122,7 +86,7 @@ const diagWarn = (message: string) => {
 
 const gastappMonthlyRuntime: {
   status: 'idle' | 'loading' | 'ready' | 'error';
-  mode: 'firestore' | 'legacy' | null;
+  mode: 'firestore' | 'e2e_fixture' | null;
   map: Record<string, GastappMonthlyContableEntry>;
   loadPromise: Promise<void> | null;
   error: string | null;
@@ -131,7 +95,7 @@ const gastappMonthlyRuntime: {
   configuredProjectId: string;
 } = {
   status: USE_E2E_GASTAPP_FIXTURE ? 'ready' : 'idle',
-  mode: USE_E2E_GASTAPP_FIXTURE ? 'legacy' : null,
+  mode: USE_E2E_GASTAPP_FIXTURE ? 'e2e_fixture' : null,
   map: {},
   loadPromise: null,
   error: USE_E2E_GASTAPP_FIXTURE ? E2E_GASTAPP_FIXTURE_REASON : null,
@@ -166,6 +130,11 @@ const loadGastappFirebaseBridge = async (): Promise<GastappFirebaseBridge | null
     gastappMonthlyRuntime.errorCode = String(error?.code || 'bridge_unavailable');
     return null;
   }
+};
+
+const loadGastappCanonicalMonthContract = async () => {
+  const mod = await import('./gastappCanonicalV2');
+  return mod.loadGastappCanonicalV2MonthContractCached();
 };
 
 const parseMonthKey = (monthKey: string): { year: number; month: number } | null => {
@@ -205,9 +174,9 @@ const readNumber = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-// TEMP LEGACY FALLBACK (deprecado): se mantiene solo para transición controlada.
-// Retirar cuando la lectura desde `aurum_monthly_from_periods_v1` esté validada al 100%.
-const resolveFromLegacy = (monthKey: string, now: Date): GastosMonthResolution => {
+// The old static map contains period totals labelled as months. It must never be
+// used as an official fallback for the calendar contract.
+const resolveFromE2EFixture = (monthKey: string, now: Date): GastosMonthResolution => {
   if (gastappMonthlyRuntime.error === E2E_GASTAPP_FIXTURE_REASON) {
     const parsed = parseMonthKey(monthKey);
     const monthIndex = parsed ? parsed.year * 12 + parsed.month : 0;
@@ -225,33 +194,17 @@ const resolveFromLegacy = (monthKey: string, now: Date): GastosMonthResolution =
     };
   }
 
-  const raw = GASTAPP_TOTALS[monthKey];
-  if (Number.isFinite(raw)) {
-    return {
-      monthKey,
-      status: 'complete',
-      gastosEur: Number(raw),
-      source: 'legacy_static',
-      contractStatus: null,
-      dataQuality: 'warning',
-      isStale: false,
-      staleReason: null,
-      dayToDaySource: 'legacy',
-      contractSource: 'legacy_static',
-    };
-  }
-
   return {
     monthKey,
     status: inferStatusWithoutTotal(monthKey, now),
     gastosEur: null,
-    source: 'legacy_static',
+    source: 'gastapp_firestore',
     contractStatus: null,
-    dataQuality: 'warning',
+    dataQuality: null,
     isStale: false,
-    staleReason: null,
-    dayToDaySource: 'legacy',
-    contractSource: 'legacy_static',
+    staleReason: 'calendar_contract_unavailable',
+    dayToDaySource: null,
+    contractSource: 'aurum_monthly_calendar_v2',
   };
 };
 
@@ -267,22 +220,6 @@ const resolveCanonicalUnavailable = (monthKey: string, now: Date): GastosMonthRe
   dayToDaySource: null,
   contractSource: null,
 });
-
-const normalizeDocStatus = (value: unknown): GastosContractStatus | null => {
-  if (value === 'complete' || value === 'pending' || value === 'missing' || value === 'stale') return value;
-  return null;
-};
-
-const normalizeDataQuality = (value: unknown): GastosMonthDataQuality | null => {
-  if (value === 'ok' || value === 'warning' || value === 'error') return value;
-  return null;
-};
-
-const normalizeBackfillReason = (value: unknown): 'gastapp_monthly_backfill' | null =>
-  value === 'gastapp_monthly_backfill' ? value : null;
-
-const normalizeMigratedFrom = (value: unknown): 'legacy_static' | null =>
-  value === 'legacy_static' ? value : null;
 
 const isValidMonthKey = (value: string) => /^\d{4}-\d{2}$/.test(value);
 
@@ -302,8 +239,8 @@ const logSourceModeOnce = () => {
     gastappMonthlyDiag.didLogMode = true;
     return;
   }
-  if (gastappMonthlyRuntime.mode === 'legacy') {
-    const message = `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=${gastappMonthlyRuntime.error || 'unknown'} projectId_configured=${configuredProjectIdForLogs()}`;
+  if (gastappMonthlyRuntime.mode === 'e2e_fixture') {
+    const message = `${GASTAPP_DIAG_PREFIX} source=e2e_fixture reason=${gastappMonthlyRuntime.error || 'unknown'} projectId_configured=${configuredProjectIdForLogs()}`;
     if (gastappMonthlyRuntime.error === E2E_GASTAPP_FIXTURE_REASON) {
       diagInfo(message);
     } else {
@@ -314,7 +251,7 @@ const logSourceModeOnce = () => {
 };
 
 const logMarchResolutionIfNeeded = (
-  origin: 'firestore' | 'legacy',
+  origin: 'firestore' | 'e2e_fixture',
   resolution: GastosMonthResolution,
   reason: string,
 ) => {
@@ -399,7 +336,7 @@ const loadGastappMonthlyContable = async () => {
     const firebaseBridge = await loadGastappFirebaseBridge();
     if (!firebaseBridge) {
       gastappMonthlyRuntime.status = 'ready';
-      gastappMonthlyRuntime.mode = 'legacy';
+      gastappMonthlyRuntime.mode = null;
       gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
       logSourceModeOnce();
       emitGastappSourceUpdated();
@@ -408,7 +345,7 @@ const loadGastappMonthlyContable = async () => {
 
     if (firebaseBridge.isE2EFirebaseEmulatorEnabled()) {
       gastappMonthlyRuntime.status = 'ready';
-      gastappMonthlyRuntime.mode = 'legacy';
+      gastappMonthlyRuntime.mode = 'e2e_fixture';
       gastappMonthlyRuntime.error = E2E_GASTAPP_FIXTURE_REASON;
       gastappMonthlyRuntime.errorCode = 'e2e_fixture';
       gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
@@ -425,12 +362,12 @@ const loadGastappMonthlyContable = async () => {
 
     if (!firestoreConfigured) {
       gastappMonthlyRuntime.status = 'ready';
-      gastappMonthlyRuntime.mode = 'legacy';
+      gastappMonthlyRuntime.mode = null;
       gastappMonthlyRuntime.error = 'gastapp_firestore_not_configured';
       gastappMonthlyRuntime.errorCode = 'missing_config';
       gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
       console.error(
-        `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=gastapp_firestore_not_configured projectId_configured=${configuredProjectIdForLogs()}`,
+        `${GASTAPP_DIAG_PREFIX} source=gastapp_canonical_v2_unavailable reason=gastapp_firestore_not_configured projectId_configured=${configuredProjectIdForLogs()}`,
       );
       logSourceModeOnce();
       emitGastappSourceUpdated();
@@ -440,12 +377,12 @@ const loadGastappMonthlyContable = async () => {
     const db = firebaseBridge.getGastappFirestore();
     if (!db) {
       gastappMonthlyRuntime.status = 'ready';
-      gastappMonthlyRuntime.mode = 'legacy';
+      gastappMonthlyRuntime.mode = null;
       gastappMonthlyRuntime.error = 'gastapp_firestore_unavailable';
       gastappMonthlyRuntime.errorCode = 'unavailable';
       gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
       console.error(
-        `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=gastapp_firestore_unavailable projectId_configured=${configuredProjectIdForLogs()}`,
+        `${GASTAPP_DIAG_PREFIX} source=gastapp_canonical_v2_unavailable reason=gastapp_firestore_unavailable projectId_configured=${configuredProjectIdForLogs()}`,
       );
       logSourceModeOnce();
       emitGastappSourceUpdated();
@@ -455,71 +392,49 @@ const loadGastappMonthlyContable = async () => {
     try {
       const runtimeProjectId = String(db.app.options.projectId || '');
       diagInfo(
-        `${GASTAPP_DIAG_PREFIX} query_start collection=${GASTAPP_MONTHLY_COLLECTION} projectId_runtime=${runtimeProjectId || 'n/a'}`,
+        `${GASTAPP_DIAG_PREFIX} read_start document=${GASTAPP_MONTHLY_CONTRACT_PATH} projectId_runtime=${runtimeProjectId || 'n/a'}`,
       );
-      const snapshot = await getDocs(collection(db, GASTAPP_MONTHLY_COLLECTION));
+      const contractResult = await loadGastappCanonicalMonthContract();
       const loaded: Record<string, GastappMonthlyContableEntry> = {};
-      const now = new Date();
-
-      snapshot.forEach((doc) => {
-        const data = (doc.data() || {}) as GastappMonthlyContableDoc;
-        const rawMonthKey =
-          typeof data.monthKey === 'string' && isValidMonthKey(data.monthKey)
-            ? data.monthKey
-            : isValidMonthKey(doc.id)
-              ? doc.id
-              : null;
-        if (!rawMonthKey) return;
-
-        const normalizedStatus = normalizeDocStatus(data.status);
-        const normalizedDataQuality = normalizeDataQuality(data.dataQuality ?? data.data_quality);
-        const rawTotal = Number(data.total_contable_eur);
-        const hasTotal = Number.isFinite(rawTotal);
-        const explicitIsStale = readBoolean(data.isStale);
-        const staleReason = readString(data.staleReason ?? data.stale_reason);
-
-        let status: GastosMonthStatus =
-          normalizedStatus === 'complete' || normalizedStatus === 'stale'
-            ? 'complete'
-            : normalizedStatus ?? inferStatusWithoutTotal(rawMonthKey, now);
-        let gastosEur: number | null = hasTotal ? rawTotal : null;
-
-        if (status === 'complete' && gastosEur === null) {
-          status = inferStatusWithoutTotal(rawMonthKey, now);
-        }
-        if (status !== 'complete') {
-          gastosEur = null;
-        }
-
-        loaded[rawMonthKey] = {
-          status,
-          contractStatus: normalizedStatus,
-          gastosEur,
-          dataQuality: normalizedDataQuality,
-          isStale: explicitIsStale ?? normalizedStatus === 'stale',
-          staleReason,
-          dayToDaySource: readString(data.day_to_day_source),
-          contractSource: readString(data.source),
-          schemaVersion: readString(data.schema_version),
-          methodologyVersion: readString(data.methodology_version),
-          periodKey: readString(data.periodKey),
-          publishedAt: readString(data.publishedAt),
-          updatedAt: readString(data.updated_at),
-          closedAt: readString(data.closedAt),
-          reportUpdatedAt: readString(data.reportUpdatedAt),
-          summaryUpdatedAt: readString(data.summaryUpdatedAt),
-          lastExpenseUpdatedAt: readString(data.lastExpenseUpdatedAt),
-          revision: readNumber(data.revision),
-          reportTotalEur: readNumber(data.reportTotalEur),
-          summaryTotalEur: readNumber(data.summaryTotalEur),
-          directExpenseTotalEur: readNumber(data.directExpenseTotalEur),
-          reportVsDirectDiffEur: readNumber(data.reportVsDirectDiffEur),
-          summaryVsDirectDiffEur: readNumber(data.summaryVsDirectDiffEur),
-          reportVsSummaryDiffEur: readNumber(data.reportVsSummaryDiffEur),
-          categoryGapEur: readNumber(data.categoryGapEur),
-          repairedAt: readString(data.repairedAt),
-          reason: normalizeBackfillReason(data.reason),
-          migratedFrom: normalizeMigratedFrom(data.migratedFrom),
+      contractResult.months.months.forEach((month) => {
+        if (!isValidMonthKey(month.calendarMonthKey)) return;
+        const isComplete = month.status === 'complete' && month.eligibleForAurumReturns;
+        const contractStatus: GastosContractStatus = isComplete
+          ? 'complete'
+          : month.status === 'stale'
+            ? 'stale'
+            : month.status === 'pending'
+              ? 'pending'
+              : 'missing';
+        loaded[month.calendarMonthKey] = {
+          status: isComplete ? 'complete' : contractStatus === 'pending' ? 'pending' : 'missing',
+          contractStatus,
+          gastosEur: isComplete ? month.totalEur : null,
+          dataQuality: isComplete ? 'ok' : 'warning',
+          isStale: contractStatus === 'stale',
+          staleReason: isComplete ? null : month.calendarStatus || month.status,
+          dayToDaySource: 'gastapp-canonical-calendar-v2',
+          contractSource: contractResult.months.version,
+          schemaVersion: contractResult.months.version,
+          methodologyVersion: readString(contractResult.months.raw.dateSemantics),
+          periodKey: null,
+          publishedAt: contractResult.months.generatedAt,
+          updatedAt: contractResult.months.generatedAt,
+          closedAt: null,
+          reportUpdatedAt: null,
+          summaryUpdatedAt: null,
+          lastExpenseUpdatedAt: null,
+          revision: null,
+          reportTotalEur: isComplete ? month.totalEur : null,
+          summaryTotalEur: isComplete ? month.totalEur : null,
+          directExpenseTotalEur: isComplete ? month.totalEur : null,
+          reportVsDirectDiffEur: 0,
+          summaryVsDirectDiffEur: 0,
+          reportVsSummaryDiffEur: 0,
+          categoryGapEur: 0,
+          repairedAt: null,
+          reason: null,
+          migratedFrom: null,
         };
       });
 
@@ -531,27 +446,27 @@ const loadGastappMonthlyContable = async () => {
       logSourceModeOnce();
       const march = loaded['2026-03'] || null;
       diagInfo(
-        `${GASTAPP_DIAG_PREFIX} query_done collection=${GASTAPP_MONTHLY_COLLECTION} docs=${snapshot.size} month_2026_03_found=${Boolean(march)} projectId_runtime=${runtimeProjectId || 'n/a'}`,
+        `${GASTAPP_DIAG_PREFIX} read_done document=${GASTAPP_MONTHLY_CONTRACT_PATH} months=${Object.keys(loaded).length} month_2026_03_found=${Boolean(march)} projectId_runtime=${runtimeProjectId || 'n/a'}`,
       );
       if (march) {
         diagInfo(
           `${GASTAPP_DIAG_PREFIX} month=2026-03 status=${march.status} total_contable_eur=${march.gastosEur ?? 'null'} source=gastapp_firestore`,
         );
       } else {
-        const reason = snapshot.empty ? 'collection_empty' : 'month_doc_not_found';
+        const reason = 'month_not_found_in_contract';
         diagWarn(
-          `${GASTAPP_DIAG_PREFIX} month=2026-03 not_found reason=${reason} fallback_status=${inferStatusWithoutTotal('2026-03', now)}`,
+          `${GASTAPP_DIAG_PREFIX} month=2026-03 not_found reason=${reason}`,
         );
       }
       emitGastappSourceUpdated();
     } catch (error: any) {
       gastappMonthlyRuntime.status = 'error';
-      gastappMonthlyRuntime.mode = 'legacy';
+      gastappMonthlyRuntime.mode = null;
       gastappMonthlyRuntime.errorCode = String(error?.code || '');
       gastappMonthlyRuntime.error = String(error?.message || error || 'unknown_error');
       gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
       console.error(
-        `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=firestore_query_exception error=${gastappMonthlyRuntime.error} projectId_configured=${configuredProjectIdForLogs()}`,
+        `${GASTAPP_DIAG_PREFIX} source=gastapp_canonical_v2_unavailable reason=document_read_exception error=${gastappMonthlyRuntime.error} projectId_configured=${configuredProjectIdForLogs()}`,
       );
       logSourceModeOnce();
       emitGastappSourceUpdated();
@@ -569,8 +484,8 @@ export const warmGastappMonthlyContable = async () => {
 };
 
 export type GastappMonthlyRuntimeDiagnostic = {
-  collectionPath: typeof GASTAPP_MONTHLY_COLLECTION;
-  mode: 'firestore' | 'legacy' | null;
+  contractPath: typeof GASTAPP_MONTHLY_CONTRACT_PATH;
+  mode: 'firestore' | 'e2e_fixture' | null;
   status: 'idle' | 'loading' | 'ready' | 'error';
   error: string | null;
   errorCode: string | null;
@@ -580,7 +495,7 @@ export type GastappMonthlyRuntimeDiagnostic = {
 };
 
 export const getGastappMonthlyRuntimeDiagnostic = (): GastappMonthlyRuntimeDiagnostic => ({
-  collectionPath: GASTAPP_MONTHLY_COLLECTION,
+  contractPath: GASTAPP_MONTHLY_CONTRACT_PATH,
   mode: gastappMonthlyRuntime.mode,
   status: gastappMonthlyRuntime.status,
   error: gastappMonthlyRuntime.error,
@@ -601,49 +516,19 @@ export const previewGastappMonthlyLegacyBackfill = async (
   monthKeys?: string[],
 ): Promise<{
   status: 'ready' | 'unavailable';
-  sourceMode: 'firestore' | 'legacy' | null;
+  sourceMode: 'firestore' | 'e2e_fixture' | null;
   candidates: GastappMonthlyBackfillCandidate[];
   skipped: Array<{ monthKey: string; reason: 'canonical_exists' | 'no_legacy_value' }>;
   error: string | null;
 }> => {
   await loadGastappMonthlyContable();
-  const keys = monthKeys?.length ? monthKeys : Object.keys(GASTAPP_TOTALS).sort();
-  if (gastappMonthlyRuntime.mode !== 'firestore' || gastappMonthlyRuntime.status !== 'ready') {
-    return {
-      status: 'unavailable',
-      sourceMode: gastappMonthlyRuntime.mode,
-      candidates: [],
-      skipped: keys.map((monthKey) => ({ monthKey, reason: 'no_legacy_value' as const })),
-      error: gastappMonthlyRuntime.error || 'gastapp_firestore_not_ready',
-    };
-  }
-
-  const candidates: GastappMonthlyBackfillCandidate[] = [];
-  const skipped: Array<{ monthKey: string; reason: 'canonical_exists' | 'no_legacy_value' }> = [];
-  keys.forEach((monthKey) => {
-    if (gastappMonthlyRuntime.map[monthKey]) {
-      skipped.push({ monthKey, reason: 'canonical_exists' });
-      return;
-    }
-    const legacyValue = GASTAPP_TOTALS[monthKey];
-    if (!Number.isFinite(Number(legacyValue))) {
-      skipped.push({ monthKey, reason: 'no_legacy_value' });
-      return;
-    }
-    candidates.push({
-      monthKey,
-      gastosEur: Number(legacyValue),
-      source: 'legacy_static',
-      reason: 'missing_canonical_doc',
-    });
-  });
-
+  const keys = monthKeys?.length ? monthKeys : [];
   return {
-    status: 'ready',
+    status: 'unavailable',
     sourceMode: gastappMonthlyRuntime.mode,
-    candidates,
-    skipped,
-    error: null,
+    candidates: [],
+    skipped: keys.map((monthKey) => ({ monthKey, reason: 'no_legacy_value' as const })),
+    error: 'period_legacy_backfill_disabled_for_calendar_contract',
   };
 };
 
@@ -651,101 +536,12 @@ export const backfillGastappMonthlyFromLegacy = async (
   monthKeys: string[],
 ): Promise<{
   backfilled: Array<{ monthKey: string; gastosEur: number; repairedAt: string }>;
-  skipped: Array<{ monthKey: string; reason: 'canonical_exists' | 'no_legacy_value' | 'firestore_unavailable' }>;
+  skipped: Array<{ monthKey: string; reason: 'period_legacy_backfill_disabled' }>;
 }> => {
-  const preview = await previewGastappMonthlyLegacyBackfill(monthKeys);
-  if (preview.status !== 'ready') {
-    return {
-      backfilled: [],
-      skipped: monthKeys.map((monthKey) => ({ monthKey, reason: 'firestore_unavailable' as const })),
-    };
-  }
-
-  const firebaseBridge = await loadGastappFirebaseBridge();
-  const db = firebaseBridge?.getGastappFirestore();
-  if (!db) {
-    return {
-      backfilled: [],
-      skipped: monthKeys.map((monthKey) => ({ monthKey, reason: 'firestore_unavailable' as const })),
-    };
-  }
-
-  const backfilled: Array<{ monthKey: string; gastosEur: number; repairedAt: string }> = [];
-  const skipped: Array<{ monthKey: string; reason: 'canonical_exists' | 'no_legacy_value' | 'firestore_unavailable' }> = [
-    ...preview.skipped
-      .filter((item) => monthKeys.includes(item.monthKey))
-      .map((item) => ({ monthKey: item.monthKey, reason: item.reason })),
-  ];
-
-  for (const candidate of preview.candidates.filter((item) => monthKeys.includes(item.monthKey))) {
-    const repairedAt = new Date().toISOString();
-    const docRef = doc(db, GASTAPP_MONTHLY_COLLECTION, candidate.monthKey);
-    const existing = await getDoc(docRef);
-    if (existing.exists()) {
-      skipped.push({ monthKey: candidate.monthKey, reason: 'canonical_exists' });
-      continue;
-    }
-    const payload = {
-      monthKey: candidate.monthKey,
-      status: 'complete',
-      total_contable_eur: candidate.gastosEur,
-      dataQuality: 'ok',
-      source: 'gastapp_monthly_backfill',
-      day_to_day_source: 'legacy_static_backfill',
-      schema_version: 'aurum_monthly_from_periods_v1',
-      methodology_version: 'gastapp_monthly_backfill_v1',
-      repairedAt,
-      reason: 'gastapp_monthly_backfill',
-      migratedFrom: 'legacy_static',
-      backfillAudit: {
-        monthKey: candidate.monthKey,
-        valueEur: candidate.gastosEur,
-        sourceOriginal: 'legacy_static',
-        migratedFrom: 'legacy_static',
-        repairedAt,
-        reason: 'gastapp_monthly_backfill',
-      },
-    };
-    await setDoc(docRef, payload, { merge: false });
-    gastappMonthlyRuntime.map[candidate.monthKey] = {
-      status: 'complete',
-      contractStatus: 'complete',
-      gastosEur: candidate.gastosEur,
-      dataQuality: 'ok',
-      isStale: false,
-      staleReason: null,
-      dayToDaySource: 'legacy_static_backfill',
-      contractSource: 'gastapp_monthly_backfill',
-      schemaVersion: 'aurum_monthly_from_periods_v1',
-      methodologyVersion: 'gastapp_monthly_backfill_v1',
-      periodKey: null,
-      publishedAt: null,
-      updatedAt: null,
-      closedAt: null,
-      reportUpdatedAt: null,
-      summaryUpdatedAt: null,
-      lastExpenseUpdatedAt: null,
-      revision: null,
-      reportTotalEur: null,
-      summaryTotalEur: null,
-      directExpenseTotalEur: null,
-      reportVsDirectDiffEur: null,
-      summaryVsDirectDiffEur: null,
-      reportVsSummaryDiffEur: null,
-      categoryGapEur: null,
-      repairedAt,
-      reason: 'gastapp_monthly_backfill',
-      migratedFrom: 'legacy_static',
-    };
-    backfilled.push({ monthKey: candidate.monthKey, gastosEur: candidate.gastosEur, repairedAt });
-  }
-
-  if (backfilled.length) {
-    gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
-    emitGastappSourceUpdated();
-  }
-
-  return { backfilled, skipped };
+  return {
+    backfilled: [],
+    skipped: monthKeys.map((monthKey) => ({ monthKey, reason: 'period_legacy_backfill_disabled' as const })),
+  };
 };
 
 export const resolveGastappMonthlySpend = (monthKey: string, now = new Date()): GastosMonthResolution => {
@@ -753,22 +549,13 @@ export const resolveGastappMonthlySpend = (monthKey: string, now = new Date()): 
     void loadGastappMonthlyContable();
   }
 
+  if (gastappMonthlyRuntime.error === E2E_GASTAPP_FIXTURE_REASON) {
+    return resolveFromE2EFixture(monthKey, now);
+  }
+
   if (gastappMonthlyRuntime.mode === 'firestore' && gastappMonthlyRuntime.status === 'ready') {
     return resolveFromFirestore(monthKey, now);
   }
 
-  if (gastappMonthlyRuntime.mode !== 'legacy' && gastappMonthlyRuntime.status !== 'error') {
-    return resolveCanonicalUnavailable(monthKey, now);
-  }
-
-  const legacy = resolveFromLegacy(monthKey, now);
-  logSourceModeOnce();
-  if (monthKey === '2026-03') {
-    const reason =
-      gastappMonthlyRuntime.mode === 'legacy'
-        ? `legacy_mode_${gastappMonthlyRuntime.error || 'fallback'}`
-        : `firestore_not_ready_${gastappMonthlyRuntime.status}`;
-    logMarchResolutionIfNeeded('legacy', legacy, reason);
-  }
-  return legacy;
+  return resolveCanonicalUnavailable(monthKey, now);
 };

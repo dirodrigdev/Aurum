@@ -12,7 +12,7 @@ import {
 import { LabToolsSection } from '../components/settings/LabToolsSection';
 import { HistoricalFxCorrectionConsole } from '../components/settings/HistoricalFxCorrectionConsole';
 import { SyncStatusSection } from '../components/settings/SyncStatusSection';
-import type { GastappDataRoomV2DiagnosticViewState } from '../components/settings/SyncStatusSection';
+import type { GastappCanonicalV2DiagnosticViewState } from '../components/settings/GastappCanonicalV2Section';
 import type { MidasPublicationViewState } from '../components/settings/SyncStatusSection';
 import { TypedConfirmModal } from '../components/settings/TypedConfirmModal';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
@@ -81,11 +81,14 @@ import {
   runDestructiveActionWithBackupGuard,
 } from '../services/settingsDestructiveGuard';
 import {
-  getGastappDataRoomV2Manifest,
-  getGastappDataRoomV2PeriodSummaries,
-  getGastappDataRoomV2RowsPage,
-} from '../services/dataRoom/gastappDataRoomV2Adapter';
-import { describeGastappDataRoomV2Status } from '../services/dataRoom/gastappAccessGuidance';
+  downloadGastappDataRoomV2Artifact,
+  GastappCanonicalV2Error,
+  loadGastappCanonicalV2ContractsCached,
+  loadGastappDataRoomV2Pointer,
+  validateGastappDataRoomV2FreshnessAgainstMetadata,
+  type GastappDataRoomV2ArtifactMode,
+} from '../services/gastappCanonicalV2';
+import { buildGastappAccessGuidanceMessage } from '../services/dataRoom/gastappAccessGuidance';
 import {
   prepareAurumOptimizableInvestmentsSnapshot,
   publishAurumOptimizableInvestmentsSnapshot,
@@ -98,14 +101,17 @@ const HIDE_SENSITIVE_AMOUNTS_PREF_KEY = 'aurum.hide-sensitive-amounts.v1';
 const HIDE_SENSITIVE_AMOUNTS_UPDATED_EVENT = 'aurum:hide-sensitive-amounts-updated';
 const BANKS_UPDATE_MODE_KEY = 'aurum.banks.update.mode.v1';
 const BANKS_UPDATE_MODE_CHANGED_EVENT = 'aurum:banks:update-mode';
-const DEFAULT_GASTAPP_V2_DIAGNOSTIC: GastappDataRoomV2DiagnosticViewState = {
+const DEFAULT_GASTAPP_CANONICAL_V2_DIAGNOSTIC: GastappCanonicalV2DiagnosticViewState = {
   status: 'idle',
-  sourceStatus: null,
-  message: 'Abre esta sección para probar lectura read-only del Data Room v2.',
+  message: 'Abre esta sección para leer los contratos Canónico V2 y el puntero de artefactos.',
   technicalDetail: null,
-  manifest: null,
-  summariesSample: [],
-  rowsSample: [],
+  errorCode: null,
+  contracts: null,
+  pointer: null,
+  downloads: {
+    express: { status: 'idle', message: '' },
+    full: { status: 'idle', message: '' },
+  },
 };
 
 const describeMidasPublicationReadiness = (
@@ -350,8 +356,8 @@ export const SettingsAurum: React.FC = () => {
   const [syncMessage, setSyncMessage] = useState('');
   const [fsDebug, setFsDebug] = useState('');
   const [fsStatus, setFsStatus] = useState(() => getFirestoreStatus());
-  const [gastappDataRoomV2Diagnostic, setGastappDataRoomV2Diagnostic] = useState<GastappDataRoomV2DiagnosticViewState>(
-    DEFAULT_GASTAPP_V2_DIAGNOSTIC,
+  const [gastappCanonicalV2Diagnostic, setGastappCanonicalV2Diagnostic] = useState<GastappCanonicalV2DiagnosticViewState>(
+    DEFAULT_GASTAPP_CANONICAL_V2_DIAGNOSTIC,
   );
   const [midasPublication, setMidasPublication] = useState<MidasPublicationViewState>(() =>
     describeMidasPublicationReadiness(loadClosures(), getLastWealthSyncIssue()),
@@ -1003,9 +1009,9 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
 
   useEffect(() => {
     if (openSection !== 'sync') return;
-    if (gastappDataRoomV2Diagnostic.status !== 'idle') return;
-    void loadGastappDataRoomV2Diagnostic();
-  }, [openSection, gastappDataRoomV2Diagnostic.status]);
+    if (gastappCanonicalV2Diagnostic.status !== 'idle') return;
+    void loadGastappCanonicalV2Diagnostic();
+  }, [openSection, gastappCanonicalV2Diagnostic.status]);
 
   const scrollToSettingsElement = (element: HTMLElement | null) => {
     if (!element) return;
@@ -1044,72 +1050,98 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     window.dispatchEvent(new Event(BANKS_UPDATE_MODE_CHANGED_EVENT));
   };
 
-  const loadGastappDataRoomV2Diagnostic = async () => {
-    setGastappDataRoomV2Diagnostic((current) => ({
+  const loadGastappCanonicalV2Diagnostic = async () => {
+    setGastappCanonicalV2Diagnostic((current) => ({
       ...current,
       status: 'loading',
-      message: 'Probando lectura read-only de GastApp Data Room v2...',
+      message: 'Leyendo metadata, contratos y puntero Canónico V2…',
       technicalDetail: null,
+      errorCode: null,
     }));
     try {
-      const manifestResult = await getGastappDataRoomV2Manifest();
-      const manifestTechnicalDetail = `permission_denied · ${manifestResult.currentDocumentPath}`;
-      if (!manifestResult.manifest) {
-        const message = describeGastappDataRoomV2Status({
-          status: manifestResult.status,
-          errorMessage: manifestResult.errorMessage,
-          technicalDetail: manifestResult.status === 'permission_denied' ? manifestTechnicalDetail : `status=${manifestResult.status} · path=${manifestResult.currentDocumentPath}`,
-        });
-        setGastappDataRoomV2Diagnostic({
-          status: 'error',
-          sourceStatus: manifestResult.status,
-          message,
-          technicalDetail: manifestResult.status === 'permission_denied' ? manifestTechnicalDetail : null,
-          manifest: null,
-          summariesSample: [],
-          rowsSample: [],
-        });
-        return;
+      const contracts = await loadGastappCanonicalV2ContractsCached();
+      let pointer: Awaited<ReturnType<typeof loadGastappDataRoomV2Pointer>> | null = null;
+      let pointerError: GastappCanonicalV2Error | null = null;
+      try {
+        pointer = await loadGastappDataRoomV2Pointer({ expectedCanonicalDataHash: contracts.metadata.canonicalDataHash });
+        validateGastappDataRoomV2FreshnessAgainstMetadata(contracts.metadata, pointer);
+      } catch (error) {
+        if (error instanceof GastappCanonicalV2Error) {
+          pointerError = error;
+        } else {
+          pointerError = new GastappCanonicalV2Error('unavailable', String(error || 'No se pudo leer el puntero Data Room.'), null, { cause: error });
+        }
       }
-
-      const [periodSummariesResult, rowsPageResult] = await Promise.all([
-        getGastappDataRoomV2PeriodSummaries(),
-        getGastappDataRoomV2RowsPage({ pageSize: 5 }),
-      ]);
-
-      const sourceStatus = rowsPageResult.status || periodSummariesResult.status || manifestResult.status;
-      const hasPermissionBlock =
-        manifestResult.status === 'permission_denied' ||
-        periodSummariesResult.status === 'permission_denied' ||
-        rowsPageResult.status === 'permission_denied';
-      const technicalDetail = hasPermissionBlock
-        ? `permission_denied · ${manifestResult.currentDocumentPath}`
-        : null;
-      const message = describeGastappDataRoomV2Status({
-        status: sourceStatus,
-        errorMessage: rowsPageResult.errorMessage || periodSummariesResult.errorMessage || manifestResult.errorMessage,
-        technicalDetail,
-      });
-
-      setGastappDataRoomV2Diagnostic({
-        status: sourceStatus === 'usable' ? 'ok' : 'error',
-        sourceStatus,
-        message,
-        technicalDetail,
-        manifest: manifestResult.manifest,
-        summariesSample: periodSummariesResult.summaries.slice(0, 3),
-        rowsSample: rowsPageResult.page.rows,
-      });
+      setGastappCanonicalV2Diagnostic((current) => ({
+        ...current,
+        status: 'ok',
+        message: pointerError?.code === 'permission_denied'
+          ? 'Contratos mensuales verificados automáticamente. El Data Room permanece cerrado hasta que se abra su ventana temporal.'
+          : pointerError
+            ? `Contratos mensuales verificados automáticamente. El puntero Data Room no está disponible ahora (${pointerError.code}). Las métricas mensuales no dependen de ese estado.`
+            : 'Contratos y puntero verificados. No se han leído filas ni se ha reconstruido ningún ZIP.',
+        technicalDetail: pointerError ? `${pointerError.code} · ${pointerError.path || 'Data Room'}` : null,
+        errorCode: pointerError?.code || null,
+        contracts,
+        pointer,
+      }));
     } catch (error: any) {
-      setGastappDataRoomV2Diagnostic({
+      const isCanonicalError = error instanceof GastappCanonicalV2Error;
+      const code = isCanonicalError ? error.code : null;
+      const path = isCanonicalError ? error.path : null;
+      setGastappCanonicalV2Diagnostic((current) => ({
+        ...current,
         status: 'error',
-        sourceStatus: 'error',
-        message: String(error?.message || error || 'No se pudo completar el diagnóstico v2.'),
-        technicalDetail: null,
-        manifest: null,
-        summariesSample: [],
-        rowsSample: [],
+        message: code === 'permission_denied'
+          ? 'La ventana temporal de GastApp está cerrada. Abre “Data Room para Aurum” y reintenta.'
+          : String(error?.message || error || 'No se pudo leer GastApp Canónico V2.'),
+        technicalDetail: path ? `${code} · ${path}` : code,
+        errorCode: code,
+        contracts: null,
+        pointer: null,
+      }));
+    }
+  };
+
+  const downloadGastappCanonicalV2 = async (mode: GastappDataRoomV2ArtifactMode) => {
+    setGastappCanonicalV2Diagnostic((current) => ({
+      ...current,
+      downloads: {
+        ...current.downloads,
+        [mode]: { status: 'loading', message: 'Leyendo puntero y verificando el ZIP…' },
+      },
+    }));
+    try {
+      const artifact = await downloadGastappDataRoomV2Artifact(mode, {
+        expectedCanonicalDataHash: gastappCanonicalV2Diagnostic.contracts?.metadata.canonicalDataHash || undefined,
       });
+      setGastappCanonicalV2Diagnostic((current) => ({
+        ...current,
+        downloads: {
+          ...current.downloads,
+          [mode]: {
+            status: 'ok',
+            message: mode === 'full' && artifact.fullFreshness
+              ? `Descarga ofrecida tras verificar ${artifact.byteLength.toLocaleString('es-ES')} bytes · ${artifact.sha256} · ${artifact.fullFreshness.isStale ? 'Full stale: no afecta gasto mensual ni retornos.' : 'Full fresco.'}`
+              : `Descarga ofrecida tras verificar ${artifact.byteLength.toLocaleString('es-ES')} bytes · ${artifact.sha256}`,
+          },
+        },
+      }));
+    } catch (error: any) {
+      const isCanonicalError = error instanceof GastappCanonicalV2Error;
+      const detail = isCanonicalError && error.path ? `${error.code} · ${error.path}` : String(error?.message || error || 'error');
+      setGastappCanonicalV2Diagnostic((current) => ({
+        ...current,
+        downloads: {
+          ...current.downloads,
+          [mode]: {
+            status: 'error',
+            message: isCanonicalError && error.code === 'permission_denied' && mode === 'full'
+              ? buildGastappAccessGuidanceMessage('4. Vuelve a Aurum y presiona “Descargar full”.', detail)
+              : `No se descargó: ${detail}`,
+          },
+        },
+      }));
     }
   };
 
@@ -2040,7 +2072,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         fsStatus={fsStatus}
         syncMessage={syncMessage}
         fsDebug={fsDebug}
-        gastappDataRoomV2={gastappDataRoomV2Diagnostic}
+        gastappCanonicalV2={gastappCanonicalV2Diagnostic}
         midasPublication={midasPublication}
         onToggle={() => toggleSection('sync')}
         onSyncNow={() => {
@@ -2053,8 +2085,11 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
           })();
         }}
         onSignOut={signOutUser}
-        onRefreshGastappDataRoomV2={() => {
-          void loadGastappDataRoomV2Diagnostic();
+        onRefreshGastappCanonicalV2={() => {
+          void loadGastappCanonicalV2Diagnostic();
+        }}
+        onDownloadGastappCanonicalV2={(mode) => {
+          void downloadGastappCanonicalV2(mode);
         }}
         onRepublishMidas={() => {
           void regenerateMidasPublication();

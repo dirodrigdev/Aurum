@@ -1750,11 +1750,11 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     <Card className="border-slate-200 p-3">
       <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Data Room / Exportaciones</div>
       <div className="mt-0.5 text-[11px] text-slate-500">
-        Descargas para auditoría y análisis profundo.
+        Artefactos preconstruidos de GastApp; estas descargas no reconstruyen datos ni cambian la serie mensual.
       </div>
       <div className="mt-3 grid gap-2 md:grid-cols-2">
         <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Capa 1</div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Express</div>
           <button
             type="button"
             onClick={onExportConsolidatedDataRoom}
@@ -1762,11 +1762,11 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
             className="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-[12px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Download size={13} />
-            {exportingConsolidatedDataRoom ? 'Generando…' : 'Descargar consolidado'}
+            {exportingConsolidatedDataRoom ? 'Verificando…' : 'Descargar Express'}
           </button>
         </div>
         <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Capa 2</div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Full</div>
           <button
             type="button"
             onClick={onExportTransactionalDataRoom}
@@ -1774,7 +1774,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
             className="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-[12px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Download size={13} />
-            {exportingTransactionalDataRoom ? 'Generando…' : 'Descargar con transacciones'}
+            {exportingTransactionalDataRoom ? 'Verificando…' : 'Descargar Full'}
           </button>
         </div>
       </div>
@@ -1784,7 +1784,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
         </div>
       )}
       <div className="mt-2 text-[10px] text-slate-500">
-        Las descargas profundas requieren abrir GastApp por 30 min.
+        Express no requiere ventana. Full requiere abrir “Data Room para Aurum” durante 30 min. Ninguna descarga se ejecuta al abrir Settings o Analysis.
       </div>
     </Card>
 

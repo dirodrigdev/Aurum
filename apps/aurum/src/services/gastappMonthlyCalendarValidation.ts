@@ -1,5 +1,3 @@
-import { collection, getDocs } from 'firebase/firestore';
-
 import type { WealthCurrency, WealthMonthlyClosure } from './wealthStorage';
 import type { AggregatedSummary, MonthlyReturnRow } from '../components/analysis/types';
 import {
@@ -9,10 +7,7 @@ import {
   enumerateMonthKeys,
   monthYear,
 } from './returnsAnalysis';
-import { getGastappFirestore, isGastappFirestoreConfigured } from './firebase';
-
-const OLD_COLLECTION = 'aurum_monthly_from_periods_v1';
-const CALENDAR_COLLECTION = 'aurum_monthly_calendar_v2';
+import { loadGastappCanonicalV2Audit } from './gastappCanonicalV2Audit';
 
 export type MonthlyContract = {
   monthKey: string;
@@ -37,8 +32,6 @@ export type GastappMonthlyValidationResult = {
   rows: GastappMonthlyValidationRow[];
 };
 
-const readNumber = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : null;
-const readMonthKey = (value: unknown, fallback: string) => /^\d{4}-\d{2}$/.test(String(value || '')) ? String(value) : fallback;
 const round2 = (value: number) => Number(value.toFixed(2));
 
 type FxLike = { eurClp?: number; usdClp?: number; ufClp?: number };
@@ -52,22 +45,6 @@ const toDisplay = (valueClp: number, currency: WealthCurrency, fx: FxLike) => {
 const netClp = (closure: WealthMonthlyClosure, includeRisk: boolean) => {
   const value = includeRisk ? closure.summary?.netClpWithRisk : closure.summary?.netClp ?? closure.summary?.netConsolidatedClp;
   return Number.isFinite(Number(value)) ? Number(value) : null;
-};
-
-const normalizeContracts = (snapshot: Awaited<ReturnType<typeof getDocs>>) => {
-  const contracts = new Map<string, MonthlyContract>();
-  snapshot.forEach((entry) => {
-    const data = entry.data() as Record<string, unknown>;
-    const monthKey = readMonthKey(data.monthKey, entry.id);
-    if (!/^\d{4}-\d{2}$/.test(monthKey)) return;
-    contracts.set(monthKey, {
-      monthKey,
-      status: typeof data.status === 'string' ? data.status : null,
-      totalEur: readNumber(data.total_contable_eur),
-      publishedAt: typeof data.published_at === 'string' ? data.published_at : null,
-    });
-  });
-  return contracts;
 };
 
 export const replaceMonthlySpendWithCalendarContract = (
@@ -267,23 +244,26 @@ export const buildGastappMonthlyValidation = ({
   return rows;
 };
 
-export const loadGastappMonthlyCalendarValidation = async (): Promise<GastappMonthlyValidationResult & { oldContracts?: Map<string, MonthlyContract>; calendarContracts?: Map<string, MonthlyContract> }> => {
-  if (!isGastappFirestoreConfigured()) return { status: 'missing_config', error: 'gastapp_firestore_not_configured', rows: [] };
-  const db = getGastappFirestore();
-  if (!db) return { status: 'unavailable', error: 'gastapp_firestore_unavailable', rows: [] };
-  try {
-    const [oldSnapshot, calendarSnapshot] = await Promise.all([
-      getDocs(collection(db, OLD_COLLECTION)),
-      getDocs(collection(db, CALENDAR_COLLECTION)),
-    ]);
-    return {
-      status: 'ok', error: null, rows: [],
-      oldContracts: normalizeContracts(oldSnapshot),
-      calendarContracts: normalizeContracts(calendarSnapshot),
-    };
-  } catch (error: any) {
-    return { status: 'error', error: String(error?.message || error), rows: [] };
+/**
+ * Legacy comparison is retained as a fixture-only shadow helper. Production
+ * validation reads the three published V2 documents through the audit loader;
+ * it never scans aurum_monthly_from_periods_v1 or aurum_monthly_calendar_v2.
+ */
+export const loadGastappMonthlyCalendarValidation = async (): Promise<GastappMonthlyValidationResult & { calendarContracts?: Map<string, MonthlyContract> }> => {
+  const audit = await loadGastappCanonicalV2Audit();
+  if (audit.status === 'unavailable' || !audit.contracts) {
+    return { status: 'unavailable', error: audit.error, rows: [] };
   }
+  const calendarContracts = new Map<string, MonthlyContract>();
+  audit.contracts.months.months.forEach((month) => {
+    calendarContracts.set(month.calendarMonthKey, {
+      monthKey: month.calendarMonthKey,
+      status: month.status,
+      totalEur: month.eligibleForAurumReturns ? month.totalEur : null,
+      publishedAt: audit.contracts?.months.generatedAt || null,
+    });
+  });
+  return { status: 'ok', error: null, rows: [], calendarContracts };
 };
 
 export const calculateAnnualizedReturn = (rows: GastappMonthlyValidationRow[], kind: 'old' | 'calendar') => {

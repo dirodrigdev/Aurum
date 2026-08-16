@@ -86,7 +86,7 @@ export const describeGastappDataRoomV2Status = (input: {
 
 export const describeGastappAnalysisAccessIssue = (input: {
   status: 'idle' | 'loading' | 'ready' | 'error';
-  mode: 'firestore' | 'legacy' | null;
+  mode: 'firestore' | 'legacy' | 'e2e_fixture' | null;
   errorCode?: string | null;
   errorMessage?: string | null;
   missingMonths: string[];
