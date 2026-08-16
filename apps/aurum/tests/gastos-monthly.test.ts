@@ -26,14 +26,15 @@ const firestoreMock = vi.hoisted(() => {
   };
 });
 
-const { loadGastappCanonicalV2MonthContractMock } = vi.hoisted(() => ({
+const { clearGastappCanonicalV2CacheMock, loadGastappCanonicalV2MonthContractMock } = vi.hoisted(() => ({
+  clearGastappCanonicalV2CacheMock: vi.fn(),
   loadGastappCanonicalV2MonthContractMock: vi.fn(),
 }));
 
 vi.mock('../src/services/gastappCanonicalV2', () => ({
   loadGastappCanonicalV2MonthContract: loadGastappCanonicalV2MonthContractMock,
   loadGastappCanonicalV2MonthContractCached: loadGastappCanonicalV2MonthContractMock,
-  clearGastappCanonicalV2Cache: vi.fn(),
+  clearGastappCanonicalV2Cache: clearGastappCanonicalV2CacheMock,
 }));
 
 vi.mock('firebase/firestore', () => ({
@@ -55,6 +56,7 @@ const resetFirestoreMock = () => {
   firestoreMock.state.docs = [];
   firestoreMock.state.writes = [];
   loadGastappCanonicalV2MonthContractMock.mockReset();
+  clearGastappCanonicalV2CacheMock.mockReset();
   firestoreMock.collection.mockClear();
   firestoreMock.doc.mockClear();
   firestoreMock.getDoc.mockClear();
@@ -68,7 +70,7 @@ describe('gastosMonthly canonical source', () => {
     resetFirestoreMock();
   });
 
-  it('uses the validated calendar contract as the official Firestore source', async () => {
+  it('uses the validated calendar contract as the official Firestore source within its €1 reconciliation tolerance', async () => {
     loadGastappCanonicalV2MonthContractMock.mockResolvedValue({
       metadata: {},
       months: {
@@ -86,7 +88,7 @@ describe('gastosMonthly canonical source', () => {
           toYmd: '2026-02-28',
           rowCount: 1,
           totalEur: 1234,
-          byFamily: { day_to_day: 1234, trips: 0, others: 0 },
+          byFamily: { day_to_day: 1233.5, trips: 0, others: 0 },
           byCategory: {},
           byProject: {},
           raw: {},
@@ -105,16 +107,42 @@ describe('gastosMonthly canonical source', () => {
     expect(resolution.schemaVersion).toBe('gastapp-aurum-calendar-months-v2');
     expect(resolution.methodologyVersion).toBe('gastapp-canonical-calendar-offline-v2');
     expect(resolution.publishedAt).toBe('2026-03-01T00:00:00.000Z');
-    expect(resolveGastappMonthlyCloseCandidate('2026-02')).toMatchObject({
+    expect(resolveGastappMonthlyCloseCandidate('2026-02', {
+      previousSnapshot: { contractHash: 'sha256:old' },
+    })).toMatchObject({
       status: 'complete',
+      sourceChangedAfterClosure: true,
+      currentContractHash: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      storedContractHash: 'sha256:old',
       snapshot: {
         totalEur: 1234,
-        byFamilyEur: { dayToDay: 1234, trips: 0, others: 0 },
+        byFamilyEur: { dayToDay: 1233.5, trips: 0, others: 0 },
       },
     });
     expect(resolution.gastosEur).not.toBe(7928);
     expect(firestoreMock.collection).not.toHaveBeenCalled();
     expect(loadGastappCanonicalV2MonthContractMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes the cached official document exactly when the close flow requests freshness', async () => {
+    loadGastappCanonicalV2MonthContractMock.mockResolvedValue({
+      metadata: {},
+      months: {
+        version: 'gastapp-aurum-calendar-months-v2',
+        canonicalDataHash: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        contractHash: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        generatedAt: '2026-03-01T00:00:00.000Z',
+        raw: {},
+        months: [],
+      },
+    });
+    const { refreshGastappMonthlyContable, warmGastappMonthlyContable } = await import('../src/services/gastosMonthly');
+
+    await warmGastappMonthlyContable();
+    await refreshGastappMonthlyContable();
+
+    expect(clearGastappCanonicalV2CacheMock).toHaveBeenCalledTimes(1);
+    expect(loadGastappCanonicalV2MonthContractMock).toHaveBeenCalledTimes(2);
   });
 
   it('does not use legacy as official when Firestore is loading or missing a canonical doc', async () => {
@@ -187,6 +215,77 @@ describe('gastosMonthly canonical source', () => {
       status: 'pending',
       partialGastosEur: 2567.05,
       snapshot: null,
+    });
+  });
+
+  it('requires GastApp calendar-close attestation once the producer activates the protocol', async () => {
+    const baseContract = {
+      version: 'gastapp-aurum-calendar-months-v2',
+      canonicalDataHash: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contractHash: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      generatedAt: '2026-08-01T00:00:01.000Z',
+      raw: {},
+      months: [{
+        calendarMonthKey: '2026-07',
+        status: 'complete',
+        calendarStatus: 'complete',
+        eligibleForAurumReturns: true,
+        fromYmd: '2026-07-01',
+        toYmd: '2026-07-31',
+        rowCount: 1,
+        totalEur: 210,
+        byFamily: { day_to_day: 120, trips: 60, others: 30 },
+        byCategory: {},
+        byProject: {},
+        raw: {},
+      }],
+    };
+    loadGastappCanonicalV2MonthContractMock.mockResolvedValue({
+      metadata: {
+        raw: {
+          calendarMonthCloseProtocolVersion: 'gastapp-calendar-month-close-v1',
+          calendarMonthClosures: {},
+        },
+      },
+      months: baseContract,
+    });
+    const { resolveGastappMonthlyCloseCandidate, warmGastappMonthlyContable } = await import('../src/services/gastosMonthly');
+
+    await warmGastappMonthlyContable();
+    expect(resolveGastappMonthlyCloseCandidate('2026-07')).toMatchObject({
+      status: 'stale',
+      snapshot: null,
+    });
+
+    vi.resetModules();
+    resetFirestoreMock();
+    loadGastappCanonicalV2MonthContractMock.mockResolvedValue({
+      metadata: {
+        raw: {
+          calendarMonthCloseProtocolVersion: 'gastapp-calendar-month-close-v1',
+          calendarMonthClosures: {
+            '2026-07': {
+              state: 'closed',
+              monthKey: '2026-07',
+              closedAt: '2026-08-01T00:00:01.000Z',
+              updatedAt: '2026-08-01T00:00:01.000Z',
+              revision: 1,
+              canonicalDataHash: baseContract.canonicalDataHash,
+              sourceContractGeneratedAt: baseContract.generatedAt,
+              totalEur: 210,
+              byFamily: { day_to_day: 120, trips: 60, others: 30 },
+            },
+          },
+        },
+      },
+      months: baseContract,
+    });
+    const freshModule = await import('../src/services/gastosMonthly');
+
+    await freshModule.warmGastappMonthlyContable();
+    expect(freshModule.resolveGastappMonthlyCloseCandidate('2026-07')).toMatchObject({
+      status: 'complete',
+      snapshot: { totalEur: 210 },
     });
   });
 

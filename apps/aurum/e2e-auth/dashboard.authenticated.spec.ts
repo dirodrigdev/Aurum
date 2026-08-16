@@ -218,6 +218,10 @@ test('monthly-close preflight exposes temporary confirmations before final close
   if (await fallbackConfirmation.count()) await fallbackConfirmation.check();
 
   await page.screenshot({ path: testInfo.outputPath('aurum-close-preflight-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 768, height: 1024 });
+  const tabletOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(tabletOverflow).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-close-preflight-tablet.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);

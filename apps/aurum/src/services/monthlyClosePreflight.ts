@@ -125,6 +125,9 @@ export interface MonthlyCloseGastappExpenseState {
   partialGastosEur: number | null;
   message: string;
   snapshotAvailable: boolean;
+  sourceChangedAfterClosure?: boolean;
+  currentContractHash?: string | null;
+  storedContractHash?: string | null;
 }
 
 export interface MonthlyClosePreflightDiagnostic {
@@ -1173,6 +1176,16 @@ export const buildMonthlyClosePreflightDiagnostic = (
           : gastappExpenseClose?.message || 'Falta leer el cierre mensual de GastApp antes de cerrar Aurum.',
       ),
     );
+    if (gastappExpenseClose?.sourceChangedAfterClosure) {
+      checks.unshift(
+        buildCheck(
+          'gastapp_monthly_source_changed',
+          'cambios de GastApp desde el cierre Aurum guardado',
+          'warn',
+          'GastApp publicó un nuevo valor para este mes. Revisa el importe y confirma el cierre para guardar el snapshot actualizado; Aurum no cambia cierres históricos automáticamente.',
+        ),
+      );
+    }
   }
   closeValidationIssues.forEach((issue, index) => {
     checks.push(

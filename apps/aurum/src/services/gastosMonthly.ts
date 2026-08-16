@@ -61,7 +61,14 @@ export type GastappMonthlyCloseCandidate = {
   partialGastosEur: number | null;
   partialByFamilyEur: GastappMonthlyFamilyTotalsEur | null;
   snapshot: GastappMonthlyCloseSnapshotInput | null;
+  sourceChangedAfterClosure: boolean;
+  currentContractHash: string | null;
+  storedContractHash: string | null;
   message: string;
+};
+
+export type GastappMonthlyCloseCandidateOptions = {
+  previousSnapshot?: { contractHash?: string | null } | null;
 };
 
 type GastappMonthlyContableEntry = {
@@ -102,6 +109,10 @@ type GastappMonthlyContableEntry = {
 export const GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT = 'aurum:gastapp-monthly-source-updated';
 const GASTAPP_DIAG_PREFIX = '[AURUM][gastapp-monthly][diag]';
 const GASTAPP_MONTHLY_CONTRACT_PATH = 'gastapp_aurum_contracts_v2/months_current';
+const GASTAPP_CALENDAR_MONTH_CLOSE_PROTOCOL_VERSION = 'gastapp-calendar-month-close-v1';
+// Shared canonical V2 reconciliation tolerance. The calendar close
+// attestation is only valid when it uses this same monetary threshold.
+const GASTAPP_FAMILY_RECONCILIATION_TOLERANCE_EUR = 1;
 const GASTAPP_DIAG_ENABLED = Boolean(import.meta.env.DEV || import.meta.env.VITE_GASTAPP_DIAG === '1');
 const E2E_GASTAPP_FIXTURE_REASON = 'e2e_gastapp_disabled';
 const USE_E2E_GASTAPP_FIXTURE = import.meta.env.VITE_E2E_USE_FIREBASE_EMULATOR === 'true';
@@ -207,6 +218,9 @@ const readNumber = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const readRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+
 const readMonthFamilies = (raw: Record<string, number>): GastappMonthlyFamilyTotalsEur | null => {
   const dayToDay = readNumber(raw.day_to_day);
   const trips = readNumber(raw.trips);
@@ -231,7 +245,51 @@ const hasFamilyTotalMatch = (
   totalEur !== null &&
   totalEur >= 0 &&
   !!families &&
-  Math.abs(totalEur - families.dayToDay - families.trips - families.others) <= 0.01;
+  Math.abs(totalEur - families.dayToDay - families.trips - families.others) <=
+    GASTAPP_FAMILY_RECONCILIATION_TOLERANCE_EUR;
+
+const hasGastappCalendarMonthCloseAttestation = (args: {
+  requiredProtocol: string | null;
+  closures: Record<string, unknown>;
+  monthKey: string;
+  canonicalDataHash: string | null;
+  generatedAt: string | null;
+  totalEur: number | null;
+  families: GastappMonthlyFamilyTotalsEur | null;
+}) => {
+  if (!args.requiredProtocol) return { matches: true, closedAt: null, revision: null, reason: null };
+  if (args.requiredProtocol !== GASTAPP_CALENDAR_MONTH_CLOSE_PROTOCOL_VERSION) {
+    return { matches: false, closedAt: null, revision: null, reason: 'GastApp publicó un protocolo de cierre mensual no compatible.' };
+  }
+  const attestation = readRecord(args.closures[args.monthKey]);
+  const attestationFamilies = readMonthFamilies(readRecord(attestation.byFamily) as Record<string, number>);
+  const totalEur = readNumber(attestation.totalEur);
+  const revision = readNumber(attestation.revision);
+  const closedAt = readString(attestation.closedAt);
+  const sourceGeneratedAt = readString(attestation.sourceContractGeneratedAt);
+  const sourceCanonicalHash = readString(attestation.canonicalDataHash);
+  const matches =
+    attestation.state === 'closed' &&
+    readString(attestation.monthKey) === args.monthKey &&
+    Boolean(closedAt) &&
+    revision !== null && revision >= 1 &&
+    sourceCanonicalHash === args.canonicalDataHash &&
+    sourceGeneratedAt === args.generatedAt &&
+    totalEur !== null &&
+    args.totalEur !== null &&
+    Math.abs(totalEur - args.totalEur) <= 1 &&
+    !!attestationFamilies &&
+    !!args.families &&
+    Math.abs(attestationFamilies.dayToDay - args.families.dayToDay) <= 1 &&
+    Math.abs(attestationFamilies.trips - args.families.trips) <= 1 &&
+    Math.abs(attestationFamilies.others - args.families.others) <= 1;
+  return {
+    matches,
+    closedAt,
+    revision: revision === null ? null : Math.floor(revision),
+    reason: matches ? null : 'GastApp aún no certificó este mes calendario contra la revisión mensual vigente.',
+  };
+};
 
 // The old static map contains period totals labelled as months. It must never be
 // used as an official fallback for the calendar contract.
@@ -475,25 +533,42 @@ const loadGastappMonthlyContable = async () => {
       );
       const contractResult = await loadGastappCanonicalMonthContract();
       const loaded: Record<string, GastappMonthlyContableEntry> = {};
+      const metadataRaw = readRecord(contractResult.metadata?.raw);
+      const closeProtocol = readString(metadataRaw.calendarMonthCloseProtocolVersion);
+      const closeAttestations = readRecord(metadataRaw.calendarMonthClosures);
       contractResult.months.months.forEach((month) => {
         if (!isValidMonthKey(month.calendarMonthKey)) return;
-        const isComplete = month.status === 'complete' && month.eligibleForAurumReturns;
+        const totalEur = readNumber(month.totalEur);
+        const families = readMonthFamilies(month.byFamily);
+        const completeByContract = month.status === 'complete' && month.eligibleForAurumReturns;
+        const attestation = hasGastappCalendarMonthCloseAttestation({
+          requiredProtocol: closeProtocol,
+          closures: closeAttestations,
+          monthKey: month.calendarMonthKey,
+          canonicalDataHash: readString(contractResult.months.canonicalDataHash),
+          generatedAt: readString(contractResult.months.generatedAt),
+          totalEur,
+          families,
+        });
+        const isComplete = completeByContract && attestation.matches;
         const contractStatus: GastosContractStatus = isComplete
           ? 'complete'
+          : completeByContract && !attestation.matches
+            ? 'stale'
           : month.status === 'stale'
             ? 'stale'
             : month.status === 'pending'
               ? 'pending'
               : 'missing';
-        const partialGastosEur = readNumber(month.totalEur);
-        const partialByFamilyEur = readMonthFamilies(month.byFamily);
+        const partialGastosEur = totalEur;
+        const partialByFamilyEur = families;
         loaded[month.calendarMonthKey] = {
           status: isComplete ? 'complete' : contractStatus === 'pending' ? 'pending' : 'missing',
           contractStatus,
           gastosEur: isComplete ? month.totalEur : null,
           dataQuality: isComplete ? 'ok' : 'warning',
           isStale: contractStatus === 'stale',
-          staleReason: isComplete ? null : month.calendarStatus || month.status,
+          staleReason: isComplete ? null : attestation.reason || month.calendarStatus || month.status,
           dayToDaySource: 'gastapp-canonical-calendar-v2',
           contractSource: contractResult.months.version,
           schemaVersion: contractResult.months.version,
@@ -501,11 +576,11 @@ const loadGastappMonthlyContable = async () => {
           periodKey: null,
           publishedAt: contractResult.months.generatedAt,
           updatedAt: contractResult.months.generatedAt,
-          closedAt: null,
+          closedAt: attestation.closedAt,
           reportUpdatedAt: null,
           summaryUpdatedAt: null,
           lastExpenseUpdatedAt: null,
-          revision: null,
+          revision: attestation.revision,
           reportTotalEur: isComplete ? month.totalEur : null,
           summaryTotalEur: isComplete ? month.totalEur : null,
           directExpenseTotalEur: isComplete ? month.totalEur : null,
@@ -568,6 +643,19 @@ export const warmGastappMonthlyContable = async () => {
   await loadGastappMonthlyContable();
 };
 
+/**
+ * Refresca una sola vez el contrato mensual oficial antes de un preflight o
+ * cierre. El resto de Aurum sigue usando el runtime cacheado; sólo este flujo
+ * pide una lectura nueva para detectar cambios publicados por GastApp.
+ */
+export const refreshGastappMonthlyContable = async () => {
+  const canonical = await import('./gastappCanonicalV2');
+  canonical.clearGastappCanonicalV2Cache();
+  resetGastappMonthlyRuntime();
+  gastappMonthlyDiag.didLogMode = false;
+  await loadGastappMonthlyContable();
+};
+
 export type GastappMonthlyRuntimeDiagnostic = {
   contractPath: typeof GASTAPP_MONTHLY_CONTRACT_PATH;
   mode: 'firestore' | 'e2e_fixture' | null;
@@ -590,7 +678,23 @@ export const getGastappMonthlyRuntimeDiagnostic = (): GastappMonthlyRuntimeDiagn
   lastUpdatedAt: gastappMonthlyRuntime.lastUpdatedAt,
 });
 
-export const resolveGastappMonthlyCloseCandidate = (monthKey: string): GastappMonthlyCloseCandidate => {
+export const resolveGastappMonthlyCloseCandidate = (
+  monthKey: string,
+  options: GastappMonthlyCloseCandidateOptions = {},
+): GastappMonthlyCloseCandidate => {
+  const storedContractHash = readString(options.previousSnapshot?.contractHash);
+  const withChangeState = (
+    candidate: Omit<GastappMonthlyCloseCandidate, 'sourceChangedAfterClosure' | 'currentContractHash' | 'storedContractHash'>,
+  ): GastappMonthlyCloseCandidate => ({
+    ...candidate,
+    sourceChangedAfterClosure: Boolean(
+      candidate.snapshot?.contractHash &&
+      storedContractHash &&
+      candidate.snapshot.contractHash !== storedContractHash,
+    ),
+    currentContractHash: candidate.snapshot?.contractHash || null,
+    storedContractHash,
+  });
   if (gastappMonthlyRuntime.status === 'idle') {
     void loadGastappMonthlyContable();
   }
@@ -599,9 +703,9 @@ export const resolveGastappMonthlyCloseCandidate = (monthKey: string): GastappMo
     const totalEur = spend.gastosEur;
     const byFamilyEur = spend.partialByFamilyEur || null;
     if (totalEur === null || !byFamilyEur) {
-      return { monthKey, status: 'unavailable', partialGastosEur: null, partialByFamilyEur: null, snapshot: null, message: 'Fixture local sin gasto mensual.' };
+      return withChangeState({ monthKey, status: 'unavailable', partialGastosEur: null, partialByFamilyEur: null, snapshot: null, message: 'Fixture local sin gasto mensual.' });
     }
-    return {
+    return withChangeState({
       monthKey,
       status: 'complete',
       partialGastosEur: totalEur,
@@ -616,27 +720,27 @@ export const resolveGastappMonthlyCloseCandidate = (monthKey: string): GastappMo
         generatedAt: gastappMonthlyRuntime.lastUpdatedAt || new Date().toISOString(),
       },
       message: 'Fixture local de GastApp listo para cierre.',
-    };
+    });
   }
   if (gastappMonthlyRuntime.mode !== 'firestore' || gastappMonthlyRuntime.status !== 'ready') {
-    return {
+    return withChangeState({
       monthKey,
       status: 'unavailable',
       partialGastosEur: null,
       partialByFamilyEur: null,
       snapshot: null,
       message: 'Aurum aún no pudo leer months_current de GastApp.',
-    };
+    });
   }
   const entry = gastappMonthlyRuntime.map[monthKey];
   if (!entry) {
-    return { monthKey, status: 'missing', partialGastosEur: null, partialByFamilyEur: null, snapshot: null, message: 'GastApp no publicó este mes en months_current.' };
+    return withChangeState({ monthKey, status: 'missing', partialGastosEur: null, partialByFamilyEur: null, snapshot: null, message: 'GastApp no publicó este mes en months_current.' });
   }
   const status = entry.contractStatus || 'missing';
   const familiesMatch = hasFamilyTotalMatch(entry.partialGastosEur, entry.partialByFamilyEur);
   const hasIdentity = Boolean(entry.canonicalDataHash && entry.contractHash && entry.contractSource && entry.publishedAt);
   if (status === 'complete' && familiesMatch && hasIdentity && entry.partialGastosEur !== null && entry.partialByFamilyEur) {
-    return {
+    return withChangeState({
       monthKey,
       status: 'complete',
       partialGastosEur: entry.partialGastosEur,
@@ -651,19 +755,19 @@ export const resolveGastappMonthlyCloseCandidate = (monthKey: string): GastappMo
         generatedAt: entry.publishedAt!,
       },
       message: 'Cierre mensual oficial de GastApp disponible.',
-    };
+    });
   }
   if (status === 'complete') {
-    return {
+    return withChangeState({
       monthKey,
       status: 'invalid',
       partialGastosEur: entry.partialGastosEur,
       partialByFamilyEur: entry.partialByFamilyEur,
       snapshot: null,
       message: 'El cierre de GastApp no tiene identidad o familias conciliadas.',
-    };
+    });
   }
-  return {
+  return withChangeState({
     monthKey,
     status,
     partialGastosEur: entry.partialGastosEur,
@@ -674,7 +778,7 @@ export const resolveGastappMonthlyCloseCandidate = (monthKey: string): GastappMo
       : status === 'stale'
         ? 'GastApp marcó este mes como stale; no se puede cerrar.'
         : 'GastApp no publicó un cierre mensual válido.',
-  };
+  });
 };
 
 export type GastappMonthlyBackfillCandidate = {

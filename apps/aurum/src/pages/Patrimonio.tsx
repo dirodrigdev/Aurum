@@ -140,6 +140,7 @@ import {
 } from '../services/monthlyClosePreflight';
 import {
   GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT,
+  refreshGastappMonthlyContable,
   resolveGastappMonthlyCloseCandidate,
   warmGastappMonthlyContable,
 } from '../services/gastosMonthly';
@@ -4944,6 +4945,11 @@ export const Patrimonio: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (!closePreflightVisible) return;
+    void refreshGastappMonthlyContable();
+  }, [closePreflightVisible]);
+
+  useEffect(() => {
     window.localStorage.setItem(PREFERRED_DISPLAY_CURRENCY_KEY, displayCurrency);
   }, [displayCurrency]);
 
@@ -6365,8 +6371,10 @@ export const Patrimonio: React.FC = () => {
       setCloseError(message);
       return { ok: false, errorMessage: message };
     }
-    await warmGastappMonthlyContable();
-    const gastappExpenseClose = resolveGastappMonthlyCloseCandidate(targetMonthKey);
+    await refreshGastappMonthlyContable();
+    const gastappExpenseClose = resolveGastappMonthlyCloseCandidate(targetMonthKey, {
+      previousSnapshot: selectedClosureForDraft?.gastappExpenseClose || null,
+    });
     if (!gastappExpenseClose.snapshot) {
       const message = `No se puede cerrar Aurum: ${gastappExpenseClose.message}`;
       setCloseInfo('');
@@ -7123,8 +7131,10 @@ export const Patrimonio: React.FC = () => {
     closePreview.totalNetClp,
   ]);
   const gastappMonthlyCloseCandidate = useMemo(
-    () => resolveGastappMonthlyCloseCandidate(closeMonthDraft),
-    [closeMonthDraft, gastosSourceVersion],
+    () => resolveGastappMonthlyCloseCandidate(closeMonthDraft, {
+      previousSnapshot: selectedClosureForDraft?.gastappExpenseClose || null,
+    }),
+    [closeMonthDraft, gastosSourceVersion, selectedClosureForDraft],
   );
   const closePreflightDiagnostic = useMemo(() => {
     if (!closePreflightVisible) return null;
@@ -7149,6 +7159,9 @@ export const Patrimonio: React.FC = () => {
         partialGastosEur: gastappMonthlyCloseCandidate.partialGastosEur,
         message: gastappMonthlyCloseCandidate.message,
         snapshotAvailable: Boolean(gastappMonthlyCloseCandidate.snapshot),
+        sourceChangedAfterClosure: gastappMonthlyCloseCandidate.sourceChangedAfterClosure,
+        currentContractHash: gastappMonthlyCloseCandidate.currentContractHash,
+        storedContractHash: gastappMonthlyCloseCandidate.storedContractHash,
       },
     });
   }, [

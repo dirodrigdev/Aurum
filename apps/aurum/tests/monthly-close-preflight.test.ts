@@ -135,6 +135,9 @@ describe('monthly close preflight diagnostic', () => {
         partialGastosEur: 2400,
         snapshotAvailable: true,
         message: 'Cierre GastApp disponible.',
+        sourceChangedAfterClosure: true,
+        currentContractHash: 'sha256:new',
+        storedContractHash: 'sha256:old',
       },
     });
 
@@ -142,6 +145,10 @@ describe('monthly close preflight diagnostic', () => {
     expect(diagnostic.fillMissingWarning.wouldRun).toBe(false);
     expect(diagnostic.checks.find((check) => check.key === 'ui_amounts_vs_close')?.status).toBe('ok');
     expect(diagnostic.checks.find((check) => check.key === 'gastapp_monthly_close')?.status).toBe('ok');
+    expect(diagnostic.checks.find((check) => check.key === 'gastapp_monthly_source_changed')).toMatchObject({
+      status: 'warn',
+    });
+    expect(diagnostic.decision).toBe('GO_PARA_CERRAR');
   });
 
   it('alerts and blocks the GastApp check when only a partial month is available', () => {
