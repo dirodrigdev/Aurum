@@ -104,6 +104,8 @@ test('authenticated Settings exposes the GastApp Canonical V2 read-only panel re
 });
 
 test('authenticated Analysis keeps monthly validation audit-only and responsive', async ({ page }, testInfo) => {
+  // La auditoría se captura completa en escritorio, tablet y móvil; en emuladores limpios supera los 30 s antes del teardown.
+  test.setTimeout(60_000);
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));

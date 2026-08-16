@@ -92,7 +92,7 @@ const metadata = () => ({
     dayToDay: GASTAPP_CANONICAL_V2_EXPECTED.dayToDayEur,
     trips: GASTAPP_CANONICAL_V2_EXPECTED.tripsEur,
     others: GASTAPP_CANONICAL_V2_EXPECTED.othersEur,
-    calendarMinusCanonical: GASTAPP_CANONICAL_V2_EXPECTED.calendarMinusCanonicalEur,
+    calendarMinusCanonicalEur: GASTAPP_CANONICAL_V2_EXPECTED.calendarMinusCanonicalEur,
   },
 });
 
@@ -251,6 +251,20 @@ describe('GastApp Canónico V2', () => {
     expect(result.metadata.canonicalDataHash).toBe(nextHash);
     expect(result.metadata.counts.canonicalRows).toBe(nextRows);
     expect(result.metadata.totalsEur.exact).toBe(nextTotal);
+  });
+
+  it('exige calendarMinusCanonicalEur y no acepta el nombre antiguo como compatibilidad silenciosa', async () => {
+    const fixture = contractReader();
+    const totals = fixture.docs[GASTAPP_CANONICAL_V2_CURRENT_PATH].totalsEur as Record<string, unknown>;
+    const reconciliation = totals.calendarMinusCanonicalEur;
+    delete totals.calendarMinusCanonicalEur;
+    totals.calendarMinusCanonical = reconciliation;
+
+    await expect(loadGastappCanonicalV2Contracts(fixture)).rejects.toMatchObject({
+      code: 'invalid_document',
+      path: GASTAPP_CANONICAL_V2_CURRENT_PATH,
+      message: 'Los totales canónicos no son válidos.',
+    });
   });
 
   it('rechaza que el contrato de períodos mezcle el eje calendarMonthKey', async () => {

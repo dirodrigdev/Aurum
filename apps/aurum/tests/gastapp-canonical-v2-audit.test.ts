@@ -18,7 +18,7 @@ const contracts = {
     generatedAt: '2026-08-15T00:00:00.000Z',
     coverage: { completeFromMonthKey: '2023-06', completeThroughMonthKey: '2026-07', partialBoundaryMonths: ['2023-05', '2026-08'] },
     counts: { canonicalRows: 3, periods: 2, acceptedPeriods: 2, months: 3 },
-    totalsEur: { exact: 100, dayToDay: 80, trips: 10, others: 10, calendarMinusCanonical: 0 },
+    totalsEur: { exact: 100, dayToDay: 80, trips: 10, others: 10, calendarMinusCanonicalEur: 0 },
     raw: {},
   },
   periods: {
