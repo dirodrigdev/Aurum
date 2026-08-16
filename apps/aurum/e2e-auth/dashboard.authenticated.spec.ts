@@ -140,6 +140,37 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
   expect(consoleErrors, `console errors: ${consoleErrors.join(' | ')}`).toEqual([]);
 });
 
+test('authenticated Analysis omits P when GastApp only supplies closed months and stays responsive', async ({ page }, testInfo) => {
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+  const networkGuard = await installLocalNetworkGuard(page);
+
+  await page.goto('/#/analysis');
+  const dismissIncompleteClosure = page.getByRole('button', { name: 'Omitir', exact: true });
+  await expect(dismissIncompleteClosure).toBeVisible({ timeout: 30_000 });
+  await dismissIncompleteClosure.click();
+
+  await expect(page.getByText('Retorno económico', { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('checkbox', { name: 'Incluir parcial actual (P) en cálculos' })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('aurum-returns-closed-desktop.png'), fullPage: true });
+
+  await page.setViewportSize({ width: 768, height: 1024 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-returns-closed-tablet.png'), fullPage: true });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-returns-closed-mobile.png'), fullPage: true });
+
+  await networkGuard.assertClean(testInfo);
+  expect(pageErrors, `page errors: ${pageErrors.join(' | ')}`).toEqual([]);
+  expect(consoleErrors, `console errors: ${consoleErrors.join(' | ')}`).toEqual([]);
+});
+
 test('monthly-close preflight exposes temporary confirmations before final close', async ({ page }, testInfo) => {
   await page.goto('/#/dashboard');
   const dismissIncompleteClosure = page.getByRole('button', { name: 'Omitir', exact: true });
@@ -317,6 +348,7 @@ test('monthly close keeps final FX stable and carries July balances into August'
     return {
       julyUsdClp: julyClosure?.fxRates?.usdClp || 0,
       julyEconomicDate: julyClosure?.fxMetadata?.economicDate || '',
+      gastappExpenseClose: julyClosure?.gastappExpenseClose || null,
       augustInvestment: amountByBlock('investment'),
       augustBank: amountByBlock('bank'),
       augustRealEstate: amountByBlock('real_estate'),
@@ -327,6 +359,20 @@ test('monthly close keeps final FX stable and carries July balances into August'
   expect(persisted).toMatchObject({
     julyUsdClp: 930,
     julyEconomicDate: '2026-07-31',
+    gastappExpenseClose: {
+      schemaVersion: 'aurum-gastapp-monthly-close-v1',
+      sourcePath: 'gastapp_aurum_contracts_v2/months_current',
+      monthKey: '2026-07',
+      canonicalDataHash: /^sha256:[a-f0-9]{64}$/,
+      contractHash: /^sha256:[a-f0-9]{64}$/,
+      contractVersion: 'e2e_fixture',
+      amountsByCurrency: {
+        EUR: { total: expect.any(Number) },
+        CLP: { total: expect.any(Number) },
+        USD: { total: expect.any(Number) },
+        UF: { total: expect.any(Number) },
+      },
+    },
   });
   expect(persisted.augustInvestment).toBeGreaterThan(0);
   expect(persisted.augustBank).toBeGreaterThan(0);
@@ -336,7 +382,8 @@ test('monthly close keeps final FX stable and carries July balances into August'
   const closeSummaryButton = page.getByRole('button', { name: 'Cerrar ventana', exact: true });
   await expect(closeSummaryButton).toBeVisible();
   await closeSummaryButton.click();
-  const snoozeButton = page.getByRole('button', { name: 'Recordarme después', exact: true }).last();
+  const postCloseModal = page.locator('div.fixed.inset-0').filter({ hasText: 'Mes cerrado correctamente' });
+  const snoozeButton = postCloseModal.getByRole('button', { name: 'Recordarme después', exact: true });
   await expect(snoozeButton).toBeVisible();
   await snoozeButton.click();
 

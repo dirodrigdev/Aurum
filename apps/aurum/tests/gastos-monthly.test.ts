@@ -72,6 +72,8 @@ describe('gastosMonthly canonical source', () => {
       metadata: {},
       months: {
         version: 'gastapp-aurum-calendar-months-v2',
+        canonicalDataHash: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        contractHash: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
         generatedAt: '2026-03-01T00:00:00.000Z',
         raw: { dateSemantics: 'gastapp-canonical-calendar-offline-v2' },
         months: [{
@@ -83,14 +85,14 @@ describe('gastosMonthly canonical source', () => {
           toYmd: '2026-02-28',
           rowCount: 1,
           totalEur: 1234,
-          byFamily: { day_to_day: 1234 },
+          byFamily: { day_to_day: 1234, trips: 0, others: 0 },
           byCategory: {},
           byProject: {},
           raw: {},
         }],
       },
     });
-    const { resolveGastappMonthlySpend, warmGastappMonthlyContable } = await import('../src/services/gastosMonthly');
+    const { resolveGastappMonthlyCloseCandidate, resolveGastappMonthlySpend, warmGastappMonthlyContable } = await import('../src/services/gastosMonthly');
 
     await warmGastappMonthlyContable();
     const resolution = resolveGastappMonthlySpend('2026-02', new Date('2026-05-09T12:00:00Z'));
@@ -102,6 +104,13 @@ describe('gastosMonthly canonical source', () => {
     expect(resolution.schemaVersion).toBe('gastapp-aurum-calendar-months-v2');
     expect(resolution.methodologyVersion).toBe('gastapp-canonical-calendar-offline-v2');
     expect(resolution.publishedAt).toBe('2026-03-01T00:00:00.000Z');
+    expect(resolveGastappMonthlyCloseCandidate('2026-02')).toMatchObject({
+      status: 'complete',
+      snapshot: {
+        totalEur: 1234,
+        byFamilyEur: { dayToDay: 1234, trips: 0, others: 0 },
+      },
+    });
     expect(resolution.gastosEur).not.toBe(7928);
     expect(firestoreMock.collection).not.toHaveBeenCalled();
     expect(loadGastappCanonicalV2MonthContractMock).toHaveBeenCalledTimes(1);
@@ -156,20 +165,27 @@ describe('gastosMonthly canonical source', () => {
           toYmd: '2026-08-11',
           rowCount: 1,
           totalEur: 2567.05,
-          byFamily: {},
+          byFamily: { day_to_day: 2000, trips: 500, others: 67.05 },
           byCategory: {},
           byProject: {},
           raw: {},
         }],
       },
     });
-    const { resolveGastappMonthlySpend, warmGastappMonthlyContable } = await import('../src/services/gastosMonthly');
+    const { resolveGastappMonthlyCloseCandidate, resolveGastappMonthlySpend, warmGastappMonthlyContable } = await import('../src/services/gastosMonthly');
 
     await warmGastappMonthlyContable();
     const resolution = resolveGastappMonthlySpend('2026-08', new Date('2026-08-14T12:00:00Z'));
 
     expect(resolution.status).toBe('pending');
     expect(resolution.gastosEur).toBeNull();
+    expect(resolution.partialGastosEur).toBe(2567.05);
+    expect(resolution.partialByFamilyEur).toEqual({ dayToDay: 2000, trips: 500, others: 67.05 });
     expect(resolution.contractSource).toBe('gastapp-aurum-calendar-months-v2');
+    expect(resolveGastappMonthlyCloseCandidate('2026-08')).toMatchObject({
+      status: 'pending',
+      partialGastosEur: 2567.05,
+      snapshot: null,
+    });
   });
 });

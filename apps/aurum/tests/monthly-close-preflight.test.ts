@@ -129,11 +129,44 @@ describe('monthly close preflight diagnostic', () => {
       targetMonthKey: '2026-06',
       calendarMonthKey: '2026-06',
       investmentInstruments: [],
+      gastappExpenseClose: {
+        monthKey: '2026-06',
+        status: 'complete',
+        partialGastosEur: 2400,
+        snapshotAvailable: true,
+        message: 'Cierre GastApp disponible.',
+      },
     });
 
     expect(diagnostic.decision).toBe('GO_PARA_CERRAR');
     expect(diagnostic.fillMissingWarning.wouldRun).toBe(false);
     expect(diagnostic.checks.find((check) => check.key === 'ui_amounts_vs_close')?.status).toBe('ok');
+    expect(diagnostic.checks.find((check) => check.key === 'gastapp_monthly_close')?.status).toBe('ok');
+  });
+
+  it('alerts and blocks the GastApp check when only a partial month is available', () => {
+    const diagnostic = buildMonthlyClosePreflightDiagnostic({
+      records: [],
+      closures: [],
+      fxForClose: fx,
+      includeRiskCapitalInTotals: false,
+      uiMonthKey: '2026-06',
+      targetMonthKey: '2026-06',
+      calendarMonthKey: '2026-06',
+      investmentInstruments: [],
+      todayYmd: '2026-07-02',
+      gastappExpenseClose: {
+        monthKey: '2026-06',
+        status: 'pending',
+        partialGastosEur: 1280,
+        snapshotAvailable: false,
+        message: 'GastApp publicó un avance parcial; falta el cierre oficial del mes.',
+      },
+    });
+
+    expect(diagnostic.checks.find((check) => check.key === 'gastapp_monthly_close')).toMatchObject({ status: 'fail' });
+    expect(diagnostic.warnings.join(' ')).toContain('avance parcial');
+    expect(diagnostic.decision).toBe('NO_GO_GASTAPP_EXPENSES_PENDING');
   });
 
   it('returns NO_GO_SOURCE_OF_TRUTH_UNCLEAR when previous closure would auto-fill missing assets', () => {

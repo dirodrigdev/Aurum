@@ -160,7 +160,7 @@ const baseProps = {
   officialAvailabilityNotice: null,
 };
 
-describe('ReturnsTab estimated month toggle', () => {
+describe('ReturnsTab partial month toggle', () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
 
@@ -222,40 +222,30 @@ describe('ReturnsTab estimated month toggle', () => {
         hasEstimatedMonth: true,
         estimatedMonthMeta: {
           monthKey: '2026-06',
-          estimateMethod: 'avg_6m_closed' as const,
+          estimateMethod: 'gastapp_partial' as const,
           estimatedSpendClp: 1_500_000,
           estimatedSpendDisplay: 1_500_000,
-          estimatedFromMonthsCount: 6,
+          estimatedFromMonthsCount: 1,
           officialAvailableDate: null,
           gastosPeriodKey: '2026-06-12__2026-07-11',
-          referencePreviousMonthSpendClp: 1_400_000,
+          referencePreviousMonthSpendClp: null,
         },
         pendingEstimateDetail: {
           monthKey: '2026-06',
           availabilityLabel: null,
           periodRangeLabel: 'P12',
           varPatrimonioDisplay: 5_000_000,
-          selectedScenarioKey: 'avg_6m_closed' as const,
+          selectedScenarioKey: 'gastapp_partial' as const,
           scenarios: [
             {
-              key: 'avg_12m_closed' as const,
-              label: 'Promedio últimos 12 meses oficiales (6 meses disponibles)',
-              spendDisplay: 1_700_000,
-              spendClp: 1_700_000,
-              retornoRealDisplay: 6_700_000,
-              retornoRealClp: 6_700_000,
-              pct: 0.81,
-              monthsUsed: 6,
-            },
-            {
-              key: 'avg_6m_closed' as const,
-              label: 'Promedio últimos 6 meses oficiales',
+              key: 'gastapp_partial' as const,
+              label: 'Avance real parcial publicado por GastApp',
               spendDisplay: 1_500_000,
               spendClp: 1_500_000,
               retornoRealDisplay: 6_500_000,
               retornoRealClp: 6_500_000,
               pct: 0.8,
-              monthsUsed: 6,
+              monthsUsed: 1,
             },
           ],
         },
@@ -264,9 +254,10 @@ describe('ReturnsTab estimated month toggle', () => {
           includeEstimatedMonth
             ? makeMonthlyRow('2026-06', {
                 isEstimated: true,
-                estimateMethod: 'avg_6m_closed',
+                isPartial: true,
+                estimateMethod: 'gastapp_partial',
                 estimatedSpendClp: 1_500_000,
-                estimatedFromMonthsCount: 6,
+                estimatedFromMonthsCount: 1,
                 officialAvailableDate: null,
                 gastosClp: 1_500_000,
                 gastosDisplay: 1_500_000,
@@ -311,11 +302,11 @@ describe('ReturnsTab estimated month toggle', () => {
     });
     expect(checkbox?.checked).toBe(true);
     expect(container.textContent).toContain('Jun 2026');
-    expect((container.querySelectorAll('[aria-label="Estimado"]') ?? []).length).toBe(4);
-    expect(historyCard?.textContent).not.toContain('Último mes considerado: Junio de 2026 · estimado');
+    expect((container.querySelectorAll('[aria-label="Parcial incluido"]') ?? []).length).toBeGreaterThanOrEqual(4);
+    expect(historyCard?.textContent).not.toContain('Último mes considerado: Junio de 2026 · parcial (P)');
 
     const titleLabel = Array.from(container.querySelectorAll('label')).find((node) =>
-      node.textContent?.includes('Incluir último mes estimado (E)'),
+      node.textContent?.includes('Incluir parcial actual (P)'),
     ) as HTMLLabelElement | undefined;
     expect(titleLabel).toBeTruthy();
 
@@ -325,7 +316,7 @@ describe('ReturnsTab estimated month toggle', () => {
     expect(checkbox?.checked).toBe(false);
 
     const toggleTitle = Array.from(container.querySelectorAll('label')).find((node) =>
-      node.textContent?.includes('Incluir último mes estimado (E)'),
+      node.textContent?.includes('Incluir parcial actual (P)'),
     );
     const card = toggleTitle?.closest('.rounded-2xl') as HTMLDivElement | null;
     expect(card).not.toBeNull();
@@ -345,9 +336,8 @@ describe('ReturnsTab estimated month toggle', () => {
     });
     expect(checkbox?.checked).toBe(true);
     expect(container.textContent).toContain('Mes elegible: Junio de 2026 · oficial pendiente');
-    expect(container.textContent).toContain('Junio de 2026 se incluye como estimado (E) · gasto usado $1.500.000');
-    expect(container.textContent).toContain('Prom. 12M: $1.700.000 (6 meses)');
-    expect(container.textContent).toContain('Prom. 6M: $1.500.000 (6 meses)');
+    expect(container.textContent).toContain('Junio de 2026 se incluye como parcial (P) · gasto publicado $1.500.000');
+    expect(container.textContent).toContain('Usado: avance parcial real de GastApp.');
     expect(container.textContent).not.toMatch(/NaN|Infinity|undefined/);
 
     await act(async () => {
@@ -361,7 +351,7 @@ describe('ReturnsTab estimated month toggle', () => {
     expect(checkbox?.checked).toBe(false);
   });
 
-  it('shows a visible reason and stays disabled when the month is not estimable yet', async () => {
+  it('shows a visible reason and stays disabled when GastApp has not published a usable partial', async () => {
     const onToggleIncludeEstimatedMonth = vi.fn();
 
     container = document.createElement('div');
@@ -381,18 +371,7 @@ describe('ReturnsTab estimated month toggle', () => {
             periodRangeLabel: 'P12',
             varPatrimonioDisplay: 5_000_000,
             selectedScenarioKey: null,
-            scenarios: [
-              {
-                key: 'previous_closed' as const,
-                label: 'Gasto del mes anterior cerrado (2026-05)',
-                spendDisplay: 1_400_000,
-                spendClp: 1_400_000,
-                retornoRealDisplay: 6_400_000,
-                retornoRealClp: 6_400_000,
-                pct: 0.78,
-                monthsUsed: 1,
-              },
-            ],
+            scenarios: [],
           },
           onToggleIncludeEstimatedMonth,
         }),
@@ -402,7 +381,7 @@ describe('ReturnsTab estimated month toggle', () => {
     const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
     expect(checkbox).not.toBeNull();
     expect(checkbox?.disabled).toBe(true);
-    expect(container.textContent).toContain('No disponible todavía');
+    expect(container.textContent).toContain('No disponible: GastApp todavía no publicó un avance parcial utilizable para este mes.');
 
     const user = userEvent.setup();
     await act(async () => {

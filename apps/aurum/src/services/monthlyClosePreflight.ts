@@ -41,6 +41,7 @@ const DIFF_TOLERANCE_CLP = 5_000;
 
 export type MonthlyClosePreflightDecision =
   | 'GO_PARA_CERRAR'
+  | 'NO_GO_GASTAPP_EXPENSES_PENDING'
   | 'NO_GO_ECONOMIC_MONTH_OPEN'
   | 'NO_GO_PENDING_CONFIRMATIONS'
   | 'NO_GO_CLOSING_GATE'
@@ -48,6 +49,7 @@ export type MonthlyClosePreflightDecision =
   | 'NO_GO_DATA_QUALITY';
 
 export type PreflightDecisionReason =
+  | 'gastapp-expenses-pending'
   | 'economic-month-open'
   | 'pending-confirmations'
   | 'closing-gate'
@@ -117,6 +119,14 @@ export interface MonthlyClosePreflightCheck {
   message: string;
 }
 
+export interface MonthlyCloseGastappExpenseState {
+  monthKey: string;
+  status: 'complete' | 'pending' | 'stale' | 'missing' | 'invalid' | 'unavailable';
+  partialGastosEur: number | null;
+  message: string;
+  snapshotAvailable: boolean;
+}
+
 export interface MonthlyClosePreflightDiagnostic {
   candidateMonthKey: string;
   previousMonthKey: string | null;
@@ -149,6 +159,7 @@ export interface MonthlyClosePreflightDiagnostic {
     closeDebtClp: number;
   };
   aggregateCompetitionConflicts: AggregateCompetitionConflict[];
+  gastappExpenseClose: MonthlyCloseGastappExpenseState | null;
 }
 
 interface MonthlyClosePreflightInput {
@@ -162,6 +173,7 @@ interface MonthlyClosePreflightInput {
   calendarMonthKey?: string;
   investmentInstruments?: WealthInvestmentInstrument[];
   closeValidationIssues?: MonthlyCloseValidationGateIssue[];
+  gastappExpenseClose?: MonthlyCloseGastappExpenseState | null;
   todayYmd?: string;
 }
 
@@ -440,6 +452,7 @@ const formatAggregateCompetitionConflict = (conflict: AggregateCompetitionConfli
 
 const formatPreflightDecision = (decision: MonthlyClosePreflightDecision) => {
   if (decision === 'GO_PARA_CERRAR') return 'GO PARA CERRAR';
+  if (decision === 'NO_GO_GASTAPP_EXPENSES_PENDING') return 'NO-GO: cierre de gastos GastApp pendiente';
   if (decision === 'NO_GO_ECONOMIC_MONTH_OPEN') return 'NO-GO: mes económico aún abierto';
   if (decision === 'NO_GO_PENDING_CONFIRMATIONS') return 'NO-GO: confirmaciones pendientes';
   if (decision === 'NO_GO_CLOSING_GATE') return 'NO-GO: validaciones de cierre';
@@ -1140,6 +1153,27 @@ export const buildMonthlyClosePreflightDiagnostic = (
   ];
 
   const closeValidationIssues = input.closeValidationIssues || [];
+  const hasGastappExpenseInput = input.gastappExpenseClose !== undefined;
+  const gastappExpenseClose = input.gastappExpenseClose || null;
+  const gastappExpenseReady = Boolean(
+    !hasGastappExpenseInput ||
+    gastappExpenseClose &&
+      gastappExpenseClose.monthKey === targetMonthKey &&
+      gastappExpenseClose.status === 'complete' &&
+      gastappExpenseClose.snapshotAvailable,
+  );
+  if (hasGastappExpenseInput) {
+    checks.unshift(
+      buildCheck(
+        'gastapp_monthly_close',
+        'cierre mensual de gastos GastApp',
+        gastappExpenseReady ? 'ok' : 'fail',
+        gastappExpenseReady
+          ? `GastApp cerró ${targetMonthKey} con ${Number(gastappExpenseClose?.partialGastosEur || 0).toLocaleString('es-ES')} EUR y snapshot conciliado.`
+          : gastappExpenseClose?.message || 'Falta leer el cierre mensual de GastApp antes de cerrar Aurum.',
+      ),
+    );
+  }
   closeValidationIssues.forEach((issue, index) => {
     checks.push(
       buildCheck(
@@ -1183,11 +1217,14 @@ export const buildMonthlyClosePreflightDiagnostic = (
     ].includes(check.key) && check.status === 'fail',
   );
   const hasClosingGateFailure = closeValidationIssues.some((issue) => issue.level === 'error');
+  const hasGastappExpenseFailure = hasGastappExpenseInput && !gastappExpenseReady;
 
   const decision: MonthlyClosePreflightDecision = hasDataQualityFailure
     ? 'NO_GO_DATA_QUALITY'
     : hasSourceTruthFailure || fillMissingWarning.wouldRun || debtAlignmentWarning.wouldAlign
       ? 'NO_GO_SOURCE_OF_TRUTH_UNCLEAR'
+      : hasGastappExpenseFailure
+        ? 'NO_GO_GASTAPP_EXPENSES_PENDING'
       : economicMonthOpen
         ? 'NO_GO_ECONOMIC_MONTH_OPEN'
         : hasPendingConfirmations
@@ -1199,6 +1236,8 @@ export const buildMonthlyClosePreflightDiagnostic = (
     ? 'data-quality'
     : hasSourceTruthFailure || fillMissingWarning.wouldRun || debtAlignmentWarning.wouldAlign
       ? 'reconciliation'
+    : hasGastappExpenseFailure
+      ? 'gastapp-expenses-pending'
     : economicMonthOpen
       ? 'economic-month-open'
       : hasPendingConfirmations
@@ -1231,5 +1270,6 @@ export const buildMonthlyClosePreflightDiagnostic = (
     fillMissingWarning,
     debtAlignmentWarning,
     aggregateCompetitionConflicts,
+    gastappExpenseClose,
   };
 };

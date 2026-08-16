@@ -138,6 +138,11 @@ import {
   buildMonthlyClosePreflightDiagnostic,
   buildMonthlyClosePreflightReport,
 } from '../services/monthlyClosePreflight';
+import {
+  GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT,
+  resolveGastappMonthlyCloseCandidate,
+  warmGastappMonthlyContable,
+} from '../services/gastosMonthly';
 import { hydrateWealthFromCloudShared } from '../services/wealthHydration';
 import { parseStrictNumber } from '../utils/numberUtils';
 import { labelMatchKey, normalizeForMatch, sameCanonicalLabel } from '../utils/wealthLabels';
@@ -4821,6 +4826,7 @@ export const Patrimonio: React.FC = () => {
   const [postCloseSummary, setPostCloseSummary] = useState<PostCloseSummaryState | null>(null);
   const [closeConfigSnapshot, setCloseConfigSnapshot] = useState<ClosingConfigState>(() => readClosingConfig());
   const [closePreflightVisible, setClosePreflightVisible] = useState(false);
+  const [gastosSourceVersion, setGastosSourceVersion] = useState(0);
   const [closePreflightCopied, setClosePreflightCopied] = useState(false);
   const [closeBackupCheck, setCloseBackupCheck] = useState<MonthlyCloseCheckpointReadinessResult | null>(null);
   const [closeBackupRunning, setCloseBackupRunning] = useState(false);
@@ -4927,6 +4933,15 @@ export const Patrimonio: React.FC = () => {
       cancelled = true;
     };
   }, [closeConfirmOpen, closePreflightVisible, closeMonthDraft]);
+
+  useEffect(() => {
+    const onGastappSourceUpdated = () => setGastosSourceVersion((current) => current + 1);
+    window.addEventListener(GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT, onGastappSourceUpdated as EventListener);
+    void warmGastappMonthlyContable();
+    return () => {
+      window.removeEventListener(GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT, onGastappSourceUpdated as EventListener);
+    };
+  }, []);
 
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_DISPLAY_CURRENCY_KEY, displayCurrency);
@@ -6350,6 +6365,14 @@ export const Patrimonio: React.FC = () => {
       setCloseError(message);
       return { ok: false, errorMessage: message };
     }
+    await warmGastappMonthlyContable();
+    const gastappExpenseClose = resolveGastappMonthlyCloseCandidate(targetMonthKey);
+    if (!gastappExpenseClose.snapshot) {
+      const message = `No se puede cerrar Aurum: ${gastappExpenseClose.message}`;
+      setCloseInfo('');
+      setCloseError(message);
+      return { ok: false, errorMessage: message };
+    }
     const carriedIntoClose = fillMissingWithPreviousClosure(
       targetMonthKey,
       visualMonthSnapshotDate(targetMonthKey),
@@ -6490,6 +6513,7 @@ export const Patrimonio: React.FC = () => {
           usedFxRates: { ...fxForClose },
           reconciliation: { status: 'reconciled', checkedAt: new Date().toISOString() },
         },
+        gastappExpenseClose: gastappExpenseClose.snapshot,
         closedAt: new Date().toISOString(),
       });
       clearClosureFxDraft(targetMonthKey);
@@ -7098,6 +7122,10 @@ export const Patrimonio: React.FC = () => {
     closePreview.propertyNet,
     closePreview.totalNetClp,
   ]);
+  const gastappMonthlyCloseCandidate = useMemo(
+    () => resolveGastappMonthlyCloseCandidate(closeMonthDraft),
+    [closeMonthDraft, gastosSourceVersion],
+  );
   const closePreflightDiagnostic = useMemo(() => {
     if (!closePreflightVisible) return null;
     return buildMonthlyClosePreflightDiagnostic({
@@ -7115,6 +7143,13 @@ export const Patrimonio: React.FC = () => {
         label: issue.label,
         level: issue.level,
       })),
+      gastappExpenseClose: {
+        monthKey: gastappMonthlyCloseCandidate.monthKey,
+        status: gastappMonthlyCloseCandidate.status,
+        partialGastosEur: gastappMonthlyCloseCandidate.partialGastosEur,
+        message: gastappMonthlyCloseCandidate.message,
+        snapshotAvailable: Boolean(gastappMonthlyCloseCandidate.snapshot),
+      },
     });
   }, [
     closePreflightVisible,
@@ -7128,6 +7163,7 @@ export const Patrimonio: React.FC = () => {
     calendarMonthKey,
     investmentInstruments,
     closeValidationDraft.issues,
+    gastappMonthlyCloseCandidate,
   ]);
   const closePreflightGateChecks = useMemo(
     () => closePreflightDiagnostic?.checks.filter(
@@ -8421,6 +8457,8 @@ export const Patrimonio: React.FC = () => {
                   ? 'GO PARA CERRAR'
                   : closePreflightDiagnostic.decision === 'NO_GO_DATA_QUALITY'
                     ? 'NO-GO: calidad de datos'
+                    : closePreflightDiagnostic.decision === 'NO_GO_GASTAPP_EXPENSES_PENDING'
+                      ? 'NO-GO: cierre GastApp pendiente'
                     : closePreflightDiagnostic.decision === 'NO_GO_ECONOMIC_MONTH_OPEN'
                       ? 'NO-GO: mes económico aún abierto'
                       : closePreflightDiagnostic.decision === 'NO_GO_PENDING_CONFIRMATIONS'

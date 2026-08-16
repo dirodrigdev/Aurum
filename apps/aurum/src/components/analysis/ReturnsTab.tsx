@@ -136,7 +136,7 @@ export type ReturnsTabProps = {
   hasEstimatedMonth: boolean;
   estimatedMonthMeta: {
     monthKey: string;
-    estimateMethod: 'avg_12m_closed' | 'avg_6m_closed';
+    estimateMethod: 'gastapp_partial';
     estimatedSpendClp: number;
     estimatedSpendDisplay: number;
     estimatedFromMonthsCount: number;
@@ -150,7 +150,7 @@ export type ReturnsTabProps = {
     periodRangeLabel: string | null;
     varPatrimonioDisplay: number;
     scenarios: ProvisionalReturnScenario[];
-    selectedScenarioKey: 'avg_12m_closed' | 'avg_6m_closed' | null;
+    selectedScenarioKey: 'gastapp_partial' | null;
   } | null;
   officialAvailabilityNotice: {
     monthKey: string;
@@ -184,15 +184,15 @@ export type ReturnsTabProps = {
   visualVariant?: 'official' | 'calendar-control';
 };
 
-const estimateMethodLabel = (method: 'avg_12m_closed' | 'avg_6m_closed') =>
-  method === 'avg_6m_closed' ? 'promedio 6M' : 'promedio 12M';
+const partialMethodLabel = 'avance parcial real de GastApp';
 
 const SummaryTable: React.FC<{
   title: string;
   items: AggregatedSummary[];
   currency: WealthCurrency;
   lastConsideredLabel: string | null;
-}> = ({ title, items, currency, lastConsideredLabel }) => {
+  includesPartial: boolean;
+}> = ({ title, items, currency, lastConsideredLabel, includesPartial }) => {
   const showRealReturn = currency === 'CLP';
   return (
     <Card className="p-3 border-slate-200">
@@ -230,7 +230,18 @@ const SummaryTable: React.FC<{
             return (
               <tr key={item.key} className="border-t border-slate-100">
                 <td className="py-1.5 pr-2 font-medium text-slate-700">
-                  <div className="truncate">{item.label}</div>
+                  <div className="flex items-center gap-1">
+                    <span className="truncate">{item.label}</span>
+                    {includesPartial ? (
+                      <span
+                        className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-amber-300 bg-amber-200 px-1 text-[9px] font-bold leading-none text-amber-900"
+                        aria-label="Parcial incluido"
+                        title="Parcial incluido"
+                      >
+                        P
+                      </span>
+                    ) : null}
+                  </div>
                   {periodRangeLabel(item) ? (
                     <div className="mt-0.5 text-[10px] font-normal text-slate-500">{periodRangeLabel(item)}</div>
                   ) : null}
@@ -433,10 +444,10 @@ const ReturnRealHero: React.FC<{
                     {row.showEstimatedBadge && (
                       <span
                         className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-amber-200 bg-amber-300/95 px-1 text-[9px] font-bold leading-none text-amber-950 shadow-[0_0_0_1px_rgba(251,191,36,0.35)]"
-                        aria-label="Estimado"
-                        title="Estimado"
+                        aria-label="Parcial incluido"
+                        title="Parcial incluido"
                       >
-                        E
+                        P
                       </span>
                     )}
                   </div>
@@ -1200,22 +1211,20 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   const mainPendingOfficial = pendingOfficialRows[0] || null;
   const provisionalEstimate = pendingEstimateDetail;
   const estimatedToggleEnabled = hasEstimatedMonth && !!estimatedMonthMeta;
-  const estimateScenarios = React.useMemo(() => {
-    const avg12 = pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'avg_12m_closed') ?? null;
-    const avg6 = pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'avg_6m_closed') ?? null;
-    const previousClosed = pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'previous_closed') ?? null;
-    const selectedAverage = pendingEstimateDetail?.selectedScenarioKey
+  const partialScenario = React.useMemo(
+    () =>
+      pendingEstimateDetail?.selectedScenarioKey
       ? pendingEstimateDetail.scenarios.find((scenario) => scenario.key === pendingEstimateDetail.selectedScenarioKey) ?? null
-      : null;
-    return { avg12, avg6, previousClosed, selectedAverage };
-  }, [pendingEstimateDetail]);
+      : null,
+    [pendingEstimateDetail],
+  );
   const estimatedToggleReason = React.useMemo(() => {
     if (estimatedToggleEnabled) return null;
     if (!pendingEstimateDetail) return null;
     if (!pendingEstimateDetail.selectedScenarioKey) {
-      return 'No disponible todavía: faltan al menos 2 meses cerrados con gasto oficial para estimar un promedio confiable.';
+      return 'No disponible: GastApp todavía no publicó un avance parcial utilizable para este mes.';
     }
-    return 'No disponible: este mes ya no necesita estimación o le falta una base válida para activarla.';
+    return 'No disponible: este mes ya tiene cierre oficial o le falta una foto patrimonial válida.';
   }, [estimatedToggleEnabled, pendingEstimateDetail]);
   const handleEstimatedToggle = React.useCallback(() => {
     if (!estimatedToggleEnabled) return;
@@ -1242,7 +1251,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   );
   const lastConsideredLabel = React.useMemo(() => {
     if (includeEstimatedMonth && estimatedMonthMeta) {
-      return `${monthLabel(estimatedMonthMeta.monthKey)} · estimado`;
+      return `${monthLabel(estimatedMonthMeta.monthKey)} · parcial (P)`;
     }
     if (lastOfficialConsideredMonthKey) {
       return `${monthLabel(lastOfficialConsideredMonthKey)} · oficial`;
@@ -1253,11 +1262,12 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   const historyRows = React.useMemo(
     () =>
       monthlyRowsDesc.map((row) => {
-        const retornoDisplay = row.retornoRealDisplay;
+        const isPartial = row.gastosStatus === 'pending' && row.partialGastosDisplay !== null;
+        const retornoDisplay = isPartial ? row.partialRetornoRealDisplay : row.retornoRealDisplay;
         const varDisplay = row.varPatrimonioDisplay;
-        const gastosDisplay = row.gastosDisplay;
+        const gastosDisplay = isPartial ? row.partialGastosDisplay : row.gastosDisplay;
         const pendingInfo = row.gastosStatus === 'pending' ? buildPendingOfficialReturnInfo(row) : null;
-        const estimatedSuffix = row.isEstimated ? ' (E)' : '';
+        const estimatedSuffix = row.isEstimated ? ' (P)' : '';
         return {
           monthKey: row.monthKey,
           isEstimated: Boolean(row.isEstimated),
@@ -1265,12 +1275,18 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
           estimatedSpendClp: row.estimatedSpendClp,
           officialAvailableDate: row.officialAvailableDate || '',
           month: monthLabelShort(row.monthKey),
-          pct: row.gastosStatus === 'pending' ? 'Pendiente gasto' : `${formatPct(row.pct)}${estimatedSuffix}`,
+          pct: row.gastosStatus === 'pending'
+            ? isPartial && row.partialRetornoRealDisplay !== null && row.prevNetDisplay
+              ? `${formatPct((row.partialRetornoRealDisplay / row.prevNetDisplay) * 100)} (P)`
+              : 'Pendiente gasto'
+            : `${formatPct(row.pct)}${estimatedSuffix}`,
           retorno:
             row.gastosStatus === 'pending'
-              ? pendingInfo?.availabilityLabel
-                ? `Disponible ${pendingInfo.availabilityLabel}`
-                : 'Pendiente gasto'
+              ? isPartial
+                ? `${formatCurrency(retornoDisplay, currency)} (P)`
+                : pendingInfo?.availabilityLabel
+                  ? `Disponible ${pendingInfo.availabilityLabel}`
+                  : 'Pendiente gasto'
               : retornoDisplay === null
                 ? '—'
                 : `${formatCurrency(retornoDisplay, currency)}${estimatedSuffix}`,
@@ -1279,7 +1295,9 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
             row.gastosStatus === 'missing'
               ? 'Faltante'
               : row.gastosStatus === 'pending'
-                ? 'Pendiente'
+                ? isPartial
+                  ? `${formatCurrency(gastosDisplay, currency)} (P)`
+                  : 'Pendiente'
                 : gastosDisplay === null
                   ? '—'
                   : `${formatCurrency(gastosDisplay, currency)}${estimatedSuffix}`,
@@ -1447,12 +1465,12 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
               className="font-semibold text-slate-900"
               onClick={(event) => event.stopPropagation()}
             >
-              Incluir último mes estimado (E)
+              Incluir parcial actual (P) en cálculos
             </label>
             <div className="mt-0.5 text-[11px] text-slate-600">
-              Usa el cierre patrimonial del mes y un gasto estimado. No reemplaza el dato oficial.
+              Usa el avance real publicado por GastApp y la foto patrimonial vigente. No permite cerrar ni reemplaza el dato oficial.
             </div>
-            {estimateScenarios.selectedAverage && estimatedMonthMeta ? (
+            {partialScenario && estimatedMonthMeta ? (
               <details
                 className="mt-1 text-[10px] text-slate-500"
                 onClick={(event) => event.stopPropagation()}
@@ -1469,17 +1487,11 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                   </div>
                   {includeEstimatedMonth ? (
                     <div>
-                      {`${monthLabel(estimatedMonthMeta.monthKey)} se incluye como estimado (E) · gasto usado ${formatCurrency(estimatedMonthMeta.estimatedSpendDisplay, currency)}`}
+                      {`${monthLabel(estimatedMonthMeta.monthKey)} se incluye como parcial (P) · gasto publicado ${formatCurrency(estimatedMonthMeta.estimatedSpendDisplay, currency)}`}
                     </div>
                   ) : null}
-                  <div>
-                    {`Prom. 12M: ${estimateScenarios.avg12 ? formatCurrency(estimateScenarios.avg12.spendDisplay, currency) : 'no disponible'}${estimateScenarios.avg12 ? ` (${estimateScenarios.avg12.monthsUsed} meses)` : ''}`}
-                  </div>
-                  <div>
-                    {`Prom. 6M: ${estimateScenarios.avg6 ? formatCurrency(estimateScenarios.avg6.spendDisplay, currency) : 'no disponible'}${estimateScenarios.avg6 ? ` (${estimateScenarios.avg6.monthsUsed} meses)` : ''}`}
-                  </div>
                   <div className="font-medium">
-                    {`Usado: ${estimateMethodLabel(estimatedMonthMeta.estimateMethod)} · menor entre ambos`}
+                    {`Usado: ${partialMethodLabel}.`}
                   </div>
                 </div>
               </details>
@@ -1521,7 +1533,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
             </div>
             {includeEstimatedMonth && (
               <div className="mt-1 text-[11px] text-emerald-800">
-                El modo estimado ya no aplica para este mes.
+                El modo parcial ya no aplica para este mes.
               </div>
             )}
             <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px]">
@@ -1678,11 +1690,16 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
           <tbody>
             {monthlyRowsDesc.map((row) => {
               const varDisplay = row.varPatrimonioDisplay;
-              const gastosDisplay = row.gastosDisplay;
-              const retornoDisplay = row.retornoRealDisplay;
+              const partial = row.gastosStatus === 'pending' && row.partialGastosDisplay !== null;
+              const gastosDisplay = partial ? row.partialGastosDisplay : row.gastosDisplay;
+              const retornoDisplay = partial ? row.partialRetornoRealDisplay : row.retornoRealDisplay;
               const positive = (retornoDisplay || 0) >= 0;
               const pendingInfo = row.gastosStatus === 'pending' ? buildPendingOfficialReturnInfo(row) : null;
-              const estimated = Boolean(row.isEstimated);
+              const estimated = Boolean(row.isEstimated || partial);
+              const partialPct =
+                partial && retornoDisplay !== null && row.prevNetDisplay !== null && row.prevNetDisplay > 0
+                  ? (retornoDisplay / row.prevNetDisplay) * 100
+                  : null;
               return (
                 <tr key={row.monthKey} className={cn('border-t border-slate-100', estimated && 'bg-amber-50/40')}>
                   <td className="py-1.5 pr-2 font-medium text-slate-700">
@@ -1690,7 +1707,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                       <span>{monthLabelShort(row.monthKey)}</span>
                       {estimated && (
                         <span className="rounded-full border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
-                          Estimado
+                          P
                         </span>
                       )}
                     </div>
@@ -1699,19 +1716,23 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                     'py-1.5 pr-2 text-right font-semibold',
                     row.gastosStatus === 'pending' ? 'text-amber-700' : positive ? 'text-emerald-700' : 'text-rose-700',
                   )}>
-                    {row.gastosStatus === 'pending' ? 'Pendiente gasto' : `${formatPct(row.pct)}${estimated ? ' (E)' : ''}`}
+                    {row.gastosStatus === 'pending'
+                      ? partialPct === null ? 'Pendiente gasto' : `${formatPct(partialPct)} (P)`
+                      : `${formatPct(row.pct)}${estimated ? ' (P)' : ''}`}
                   </td>
                   <td className={cn(
                     'py-1.5 pr-2 text-right font-semibold',
                     row.gastosStatus === 'pending' ? 'text-amber-700' : positive ? 'text-emerald-700' : 'text-rose-700',
                   )}>
                     {row.gastosStatus === 'pending'
-                      ? pendingInfo?.availabilityLabel
-                        ? `Disponible ${pendingInfo.availabilityLabel}`
-                        : 'Pendiente gasto'
+                      ? partial && retornoDisplay !== null
+                        ? `${formatCurrency(retornoDisplay, currency)} (P)`
+                        : pendingInfo?.availabilityLabel
+                          ? `Disponible ${pendingInfo.availabilityLabel}`
+                          : 'Pendiente gasto'
                       : retornoDisplay === null
                         ? '—'
-                        : `${formatCurrency(retornoDisplay, currency)}${estimated ? ' (E)' : ''}`}
+                        : `${formatCurrency(retornoDisplay, currency)}${estimated ? ' (P)' : ''}`}
                   </td>
                   <td className="py-1.5 pr-2 text-right text-slate-700">
                     {varDisplay === null ? '—' : formatCurrency(varDisplay, currency)}
@@ -1727,7 +1748,9 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                     {row.gastosStatus === 'missing'
                       ? 'Faltante'
                       : row.gastosStatus === 'pending'
-                        ? 'Pendiente'
+                        ? partial && gastosDisplay !== null
+                          ? `${formatCurrency(gastosDisplay, currency)} (P)`
+                          : 'Pendiente'
                         : gastosDisplay === null
                           ? '—'
                           : formatCurrency(gastosDisplay, currency)}
@@ -1801,9 +1824,9 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
         >
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-slate-900">Estimación provisional</span>
+              <span className="text-sm font-semibold text-slate-900">Parcial publicado por GastApp</span>
               <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800">
-                Estimado
+                Parcial (P)
               </span>
             </div>
             <div className="truncate text-[11px] text-slate-500">
@@ -1815,7 +1838,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
         {isProvisionalExpanded && (
           <div className="mt-2 border-t border-slate-200 pt-2">
             <div className="text-[11px] text-slate-500">
-              Estimado, no cierre oficial. Se reemplazará por el dato oficial cuando cierre GastApp.
+              Avance real, no cierre oficial. No se guarda como cierre y será reemplazado por el dato oficial de GastApp.
             </div>
             <div className="mt-1 text-[11px] text-slate-500">
               {provisionalEstimate.periodRangeLabel ? `Periodo ${provisionalEstimate.periodRangeLabel}` : 'Periodo pendiente de cierre'}
@@ -1829,37 +1852,44 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                   <div className="text-[11px] font-semibold text-slate-800">{scenario.label}</div>
                   {provisionalEstimate.selectedScenarioKey === scenario.key && (
                     <div className="mt-1 inline-flex rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-                      Gasto usado en la vista estimada
+                      Gasto parcial usado en los cálculos
                     </div>
                   )}
                   <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
                     <span className="text-slate-500">Gasto usado</span>
                     <span className="text-right font-medium text-slate-800">{formatCurrency(scenario.spendDisplay, currency)}</span>
-                    <span className="text-slate-500">Ret.Econ. estimado</span>
+                    <span className="text-slate-500">Ret.Econ. parcial</span>
                     <span className={cn('text-right font-semibold', scenario.retornoRealDisplay >= 0 ? 'text-emerald-700' : 'text-rose-700')}>
                       {formatCurrency(scenario.retornoRealDisplay, currency)}
                     </span>
-                    <span className="text-slate-500">Tasa estimada</span>
+                    <span className="text-slate-500">Tasa parcial</span>
                     <span className={cn('text-right font-semibold', (scenario.pct ?? 0) >= 0 ? 'text-emerald-700' : 'text-rose-700')}>
                       {formatPct(scenario.pct)}
                     </span>
                   </div>
-                  <div className="mt-2 text-[10px] font-medium text-amber-700">Estimado, no cierre oficial.</div>
+                  <div className="mt-2 text-[10px] font-medium text-amber-700">Parcial (P), no cierre oficial.</div>
                 </div>
               ))}
             </div>
-            {(estimateScenarios.avg12 || estimateScenarios.avg6) && (
-              <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-[11px] text-amber-900">
-                {`Criterio conservador: se usa el menor entre promedio 12M (${estimateScenarios.avg12 ? formatCurrency(estimateScenarios.avg12.spendDisplay, currency) : 'no disponible'}) y promedio 6M (${estimateScenarios.avg6 ? formatCurrency(estimateScenarios.avg6.spendDisplay, currency) : 'no disponible'}).`}
-              </div>
-            )}
           </div>
         )}
       </Card>
     )}
 
-    <SummaryTable title="Resúmenes por período" items={periodSummaries} currency={currency} lastConsideredLabel={lastConsideredLabel} />
-    <SummaryTable title="Resúmenes por año" items={yearlySummaries} currency={currency} lastConsideredLabel={lastConsideredLabel} />
+    <SummaryTable
+      title="Resúmenes por período"
+      items={periodSummaries}
+      currency={currency}
+      lastConsideredLabel={lastConsideredLabel}
+      includesPartial={includeEstimatedMonth}
+    />
+    <SummaryTable
+      title="Resúmenes por año"
+      items={yearlySummaries}
+      currency={currency}
+      lastConsideredLabel={lastConsideredLabel}
+      includesPartial={includeEstimatedMonth}
+    />
     <PortfolioAnalyticsPanel monthlyRows={monthlyRowsDesc} currency={currency} />
   </>
   );

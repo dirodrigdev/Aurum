@@ -9,11 +9,15 @@ import type {
   ReturnCurveModel,
   ReturnCurvePoint,
 } from '../components/analysis/types';
-import { resolveGastappMonthlySpend } from './gastosMonthly';
+import { resolveGastappMonthlyCloseCandidate, resolveGastappMonthlySpend } from './gastosMonthly';
 import {
+  buildCanonicalClosureSummary,
+  dedupeLatestByAsset,
   listSuspiciousHistoricalUfClosures,
+  makeAssetKey,
+  latestRecordsForMonth,
 } from './wealthStorage';
-import type { WealthCurrency, WealthFxRates, WealthMonthlyClosure } from './wealthStorage';
+import type { WealthCurrency, WealthFxRates, WealthMonthlyClosure, WealthRecord } from './wealthStorage';
 
 const sumNumbers = (values: number[]) => values.reduce((sum, value) => sum + value, 0);
 
@@ -110,7 +114,7 @@ export const buildPendingOfficialReturnInfo = (
 };
 
 export type ProvisionalReturnScenario = {
-  key: 'avg_12m_closed' | 'avg_6m_closed' | 'previous_closed';
+  key: 'gastapp_partial';
   label: string;
   spendDisplay: number;
   spendClp: number;
@@ -120,7 +124,7 @@ export type ProvisionalReturnScenario = {
   monthsUsed: number;
 };
 
-type AverageEstimateMethod = 'avg_12m_closed' | 'avg_6m_closed';
+type AverageEstimateMethod = 'gastapp_partial';
 
 export type PendingReturnEstimate = {
   monthKey: string;
@@ -246,7 +250,7 @@ const monthAfter = (monthKey: string) => {
   return `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
 };
 
-const currentOperationalMonthKey = (closures: WealthMonthlyClosure[]) => {
+export const currentOperationalMonthKey = (closures: WealthMonthlyClosure[]) => {
   const fallback = (() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -266,6 +270,53 @@ const summaryNetClp = (closure: WealthMonthlyClosure, includeRiskCapitalInTotals
   if (Number.isFinite(closure.summary?.netClp)) return Number(closure.summary.netClp);
   if (Number.isFinite(closure.summary?.netConsolidatedClp)) return Number(closure.summary.netConsolidatedClp);
   return null;
+};
+
+const mergeCurrentMonthRecords = (
+  closures: WealthMonthlyClosure[],
+  records: WealthRecord[],
+  monthKey: string,
+) => {
+  const lastClosure = [...closures].sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0] || null;
+  const carried = lastClosure?.records ? dedupeLatestByAsset(lastClosure.records) : [];
+  const current = latestRecordsForMonth(records, monthKey);
+  const byAsset = new Map(carried.map((record) => [makeAssetKey(record), record]));
+  current.forEach((record) => byAsset.set(makeAssetKey(record), record));
+  return [...byAsset.values()];
+};
+
+/**
+ * Construye una foto transitoria del mes abierto. Sólo existe en memoria para
+ * el modo P: no modifica cierres, registros ni el contrato de GastApp.
+ */
+export const buildGastappPartialMonthClosure = (input: {
+  closures: WealthMonthlyClosure[];
+  records: WealthRecord[];
+  fxRates: WealthFxRates;
+}): WealthMonthlyClosure | null => {
+  const monthKey = currentOperationalMonthKey(input.closures);
+  const gastapp = resolveGastappMonthlyCloseCandidate(monthKey);
+  const hasRealPartial =
+    gastapp.status === 'pending' &&
+    gastapp.partialGastosEur !== null &&
+    gastapp.partialByFamilyEur !== null &&
+    Math.abs(
+      gastapp.partialGastosEur -
+        gastapp.partialByFamilyEur.dayToDay -
+        gastapp.partialByFamilyEur.trips -
+        gastapp.partialByFamilyEur.others,
+    ) <= 0.01;
+  if (!hasRealPartial) return null;
+  const snapshotRecords = mergeCurrentMonthRecords(input.closures, input.records, monthKey);
+  if (!snapshotRecords.length) return null;
+  return {
+    id: `gastapp-partial-${monthKey}`,
+    monthKey,
+    closedAt: new Date().toISOString(),
+    summary: buildCanonicalClosureSummary(snapshotRecords, input.fxRates),
+    fxRates: { ...input.fxRates },
+    records: snapshotRecords,
+  };
 };
 
 const safeUsdClp = (value: number) =>
@@ -613,10 +664,21 @@ export const computeMonthlyRows = (
     const gastosEur = spend.gastosEur;
     const gastosClp = invalidNet || !fxAuditable || gastosEur === null ? null : gastosEur * fx.eurClp;
     const gastosDisplay = gastosClp === null ? null : convertFromClp(gastosClp, currency, fx);
+    const partialGastosEur = spend.partialGastosEur ?? null;
+    const partialGastosClp =
+      invalidNet || !fxAuditable || partialGastosEur === null ? null : partialGastosEur * fx.eurClp;
+    const partialGastosDisplay =
+      partialGastosClp === null ? null : convertFromClp(partialGastosClp, currency, fx);
     const retornoRealClp =
       varPatrimonioClp === null || gastosClp === null ? null : varPatrimonioClp + gastosClp;
     const retornoRealDisplay =
       varPatrimonioDisplay === null || gastosDisplay === null ? null : varPatrimonioDisplay + gastosDisplay;
+    const partialRetornoRealClp =
+      varPatrimonioClp === null || partialGastosClp === null ? null : varPatrimonioClp + partialGastosClp;
+    const partialRetornoRealDisplay =
+      varPatrimonioDisplay === null || partialGastosDisplay === null
+        ? null
+        : varPatrimonioDisplay + partialGastosDisplay;
     const pct =
       retornoRealDisplay === null || prevNetDisplay === null || prevNetDisplay === 0
         ? null
@@ -667,6 +729,7 @@ export const computeMonthlyRows = (
 
     rows.push({
       monthKey: closure.monthKey,
+      currency,
       fx,
       rawEurClp: fxRaw.eurClp,
       fxMethod: fxResolution.method,
@@ -697,6 +760,12 @@ export const computeMonthlyRows = (
       gastosSummaryVsDirectDiffEur: spend.summaryVsDirectDiffEur ?? null,
       gastosReportVsSummaryDiffEur: spend.reportVsSummaryDiffEur ?? null,
       gastosCategoryGapEur: spend.categoryGapEur ?? null,
+      partialGastosEur,
+      partialByFamilyEur: spend.partialByFamilyEur ?? null,
+      partialGastosClp,
+      partialGastosDisplay,
+      partialRetornoRealClp,
+      partialRetornoRealDisplay,
       netClp,
       prevNetClp,
       invalidNet,
@@ -847,13 +916,6 @@ export const buildReturnsMonthlySourceDiagnostics = (
     };
   });
 
-const validClosedSpendRow = (
-  row: MonthlyReturnRow,
-): row is MonthlyReturnRow & {
-  gastosClp: number;
-  gastosDisplay: number;
-} => hasOfficialClosedSpend(row);
-
 const buildProvisionalScenario = ({
   key,
   label,
@@ -896,66 +958,31 @@ export const buildPendingReturnEstimate = (
     .find(
       (row) =>
         row.gastosStatus === 'pending' &&
+        row.partialGastosEur !== null &&
+        row.partialGastosEur !== undefined &&
         row.varPatrimonioDisplay !== null &&
         row.varPatrimonioClp !== null &&
         row.prevNetDisplay !== null,
     );
-  if (!pendingRow || pendingRow.varPatrimonioDisplay === null) return null;
-
-  const closedRows = monthlyRowsAsc
-    .filter((row) => row.monthKey < pendingRow.monthKey)
-    .filter(validClosedSpendRow);
-  const previousClosed = closedRows[closedRows.length - 1] || null;
+  if (!pendingRow || pendingRow.varPatrimonioDisplay === null || pendingRow.partialGastosEur === null) return null;
   const info = buildPendingOfficialReturnInfo(pendingRow);
-  const scenarios: ProvisionalReturnScenario[] = [];
-
-  const buildAverageScenario = (
-    key: Extract<ProvisionalReturnScenario['key'], 'avg_12m_closed' | 'avg_6m_closed'>,
-    maxMonths: number,
-    completeLabel: string,
-  ) => {
-    const sample = closedRows.slice(-maxMonths);
-    if (sample.length < 2) return null;
-    const avgDisplay = sumNumbers(sample.map((row) => row.gastosDisplay)) / sample.length;
-    const avgClp = sumNumbers(sample.map((row) => row.gastosClp)) / sample.length;
-    const scenario = buildProvisionalScenario({
-      key,
-      label: sample.length >= maxMonths ? completeLabel : `${completeLabel} (${sample.length} meses disponibles)`,
-      row: pendingRow,
-      spendDisplay: avgDisplay,
-      spendClp: avgClp,
-      monthsUsed: sample.length,
-    });
-    if (scenario) scenarios.push(scenario);
-    return scenario;
-  };
-
-  const avg12Scenario = buildAverageScenario('avg_12m_closed', 12, 'Promedio últimos 12 meses oficiales');
-  const avg6Scenario = buildAverageScenario('avg_6m_closed', 6, 'Promedio últimos 6 meses oficiales');
-
-  if (previousClosed) {
-    const scenario = buildProvisionalScenario({
-      key: 'previous_closed',
-      label: `Gasto del mes anterior cerrado (${previousClosed.monthKey})`,
-      row: pendingRow,
-      spendDisplay: previousClosed.gastosDisplay,
-      spendClp: previousClosed.gastosClp,
-      monthsUsed: 1,
-    });
-    if (scenario) scenarios.push(scenario);
-  }
-
-  if (!scenarios.length) return null;
-  const selectedAverageScenario = [avg12Scenario, avg6Scenario]
-    .filter((scenario): scenario is NonNullable<typeof scenario> => Boolean(scenario))
-    .sort((left, right) => left.spendClp - right.spendClp)[0] ?? null;
+  const spendClp = pendingRow.partialGastosClp ?? pendingRow.partialGastosEur * pendingRow.fx.eurClp;
+  const scenario = buildProvisionalScenario({
+    key: 'gastapp_partial',
+    label: 'Avance real parcial publicado por GastApp',
+    row: pendingRow,
+    spendDisplay: pendingRow.partialGastosDisplay ?? convertFromClp(spendClp, pendingRow.currency || 'CLP', pendingRow.fx),
+    spendClp,
+    monthsUsed: 1,
+  });
+  if (!scenario) return null;
   return {
     monthKey: pendingRow.monthKey,
     availabilityLabel: info.availabilityLabel,
     periodRangeLabel: info.periodRangeLabel,
     varPatrimonioDisplay: pendingRow.varPatrimonioDisplay,
-    scenarios,
-    selectedScenarioKey: (selectedAverageScenario?.key as AverageEstimateMethod | undefined) ?? null,
+    scenarios: [scenario],
+    selectedScenarioKey: 'gastapp_partial',
   };
 };
 
@@ -993,8 +1020,6 @@ export const buildReturnsSeriesView = (
   }
 
   const estimateMethod = primaryScenario.key as EstimatedMonthMeta['estimateMethod'];
-  const previousClosedScenario = pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'previous_closed') ?? null;
-
   const estimatedRow: MonthlyReturnRow = {
     ...pendingRow,
     gastosStatus: 'complete',
@@ -1007,11 +1032,12 @@ export const buildReturnsSeriesView = (
     retornoRealDisplay: primaryScenario.retornoRealDisplay,
     pct: primaryScenario.pct,
     isEstimated: true,
+    isPartial: true,
     estimateMethod,
     estimatedSpendClp: primaryScenario.spendClp,
     estimatedFromMonthsCount: primaryScenario.monthsUsed,
     officialAvailableDate: pendingEstimateDetail?.availabilityLabel ?? null,
-    referencePreviousMonthSpendClp: previousClosedScenario?.spendClp ?? null,
+    referencePreviousMonthSpendClp: null,
   };
 
   const estimatedRows = officialRows.map((row) => (row.monthKey === pendingRow.monthKey ? estimatedRow : row));
@@ -1027,7 +1053,7 @@ export const buildReturnsSeriesView = (
       estimatedFromMonthsCount: primaryScenario.monthsUsed,
       officialAvailableDate: pendingEstimateDetail?.availabilityLabel ?? null,
       gastosPeriodKey: pendingRow.gastosPeriodKey,
-      referencePreviousMonthSpendClp: previousClosedScenario?.spendClp ?? null,
+      referencePreviousMonthSpendClp: null,
     },
     pendingEstimateDetail,
     officialAvailabilityNotice: buildOfficialAvailabilityNotice(officialRows),

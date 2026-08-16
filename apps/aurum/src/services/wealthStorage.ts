@@ -107,6 +107,7 @@ export interface WealthMonthlyClosure {
   fxMetadata?: ClosureFxMetadata;
   fxMissing?: Array<'usdClp' | 'eurClp' | 'ufClp'>;
   records?: WealthRecord[];
+  gastappExpenseClose?: GastappMonthlyExpenseCloseSnapshot;
   previousVersions?: WealthMonthlyClosureVersion[];
   repairAudit?: WealthClosureRepairAuditEntry[];
 }
@@ -121,7 +122,35 @@ export interface WealthMonthlyClosureVersion {
   fxMetadata?: ClosureFxMetadata;
   fxMissing?: Array<'usdClp' | 'eurClp' | 'ufClp'>;
   records?: WealthRecord[];
+  gastappExpenseClose?: GastappMonthlyExpenseCloseSnapshot;
 }
+
+export type GastappMonthlyExpenseCloseInput = {
+  monthKey: string;
+  totalEur: number;
+  byFamilyEur: {
+    dayToDay: number;
+    trips: number;
+    others: number;
+  };
+  canonicalDataHash: string;
+  contractHash: string;
+  contractVersion: string;
+  generatedAt: string;
+};
+
+export type GastappMonthlyExpenseCloseSnapshot = GastappMonthlyExpenseCloseInput & {
+  schemaVersion: 'aurum-gastapp-monthly-close-v1';
+  sourcePath: 'gastapp_aurum_contracts_v2/months_current';
+  capturedAt: string;
+  fxRates: WealthFxRates;
+  amountsByCurrency: Record<WealthCurrency, {
+    total: number;
+    dayToDay: number;
+    trips: number;
+    others: number;
+  }>;
+};
 
 export interface WealthMonthlyCloseCheckpoint {
   id: string;
@@ -1132,6 +1161,156 @@ const normalizeCalendarMonthKey = (value: unknown): string | null => {
   return `${yearRaw}-${String(monthRaw).padStart(2, '0')}`;
 };
 
+const GASTAPP_SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/i;
+const GASTAPP_EXPENSE_CLOSE_TOLERANCE = 0.01;
+
+const normalizeGastappExpenseAmounts = (raw: unknown) => {
+  if (!raw || typeof raw !== 'object') return null;
+  const value = raw as Record<string, unknown>;
+  const total = Number(value.total);
+  const dayToDay = Number(value.dayToDay);
+  const trips = Number(value.trips);
+  const others = Number(value.others);
+  if (![total, dayToDay, trips, others].every((item) => Number.isFinite(item) && item >= 0)) return null;
+  if (Math.abs(total - dayToDay - trips - others) > GASTAPP_EXPENSE_CLOSE_TOLERANCE) return null;
+  return { total, dayToDay, trips, others };
+};
+
+const convertGastappExpenseAmounts = (
+  eur: { total: number; dayToDay: number; trips: number; others: number },
+  fxRates: WealthFxRates,
+) => {
+  const convert = (factor: number) => ({
+    total: eur.total * factor,
+    dayToDay: eur.dayToDay * factor,
+    trips: eur.trips * factor,
+    others: eur.others * factor,
+  });
+  const clp = convert(fxRates.eurClp);
+  return {
+    EUR: { ...eur },
+    CLP: clp,
+    USD: convert(fxRates.eurClp / fxRates.usdClp),
+    UF: convert(fxRates.eurClp / fxRates.ufClp),
+  } satisfies GastappMonthlyExpenseCloseSnapshot['amountsByCurrency'];
+};
+
+export const buildGastappMonthlyExpenseCloseSnapshot = (
+  input: GastappMonthlyExpenseCloseInput,
+  fxRates: WealthFxRates,
+  capturedAt = nowIso(),
+): GastappMonthlyExpenseCloseSnapshot => {
+  const monthKey = normalizeCalendarMonthKey(input.monthKey);
+  const totalEur = Number(input.totalEur);
+  const families = normalizeGastappExpenseAmounts({
+    total: totalEur,
+    dayToDay: input.byFamilyEur?.dayToDay,
+    trips: input.byFamilyEur?.trips,
+    others: input.byFamilyEur?.others,
+  });
+  const generatedAt = String(input.generatedAt || '');
+  const validFx = [fxRates.usdClp, fxRates.eurClp, fxRates.ufClp].every(
+    (value) => Number.isFinite(Number(value)) && Number(value) > 0,
+  );
+  if (
+    !monthKey ||
+    !families ||
+    !GASTAPP_SHA256_PATTERN.test(String(input.canonicalDataHash || '')) ||
+    !GASTAPP_SHA256_PATTERN.test(String(input.contractHash || '')) ||
+    !String(input.contractVersion || '').trim() ||
+    !Number.isFinite(new Date(generatedAt).getTime()) ||
+    !validFx
+  ) {
+    throw new Error('Snapshot mensual de GastApp inválido; el cierre no se guardó.');
+  }
+  const normalizedFx = {
+    usdClp: Number(fxRates.usdClp),
+    eurClp: Number(fxRates.eurClp),
+    ufClp: Number(fxRates.ufClp),
+  };
+  return {
+    schemaVersion: 'aurum-gastapp-monthly-close-v1',
+    sourcePath: 'gastapp_aurum_contracts_v2/months_current',
+    monthKey,
+    totalEur: families.total,
+    byFamilyEur: {
+      dayToDay: families.dayToDay,
+      trips: families.trips,
+      others: families.others,
+    },
+    canonicalDataHash: String(input.canonicalDataHash),
+    contractHash: String(input.contractHash),
+    contractVersion: String(input.contractVersion),
+    generatedAt,
+    capturedAt: String(capturedAt || nowIso()),
+    fxRates: normalizedFx,
+    amountsByCurrency: convertGastappExpenseAmounts(families, normalizedFx),
+  };
+};
+
+const cloneGastappMonthlyExpenseCloseSnapshot = (
+  snapshot: GastappMonthlyExpenseCloseSnapshot | undefined,
+): GastappMonthlyExpenseCloseSnapshot | undefined =>
+  snapshot
+    ? {
+        ...snapshot,
+        byFamilyEur: { ...snapshot.byFamilyEur },
+        fxRates: { ...snapshot.fxRates },
+        amountsByCurrency: {
+          CLP: { ...snapshot.amountsByCurrency.CLP },
+          USD: { ...snapshot.amountsByCurrency.USD },
+          EUR: { ...snapshot.amountsByCurrency.EUR },
+          UF: { ...snapshot.amountsByCurrency.UF },
+        },
+      }
+    : undefined;
+
+const normalizeGastappMonthlyExpenseCloseSnapshot = (
+  raw: unknown,
+  expectedMonthKey: string,
+): GastappMonthlyExpenseCloseSnapshot | undefined => {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const value = raw as Record<string, unknown>;
+  if (
+    value.schemaVersion !== 'aurum-gastapp-monthly-close-v1' ||
+    value.sourcePath !== 'gastapp_aurum_contracts_v2/months_current' ||
+    normalizeCalendarMonthKey(value.monthKey) !== normalizeCalendarMonthKey(expectedMonthKey)
+  ) return undefined;
+  const rawFx = value.fxRates as Record<string, unknown> | undefined;
+  const fxRates = {
+    usdClp: Number(rawFx?.usdClp),
+    eurClp: Number(rawFx?.eurClp),
+    ufClp: Number(rawFx?.ufClp),
+  };
+  if (!Object.values(fxRates).every((rate) => Number.isFinite(rate) && rate > 0)) return undefined;
+  try {
+    const rebuilt = buildGastappMonthlyExpenseCloseSnapshot({
+      monthKey: String(value.monthKey || ''),
+      totalEur: Number(value.totalEur),
+      byFamilyEur: {
+        dayToDay: Number((value.byFamilyEur as Record<string, unknown> | undefined)?.dayToDay),
+        trips: Number((value.byFamilyEur as Record<string, unknown> | undefined)?.trips),
+        others: Number((value.byFamilyEur as Record<string, unknown> | undefined)?.others),
+      },
+      canonicalDataHash: String(value.canonicalDataHash || ''),
+      contractHash: String(value.contractHash || ''),
+      contractVersion: String(value.contractVersion || ''),
+      generatedAt: String(value.generatedAt || ''),
+    }, fxRates, String(value.capturedAt || ''));
+    const rawAmounts = value.amountsByCurrency as Record<string, unknown> | undefined;
+    for (const currency of ['CLP', 'USD', 'EUR', 'UF'] as const) {
+      const amount = normalizeGastappExpenseAmounts(rawAmounts?.[currency]);
+      const expected = rebuilt.amountsByCurrency[currency];
+      if (!amount || Object.keys(expected).some((key) => Math.abs(amount[key as keyof typeof amount] - expected[key as keyof typeof expected]) > GASTAPP_EXPENSE_CLOSE_TOLERANCE)) {
+        return undefined;
+      }
+    }
+    return rebuilt;
+  } catch {
+    return undefined;
+  }
+};
+
 const monthAfter = (monthKey: string): string | null => {
   const normalized = normalizeMonthKey(monthKey);
   if (!normalized) return null;
@@ -1493,6 +1672,7 @@ const toClosureVersion = (
   fxMetadata: cloneClosureFxMetadata(closure.fxMetadata),
   fxMissing: closure.fxMissing ? [...closure.fxMissing] : undefined,
   records: closure.records ? closure.records.map((record) => ({ ...record })) : undefined,
+  gastappExpenseClose: cloneGastappMonthlyExpenseCloseSnapshot(closure.gastappExpenseClose),
 });
 
 const normalizeClosureVersion = (
@@ -1509,6 +1689,7 @@ const normalizeClosureVersion = (
     inferFxMissingFromRawFx(raw?.fxRates),
   );
   const records = normalizeClosureRecords(raw?.records);
+  const gastappExpenseClose = normalizeGastappMonthlyExpenseCloseSnapshot(raw?.gastappExpenseClose, monthKey);
   const summary =
     records && records.length
       ? buildCanonicalClosureSummary(dedupeLatestByAsset(records), fxRates || defaultFxRates)
@@ -1525,6 +1706,7 @@ const normalizeClosureVersion = (
     fxMetadata,
     fxMissing: fxMissing.length ? fxMissing : undefined,
     records,
+    gastappExpenseClose,
   };
 };
 
@@ -3243,6 +3425,7 @@ export const loadClosures = (): WealthMonthlyClosure[] => {
           inferFxMissingFromRawFx(item?.fxRates),
         );
         const records = normalizeClosureRecords(item?.records);
+        const gastappExpenseClose = normalizeGastappMonthlyExpenseCloseSnapshot(item?.gastappExpenseClose, monthKey);
 
         const summary =
           records && records.length
@@ -3268,6 +3451,7 @@ export const loadClosures = (): WealthMonthlyClosure[] => {
           fxMetadata,
           fxMissing: fxMissing.length ? fxMissing : undefined,
           records,
+          gastappExpenseClose,
           previousVersions: previousVersions.length ? previousVersions : undefined,
           repairAudit: repairAudit.length ? repairAudit : undefined,
         };
@@ -3295,6 +3479,7 @@ const cloneClosureForCheckpoint = (closure: WealthMonthlyClosure | null): Wealth
     fxMetadata: cloneClosureFxMetadata(closure.fxMetadata),
     fxMissing: Array.isArray(closure.fxMissing) ? [...closure.fxMissing] : undefined,
     records: Array.isArray(closure.records) ? closure.records.map((record) => ({ ...record })) : undefined,
+    gastappExpenseClose: cloneGastappMonthlyExpenseCloseSnapshot(closure.gastappExpenseClose),
     previousVersions: Array.isArray(closure.previousVersions)
       ? closure.previousVersions.map((version) => ({
           ...version,
@@ -3302,6 +3487,7 @@ const cloneClosureForCheckpoint = (closure: WealthMonthlyClosure | null): Wealth
           fxMetadata: cloneClosureFxMetadata(version.fxMetadata),
           fxMissing: Array.isArray(version.fxMissing) ? [...version.fxMissing] : undefined,
           records: Array.isArray(version.records) ? version.records.map((record) => ({ ...record })) : undefined,
+          gastappExpenseClose: cloneGastappMonthlyExpenseCloseSnapshot(version.gastappExpenseClose),
         }))
       : undefined,
   };
@@ -3318,6 +3504,7 @@ const normalizeCheckpointClosure = (raw: any, fallbackMonthKey: string): WealthM
     inferFxMissingFromRawFx(raw.fxRates),
   );
   const records = normalizeClosureRecords(raw.records);
+  const gastappExpenseClose = normalizeGastappMonthlyExpenseCloseSnapshot(raw.gastappExpenseClose, monthKey);
   const summary =
     records && records.length
       ? buildCanonicalClosureSummary(dedupeLatestByAsset(records), fxRates || defaultFxRates)
@@ -3338,6 +3525,7 @@ const normalizeCheckpointClosure = (raw: any, fallbackMonthKey: string): WealthM
     fxMetadata,
     fxMissing: fxMissing.length ? fxMissing : undefined,
     records,
+    gastappExpenseClose,
     previousVersions: previousVersions.length ? previousVersions : undefined,
   };
 };
@@ -5471,7 +5659,8 @@ export const loadClosuresFromRaw = (parsed: any[]): WealthMonthlyClosure[] => {
         normalizeFxMissingKeys(item?.fxMissing),
         inferFxMissingFromRawFx(item?.fxRates),
       );
-      const records = normalizeClosureRecords(item?.records);
+        const records = normalizeClosureRecords(item?.records);
+      const gastappExpenseClose = normalizeGastappMonthlyExpenseCloseSnapshot(item?.gastappExpenseClose, monthKey);
 
       const summary =
         records && records.length
@@ -5497,6 +5686,7 @@ export const loadClosuresFromRaw = (parsed: any[]): WealthMonthlyClosure[] => {
         fxMetadata,
         fxMissing: fxMissing.length ? fxMissing : undefined,
         records,
+        gastappExpenseClose,
         previousVersions: previousVersions.length ? previousVersions : undefined,
         repairAudit: repairAudit.length ? repairAudit : undefined,
       };
@@ -5618,6 +5808,7 @@ const serializeClosure = (c: WealthMonthlyClosure) =>
     closedAt: c.closedAt,
     fxRates: c.fxRates || null,
     fxMissing: c.fxMissing || null,
+    gastappExpenseClose: c.gastappExpenseClose || null,
     repairAudit: c.repairAudit || null,
     records: (c.records || []).map(serializeRecord),
     summary: c.summary,
@@ -5628,6 +5819,7 @@ const serializeClosure = (c: WealthMonthlyClosure) =>
       replacedAt: version.replacedAt,
       fxRates: version.fxRates || null,
       fxMissing: version.fxMissing || null,
+      gastappExpenseClose: version.gastappExpenseClose || null,
       records: (version.records || []).map(serializeRecord),
       summary: version.summary,
     })),
@@ -5662,6 +5854,7 @@ export const upsertMonthlyClosure = (input: {
   records: WealthRecord[];
   fxRates: WealthFxRates;
   fxMetadata?: ClosureFxMetadata;
+  gastappExpenseClose?: GastappMonthlyExpenseCloseInput;
   closedAt?: string;
 }): WealthMonthlyClosure => {
   const normalizedMonthKey = normalizeMonthKey(input.monthKey) || currentMonthKey();
@@ -5669,6 +5862,12 @@ export const upsertMonthlyClosure = (input: {
   const latest = dedupeLatestByAsset(input.records);
   const summary = buildCanonicalClosureSummary(latest, input.fxRates);
   const closedAt = String(input.closedAt || nowIso());
+  const gastappExpenseClose = input.gastappExpenseClose
+    ? buildGastappMonthlyExpenseCloseSnapshot(input.gastappExpenseClose, input.fxRates, closedAt)
+    : undefined;
+  if (gastappExpenseClose && gastappExpenseClose.monthKey !== normalizedMonthKey) {
+    throw new Error('El cierre de GastApp no corresponde al mes económico seleccionado.');
+  }
   const existingSameMonth =
     closures.find((closure) => closure.monthKey === normalizedMonthKey) || null;
   const existingMetadataCompatible = Boolean(
@@ -5698,6 +5897,7 @@ export const upsertMonthlyClosure = (input: {
     fxRates: { ...input.fxRates },
     fxMetadata,
     records: latest,
+    gastappExpenseClose,
   };
 
   if (existingSameMonth) {
@@ -5743,6 +5943,7 @@ export const closeMonthlyWithCheckpoint = async (input: {
   records: WealthRecord[];
   fxRates: WealthFxRates;
   fxMetadata?: ClosureFxMetadata;
+  gastappExpenseClose?: GastappMonthlyExpenseCloseInput;
   closedAt?: string;
 }): Promise<WealthMonthlyClosure> => {
   const normalizedMonthKey = normalizeCalendarMonthKey(input.monthKey);
@@ -5772,6 +5973,7 @@ export const closeMonthlyWithCheckpoint = async (input: {
     records: input.records,
     fxRates: input.fxRates,
     fxMetadata: input.fxMetadata,
+    gastappExpenseClose: input.gastappExpenseClose,
     closedAt: input.closedAt || nowIso(),
   });
   try {

@@ -11,6 +11,7 @@ export type FreedomControlDraft = {
 
 export type MonthlyReturnRow = {
   monthKey: string;
+  currency?: WealthCurrency;
   fx: WealthFxRates;
   rawEurClp: number;
   fxMethod: 'real_closure' | 'default_fallback';
@@ -41,6 +42,16 @@ export type MonthlyReturnRow = {
   gastosSummaryVsDirectDiffEur: number | null;
   gastosReportVsSummaryDiffEur: number | null;
   gastosCategoryGapEur: number | null;
+  partialGastosEur?: number | null;
+  partialByFamilyEur?: {
+    dayToDay: number;
+    trips: number;
+    others: number;
+  } | null;
+  partialGastosClp?: number | null;
+  partialGastosDisplay?: number | null;
+  partialRetornoRealClp?: number | null;
+  partialRetornoRealDisplay?: number | null;
   netClp: number | null;
   prevNetClp: number | null;
   invalidNet: boolean;
@@ -56,7 +67,8 @@ export type MonthlyReturnRow = {
   inflationMonthlyRate: number | null;
   pctReal: number | null;
   isEstimated?: boolean;
-  estimateMethod?: 'avg_12m_closed' | 'avg_6m_closed' | null;
+  estimateMethod?: 'gastapp_partial' | null;
+  isPartial?: boolean;
   estimatedSpendClp?: number | null;
   estimatedFromMonthsCount?: number | null;
   officialAvailableDate?: string | null;

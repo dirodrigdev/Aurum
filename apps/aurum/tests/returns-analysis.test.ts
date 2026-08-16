@@ -94,6 +94,27 @@ const makeClosure = (
   fxMissing,
 });
 
+const withGastappPartial = <T extends ReturnType<typeof computeMonthlyRows>[number]>(
+  rows: T[],
+  monthKey: string,
+  totalEur: number,
+) => rows.map((row) => {
+  if (row.monthKey !== monthKey) return row;
+  const partialGastosClp = totalEur * row.fx.eurClp;
+  const partialGastosDisplay = partialGastosClp;
+  const partialRetornoRealClp = row.varPatrimonioClp === null ? null : row.varPatrimonioClp + partialGastosClp;
+  const partialRetornoRealDisplay = row.varPatrimonioDisplay === null ? null : row.varPatrimonioDisplay + partialGastosDisplay;
+  return {
+    ...row,
+    partialGastosEur: totalEur,
+    partialByFamilyEur: { dayToDay: totalEur, trips: 0, others: 0 },
+    partialGastosClp,
+    partialGastosDisplay,
+    partialRetornoRealClp,
+    partialRetornoRealDisplay,
+  };
+});
+
 describe('returns analysis helpers', () => {
   it('builds monthly rows excluding the current operational month inferred from the latest closure', () => {
     vi.useFakeTimers();
@@ -795,8 +816,8 @@ describe('returns analysis helpers', () => {
     expect(summaryUf.pctRetornoReal).toBeNull();
   });
 
-  it('explains pending official returns and builds provisional estimates without closed aggregates', () => {
-    const rows = computeMonthlyRows(
+  it('uses the real partial published by GastApp without converting it into an estimate', () => {
+    const baseRows = computeMonthlyRows(
       [
         makeClosure('2025-12', { netClp: 900_000_000, eurClp: 1000 }),
         makeClosure('2026-01', { netClp: 940_000_000, eurClp: 1000 }),
@@ -807,6 +828,7 @@ describe('returns analysis helpers', () => {
       false,
       'CLP',
     );
+    const rows = withGastappPartial(baseRows, '2026-04', 2500);
     const april = rows.find((row) => row.monthKey === '2026-04');
     expect(april?.gastosStatus).toBe('pending');
 
@@ -817,21 +839,18 @@ describe('returns analysis helpers', () => {
     const estimate = buildPendingReturnEstimate(rows);
     expect(estimate?.monthKey).toBe('2026-04');
     expect(estimate?.availabilityLabel).toBe('12 may');
-    expect(estimate?.scenarios.map((scenario) => scenario.key)).toEqual(['avg_12m_closed', 'avg_6m_closed', 'previous_closed']);
-    expect(estimate?.selectedScenarioKey).toBe('avg_12m_closed');
-    const averageScenario = estimate?.scenarios.find((scenario) => scenario.key === 'avg_12m_closed');
-    expect(averageScenario?.label).toBe('Promedio últimos 12 meses oficiales (4 meses disponibles)');
-
-    const previousScenario = estimate?.scenarios.find((scenario) => scenario.key === 'previous_closed');
-    expect(previousScenario?.spendClp).toBeCloseTo(TEST_GASTOS_EUR['2026-03'] * 1000, 6);
-    expect(previousScenario?.retornoRealClp).toBeCloseTo(20_000_000 + TEST_GASTOS_EUR['2026-03'] * 1000, 6);
+    expect(estimate?.scenarios.map((scenario) => scenario.key)).toEqual(['gastapp_partial']);
+    expect(estimate?.selectedScenarioKey).toBe('gastapp_partial');
+    expect(estimate?.scenarios[0]?.label).toBe('Avance real parcial publicado por GastApp');
+    expect(estimate?.scenarios[0]?.spendClp).toBe(2_500_000);
+    expect(estimate?.scenarios[0]?.retornoRealClp).toBe(22_500_000);
 
     const summary = aggregateRows('with-pending', 'With pending', rows, rows[0].netDisplay);
     expect(summary.validMonths).toBe(3);
   });
 
-  it('builds a dual returns series and keeps official rows unchanged', () => {
-    const rows = computeMonthlyRows(
+  it('builds a P series only when the user opts in and keeps official rows unchanged', () => {
+    const baseRows = computeMonthlyRows(
       [
         makeClosure('2025-12', { netClp: 900_000_000, eurClp: 1000 }),
         makeClosure('2026-01', { netClp: 940_000_000, eurClp: 1000 }),
@@ -842,11 +861,12 @@ describe('returns analysis helpers', () => {
       false,
       'CLP',
     );
+    const rows = withGastappPartial(baseRows, '2026-04', 2500);
     const view = buildReturnsSeriesView(rows);
     expect(view.hasEstimatedMonth).toBe(true);
     expect(view.pendingEstimate?.monthKey).toBe('2026-04');
-    expect(view.pendingEstimate?.estimateMethod).toBe('avg_12m_closed');
-    expect(view.pendingEstimate?.estimatedFromMonthsCount).toBe(4);
+    expect(view.pendingEstimate?.estimateMethod).toBe('gastapp_partial');
+    expect(view.pendingEstimate?.estimatedFromMonthsCount).toBe(1);
 
     const officialApril = view.officialRows.find((row) => row.monthKey === '2026-04');
     const estimatedApril = view.estimatedRows.find((row) => row.monthKey === '2026-04');
@@ -860,18 +880,18 @@ describe('returns analysis helpers', () => {
     expect(officialApril?.gastosStatus).toBe('pending');
     expect(estimatedApril?.gastosStatus).toBe('complete');
     expect(estimatedApril?.isEstimated).toBe(true);
-    expect(estimatedApril?.estimateMethod).toBe('avg_12m_closed');
+    expect(estimatedApril?.estimateMethod).toBe('gastapp_partial');
+    expect(estimatedApril?.isPartial).toBe(true);
     expect(estimatedApril?.retornoRealClp).not.toBeNull();
     expect(estimatedYtd.validMonths).toBe(4);
     expect(estimatedYtd.coverage.expectedMonths).toBe(4);
     expect(estimatedYtd.coverage.status).toBe('complete');
     expect(estimatedYtd.coverage.nonApplicableMonths).toEqual([]);
-    expect(view.pendingEstimateDetail?.scenarios[0]?.key).toBe('avg_12m_closed');
-    expect(view.pendingEstimateDetail?.scenarios[1]?.key).toBe('avg_6m_closed');
+    expect(view.pendingEstimateDetail?.scenarios[0]?.key).toBe('gastapp_partial');
     expect(estimatedApril?.estimatedSpendClp).toBeCloseTo(view.pendingEstimate?.estimatedSpendClp ?? 0, 6);
   });
 
-  it('uses the lower spend between 12M and 6M official averages as the estimate', () => {
+  it('does not create a P row from historical averages when GastApp has no partial', () => {
     const closures: WealthMonthlyClosure[] = [];
     for (let i = 4; i <= 12; i += 1) {
       const month = String(i).padStart(2, '0');
@@ -883,19 +903,11 @@ describe('returns analysis helpers', () => {
     closures.push(makeClosure('2026-04', { netClp: 1_010_000_000, eurClp: 1000 }));
     const rows = computeMonthlyRows(closures, false, 'CLP');
     const view = buildReturnsSeriesView(rows);
-    expect(view.hasEstimatedMonth).toBe(true);
-    expect(view.pendingEstimate?.monthKey).toBe('2026-04');
-    const avg12 = view.pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'avg_12m_closed');
-    const avg6 = view.pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'avg_6m_closed');
-    expect(avg12).toBeTruthy();
-    expect(avg6).toBeTruthy();
-    expect(view.pendingEstimate?.estimatedSpendClp).toBe(Math.min(avg12?.spendClp ?? Infinity, avg6?.spendClp ?? Infinity));
-    expect(view.pendingEstimate?.estimateMethod).toBe(
-      (avg12?.spendClp ?? Infinity) <= (avg6?.spendClp ?? Infinity) ? 'avg_12m_closed' : 'avg_6m_closed',
-    );
+    expect(view.hasEstimatedMonth).toBe(false);
+    expect(view.pendingEstimate).toBeNull();
   });
 
-  it('uses the 6M average when it is more conservative than 12M', () => {
+  it('does not use a 6M average as a replacement for a missing GastApp partial', () => {
     const snapshot = { ...TEST_GASTOS_EUR };
     Object.assign(TEST_GASTOS_EUR, {
       '2025-05': 10_000,
@@ -927,12 +939,8 @@ describe('returns analysis helpers', () => {
       ];
       const rows = computeMonthlyRows(closures, false, 'CLP');
       const view = buildReturnsSeriesView(rows);
-      expect(view.pendingEstimate?.estimateMethod).toBe('avg_6m_closed');
-      expect(view.pendingEstimate?.estimatedFromMonthsCount).toBe(6);
-      expect(view.pendingEstimateDetail?.selectedScenarioKey).toBe('avg_6m_closed');
-      const avg12 = view.pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'avg_12m_closed');
-      const avg6 = view.pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'avg_6m_closed');
-      expect(avg6?.spendClp ?? 0).toBeLessThan(avg12?.spendClp ?? Number.POSITIVE_INFINITY);
+      expect(view.hasEstimatedMonth).toBe(false);
+      expect(view.pendingEstimate).toBeNull();
     } finally {
       Object.keys(TEST_GASTOS_EUR).forEach((key) => {
         delete TEST_GASTOS_EUR[key];
@@ -941,7 +949,7 @@ describe('returns analysis helpers', () => {
     }
   });
 
-  it('keeps using the 12M average when it is more conservative than 6M', () => {
+  it('does not use a 12M average as a replacement for a missing GastApp partial', () => {
     const snapshot = { ...TEST_GASTOS_EUR };
     Object.assign(TEST_GASTOS_EUR, {
       '2025-05': 1_000,
@@ -973,12 +981,8 @@ describe('returns analysis helpers', () => {
       ];
       const rows = computeMonthlyRows(closures, false, 'CLP');
       const view = buildReturnsSeriesView(rows);
-      expect(view.pendingEstimate?.estimateMethod).toBe('avg_12m_closed');
-      expect(view.pendingEstimate?.estimatedFromMonthsCount).toBe(11);
-      expect(view.pendingEstimateDetail?.selectedScenarioKey).toBe('avg_12m_closed');
-      const avg12 = view.pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'avg_12m_closed');
-      const avg6 = view.pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'avg_6m_closed');
-      expect(avg12?.spendClp ?? 0).toBeLessThan(avg6?.spendClp ?? Number.POSITIVE_INFINITY);
+      expect(view.hasEstimatedMonth).toBe(false);
+      expect(view.pendingEstimate).toBeNull();
     } finally {
       Object.keys(TEST_GASTOS_EUR).forEach((key) => {
         delete TEST_GASTOS_EUR[key];

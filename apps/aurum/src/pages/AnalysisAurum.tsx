@@ -21,7 +21,9 @@ import {
   currentMonthKey,
   defaultFxRates,
   loadClosures,
+  loadFxRates,
   loadIncludeRiskCapitalInTotals,
+  loadWealthRecords,
   repairKnownHistoricalUfClpClosures,
   saveIncludeRiskCapitalInTotals,
 } from '../services/wealthStorage';
@@ -34,6 +36,7 @@ import {
   aggregateRows,
   buildWealthEvolutionComparisonModel,
   buildReturnsSeriesView,
+  buildGastappPartialMonthClosure,
   buildTrailingSummary,
   computeMonthlyRows,
   enumerateMonthKeys,
@@ -114,12 +117,14 @@ const buildAnalysisFingerprint = ({
   currency,
   includeEstimatedMonth,
   gastappSourceFingerprint,
+  wealthSourceVersion,
 }: {
   closuresFingerprint: string;
   includeRiskCapitalInTotals: boolean;
   currency: WealthCurrency;
   includeEstimatedMonth: boolean;
   gastappSourceFingerprint: string;
+  wealthSourceVersion: number;
 }) =>
   JSON.stringify({
     closuresFingerprint,
@@ -127,6 +132,7 @@ const buildAnalysisFingerprint = ({
     currency,
     includeEstimatedMonth,
     gastappSourceFingerprint,
+    wealthSourceVersion,
   });
 
 const formatAnalysisUpdatedAt = (iso: string) => {
@@ -149,6 +155,7 @@ export const AnalysisAurum: React.FC = () => {
     sortClosuresAsc(loadWealthClosures()),
   );
   const [gastosSourceVersion, setGastosSourceVersion] = useState(0);
+  const [wealthSourceVersion, setWealthSourceVersion] = useState(0);
   const [includeEstimatedMonth, setIncludeEstimatedMonth] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [exportMessage, setExportMessage] = useState('');
@@ -229,7 +236,10 @@ export const AnalysisAurum: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const onWealthUpdated = () => refreshClosures();
+    const onWealthUpdated = () => {
+      setWealthSourceVersion((current) => current + 1);
+      refreshClosures();
+    };
     const onFocus = () => {
       if (document.visibilityState !== 'visible') return;
       refreshClosures();
@@ -264,21 +274,29 @@ export const AnalysisAurum: React.FC = () => {
         currency,
         includeEstimatedMonth,
         gastappSourceFingerprint,
+        wealthSourceVersion,
       }),
-    [closuresFingerprint, includeRiskCapitalInTotals, currency, includeEstimatedMonth, gastappSourceFingerprint],
+    [closuresFingerprint, includeRiskCapitalInTotals, currency, includeEstimatedMonth, gastappSourceFingerprint, wealthSourceVersion],
   );
   const analysisEntry = useMemo(
     () =>
       getOrBuildAnalysisSessionValue(analysisFingerprint, () => {
-        const officialMonthlyRowsAsc = computeMonthlyRows(closures, includeRiskCapitalInTotals, currency);
-        const monthlyRowsAscWithoutCrp = computeMonthlyRows(closures, false, currency);
+        const partialClosure = buildGastappPartialMonthClosure({
+          closures,
+          records: loadWealthRecords(),
+          fxRates: loadFxRates(),
+        });
+        const analysisClosures = partialClosure ? [...closures, partialClosure] : closures;
+        const calculationClosures = includeEstimatedMonth ? analysisClosures : closures;
+        const officialMonthlyRowsAsc = computeMonthlyRows(analysisClosures, includeRiskCapitalInTotals, currency);
+        const monthlyRowsAscWithoutCrp = computeMonthlyRows(analysisClosures, false, currency);
         const returnsSeriesView = buildReturnsSeriesView(officialMonthlyRowsAsc);
         const monthlyRowsAsc =
           includeEstimatedMonth && returnsSeriesView.hasEstimatedMonth
             ? returnsSeriesView.estimatedRows
             : returnsSeriesView.officialRows;
         const monthlyRowsDesc = [...monthlyRowsAsc].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
-        const wealthEvolutionModel = buildWealthEvolutionComparisonModel(closures, includeRiskCapitalInTotals);
+        const wealthEvolutionModel = buildWealthEvolutionComparisonModel(calculationClosures, includeRiskCapitalInTotals);
         const crpContributionInsight = includeRiskCapitalInTotals
           ? buildCrpContributionInsight(monthlyRowsAsc, monthlyRowsAscWithoutCrp, currency)
           : null;
@@ -366,7 +384,7 @@ export const AnalysisAurum: React.FC = () => {
           [...monthlyRowsAsc].reverse().find((item) => item.retornoRealDisplay !== null)?.pct ?? null;
         const heroLastMonthPctMonthlyReal =
           [...monthlyRowsAsc].reverse().find((item) => item.retornoRealDisplay !== null)?.pctReal ?? null;
-        const wealthLabModel = buildWealthLabModel(closures, includeRiskCapitalInTotals);
+        const wealthLabModel = buildWealthLabModel(calculationClosures, includeRiskCapitalInTotals);
         const financialFreedomBase = resolveFinancialFreedomBase(closures, includeRiskCapitalInTotals);
 
         return {
@@ -409,7 +427,7 @@ export const AnalysisAurum: React.FC = () => {
           Array.isArray(candidate.officialMonthlyRowsAsc),
         );
       }),
-    [analysisFingerprint, analysisRefreshTick, closures, includeRiskCapitalInTotals, currency, includeEstimatedMonth, gastosSourceVersion],
+    [analysisFingerprint, analysisRefreshTick, closures, includeRiskCapitalInTotals, currency, includeEstimatedMonth, gastosSourceVersion, wealthSourceVersion],
   );
   const {
     officialMonthlyRowsAsc,

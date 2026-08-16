@@ -96,6 +96,7 @@ import {
   BANK_BCHILE_CLP_LABEL,
   DEBT_CARD_CLP_LABEL,
   buildCanonicalClosureSummary,
+  buildGastappMonthlyExpenseCloseSnapshot,
   captureMonthlyCloseCheckpoint,
   closeMonthlyWithCheckpoint,
   getMonthlyCloseCheckpoint,
@@ -243,6 +244,48 @@ describe('monthly close undo checkpoint', () => {
     expect(checkpoint?.previousClosure).toBeNull();
     expect(cloudStore.has('aurum_wealth/test-user/monthly_close_checkpoints/2026-04')).toBe(true);
     expect(cloudStore.get('aurum_wealth/test-user')?.monthlyCloseCheckpoints).toBeUndefined();
+  });
+
+  it('persists the closed GastApp expense snapshot in EUR, CLP, USD and UF using the frozen close FX', async () => {
+    const created = await closeMonthlyWithCheckpoint({
+      monthKey: '2026-04',
+      records: recordsForMonth('2026-04'),
+      fxRates,
+      gastappExpenseClose: {
+        monthKey: '2026-04',
+        totalEur: 100,
+        byFamilyEur: { dayToDay: 70, trips: 20, others: 10 },
+        canonicalDataHash: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        contractHash: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        contractVersion: 'gastapp-aurum-calendar-months-v2',
+        generatedAt: '2026-05-01T00:00:00.000Z',
+      },
+      closedAt: '2026-05-01T01:00:00.000Z',
+    });
+
+    expect(created.gastappExpenseClose).toMatchObject({
+      monthKey: '2026-04',
+      totalEur: 100,
+      amountsByCurrency: {
+        EUR: { total: 100, dayToDay: 70, trips: 20, others: 10 },
+        CLP: { total: 100_000, dayToDay: 70_000, trips: 20_000, others: 10_000 },
+        USD: { total: 1000 / 9 },
+        UF: { total: 2.5 },
+      },
+    });
+    expect(loadClosures().find((closure) => closure.monthKey === '2026-04')?.gastappExpenseClose).toEqual(created.gastappExpenseClose);
+  });
+
+  it('rejects a GastApp expense snapshot with missing contract identity before it can be persisted', () => {
+    expect(() => buildGastappMonthlyExpenseCloseSnapshot({
+      monthKey: '2026-04',
+      totalEur: 100,
+      byFamilyEur: { dayToDay: 70, trips: 20, others: 10 },
+      canonicalDataHash: '',
+      contractHash: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      contractVersion: 'gastapp-aurum-calendar-months-v2',
+      generatedAt: '2026-05-01T00:00:00.000Z',
+    }, fxRates)).toThrow('Snapshot mensual de GastApp inválido');
   });
 
   it('blocks close immediately when monthKey is invalid', async () => {

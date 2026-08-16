@@ -109,7 +109,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoTitle: 'Retorno anualizado',
         infoBody:
           'Convierte el retorno compuesto del período a una tasa anual equivalente. Es más útil para comparar horizontes distintos.',
-        infoLimit: 'Puede variar si cambia la ventana o entran meses estimados.',
+        infoLimit: 'Puede variar si cambia la ventana o se incorpora un mes parcial (P).',
         formatter: (value) => metricValue(formatPctDecimal(value.annualizedReturnPct)),
       },
       {
@@ -583,10 +583,10 @@ export const PortfolioAnalyticsPanel: React.FC<PortfolioAnalyticsPanelProps> = (
               {`Oficiales: ${officialMonthsUsed} meses`}
             </span>
             <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">
-              {`Estimados: ${estimatedMonthsUsed}`}
+              {`Parciales (P): ${estimatedMonthsUsed}`}
             </span>
             <span className={cn('rounded-full border px-2 py-0.5', lastMonthTone)}>
-              {`Último mes: ${lastMonthLabel ?? '—'}${lastMonthLabel ? ` · ${startHorizon?.result.lastMonthIsEstimated ? 'estimado' : 'oficial'}` : ''}`}
+              {`Último mes: ${lastMonthLabel ?? '—'}${lastMonthLabel ? ` · ${startHorizon?.result.lastMonthIsEstimated ? 'parcial (P)' : 'oficial'}` : ''}`}
             </span>
           </div>
         </div>
@@ -632,7 +632,7 @@ export const PortfolioAnalyticsPanel: React.FC<PortfolioAnalyticsPanelProps> = (
             <div>Drawdown mensual; no captura caídas intra-mes.</div>
             <div>Sharpe, Sortino y Calmar son indicadores simples.</div>
             <div>Tasa libre de riesgo usada: 0% anual.</div>
-            <div>Meses estimados pueden cambiar al llegar el dato oficial.</div>
+            <div>Los meses parciales (P) pueden cambiar al llegar el cierre oficial.</div>
             <div>Las escalas de interpretación son referenciales.</div>
 
             <div>

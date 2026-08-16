@@ -191,7 +191,7 @@ describe('PortfolioAnalyticsPanel', () => {
     ]);
   });
 
-  it('respeta el mes estimado visible y no rompe con menos meses que el horizonte', async () => {
+  it('respeta el mes parcial visible y no rompe con menos meses que el horizonte', async () => {
     await renderPanel([
       makeRow('2026-04', { pct: 1.2 }),
       makeRow('2026-05', { pct: 1.5 }),
@@ -204,8 +204,8 @@ describe('PortfolioAnalyticsPanel', () => {
       { monthKey: '2026-06', returnPct: 0.021, isEstimated: true },
     ]);
     expect(vi.mocked(calculatePortfolioAnalytics).mock.calls[1]?.[0]).toHaveLength(3);
-    expect(container?.textContent).toContain('Estimados: 1');
-    expect(container?.textContent).toContain('Último mes: Junio de 2026 · estimado');
+    expect(container?.textContent).toContain('Parciales (P): 1');
+    expect(container?.textContent).toContain('Último mes: Junio de 2026 · parcial (P)');
   });
 
   it('muestra guion cuando una métrica es inválida y nunca muestra NaN', async () => {
