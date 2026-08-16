@@ -16,6 +16,7 @@ import {
   GASTAPP_DATA_ROOM_V2_POINTER_PATH,
   GastappCanonicalV2Error,
   loadGastappCanonicalV2Contracts,
+  loadGastappCanonicalV2ContractsFresh,
   loadGastappCanonicalV2MonthContract,
   loadGastappDataRoomV2Artifact,
   loadGastappDataRoomV2Pointer,
@@ -210,6 +211,17 @@ describe('GastApp Canónico V2', () => {
     expect(fixture.readDocument).toHaveBeenCalledWith(GASTAPP_CANONICAL_V2_CURRENT_PATH);
     expect(fixture.readDocument).toHaveBeenCalledWith(GASTAPP_AURUM_PERIODS_V2_PATH);
     expect(fixture.readDocument).toHaveBeenCalledWith(GASTAPP_AURUM_MONTHS_V2_PATH);
+  });
+
+  it('la comprobación forzada ignora la caché y vuelve a leer sólo los tres contratos', async () => {
+    const fixture = contractReader();
+    await loadGastappCanonicalV2Contracts(fixture);
+    expect(fixture.readDocument).toHaveBeenCalledTimes(3);
+
+    await loadGastappCanonicalV2ContractsFresh(fixture);
+
+    expect(fixture.readDocument).toHaveBeenCalledTimes(6);
+    expect(fixture.readDocument).not.toHaveBeenCalledWith(expect.stringContaining('collection'));
   });
 
   it('acepta una nueva publicación coherente sin fijar el hash ni los totales del snapshot anterior', async () => {

@@ -555,6 +555,18 @@ export const loadGastappCanonicalV2ContractsCached = async (): Promise<GastappCa
   return canonicalContractsCache;
 };
 
+/**
+ * Explicit operator check. This bypasses the in-memory cache and reads only
+ * the three small canonical contract documents; it never reads transaction
+ * rows or reconstructs either Data Room artifact.
+ */
+export const loadGastappCanonicalV2ContractsFresh = async (
+  dependencies?: GastappCanonicalV2Dependencies,
+): Promise<GastappCanonicalV2Contracts> => {
+  clearGastappCanonicalV2Cache();
+  return loadGastappCanonicalV2Contracts(dependencies);
+};
+
 export const loadGastappCanonicalV2MonthContract = async (
   dependencies?: GastappCanonicalV2Dependencies,
 ): Promise<{ metadata: GastappCanonicalV2Metadata; months: GastappCanonicalV2MonthContract }> => {

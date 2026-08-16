@@ -84,6 +84,7 @@ import {
   downloadGastappDataRoomV2Artifact,
   GastappCanonicalV2Error,
   loadGastappCanonicalV2ContractsCached,
+  loadGastappCanonicalV2ContractsFresh,
   loadGastappDataRoomV2Pointer,
   validateGastappDataRoomV2FreshnessAgainstMetadata,
   type GastappDataRoomV2ArtifactMode,
@@ -1050,16 +1051,33 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     window.dispatchEvent(new Event(BANKS_UPDATE_MODE_CHANGED_EVENT));
   };
 
-  const loadGastappCanonicalV2Diagnostic = async () => {
+  const loadGastappCanonicalV2Diagnostic = async (forceFresh = false) => {
     setGastappCanonicalV2Diagnostic((current) => ({
       ...current,
       status: 'loading',
-      message: 'Leyendo metadata, contratos y puntero Canónico V2…',
+      message: forceFresh
+        ? 'Comprobando actualización publicada de GastApp…'
+        : 'Leyendo metadata, contratos y puntero Canónico V2…',
       technicalDetail: null,
       errorCode: null,
     }));
     try {
-      const contracts = await loadGastappCanonicalV2ContractsCached();
+      const previousMetadata = gastappCanonicalV2Diagnostic.contracts?.metadata;
+      const contracts = forceFresh
+        ? await loadGastappCanonicalV2ContractsFresh()
+        : await loadGastappCanonicalV2ContractsCached();
+      const publicationChanged = Boolean(
+        forceFresh
+        && previousMetadata
+        && (
+          previousMetadata.operationalRevision !== contracts.metadata.operationalRevision
+          || previousMetadata.operationalDataHash !== contracts.metadata.operationalDataHash
+        ),
+      );
+      const publicationDate = formatDateTime(contracts.metadata.generatedAt || undefined);
+      const publicationRevision = contracts.metadata.operationalRevision == null
+        ? 'sin revisión'
+        : `revisión ${contracts.metadata.operationalRevision}`;
       let pointer: Awaited<ReturnType<typeof loadGastappDataRoomV2Pointer>> | null = null;
       let pointerError: GastappCanonicalV2Error | null = null;
       try {
@@ -1079,7 +1097,9 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
           ? 'Contratos mensuales verificados automáticamente. El Data Room permanece cerrado hasta que se abra su ventana temporal.'
           : pointerError
             ? `Contratos mensuales verificados automáticamente. El puntero Data Room no está disponible ahora (${pointerError.code}). Las métricas mensuales no dependen de ese estado.`
-            : 'Contratos y puntero verificados. No se han leído filas ni se ha reconstruido ningún ZIP.',
+            : forceFresh
+              ? `Comprobación forzada completada: publicación ${publicationDate}, ${publicationRevision}${publicationChanged ? '. Hay una publicación más nueva.' : '. No cambió desde la comprobación anterior.'} Sólo se leyeron los contratos y el puntero; no se leyeron filas ni se reconstruyó ningún ZIP.`
+              : `Contratos y puntero verificados. Última publicación: ${publicationDate} (${publicationRevision}). No se han leído filas ni se ha reconstruido ningún ZIP.`,
         technicalDetail: pointerError ? `${pointerError.code} · ${pointerError.path || 'Data Room'}` : null,
         errorCode: pointerError?.code || null,
         contracts,
@@ -2086,7 +2106,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         }}
         onSignOut={signOutUser}
         onRefreshGastappCanonicalV2={() => {
-          void loadGastappCanonicalV2Diagnostic();
+          void loadGastappCanonicalV2Diagnostic(true);
         }}
         onDownloadGastappCanonicalV2={(mode) => {
           void downloadGastappCanonicalV2(mode);

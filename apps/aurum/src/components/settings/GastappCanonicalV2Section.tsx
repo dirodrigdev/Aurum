@@ -51,7 +51,7 @@ export const GastappCanonicalV2Section: React.FC<Props> = ({ state, onRefresh, o
           <div className="text-[11px] text-slate-600">Contratos separados y artefactos ZIP preconstruidos · sólo lectura</div>
         </div>
         <Button variant="outline" size="sm" onClick={onRefresh} disabled={state.status === 'loading'}>
-          {state.status === 'loading' ? 'Leyendo…' : 'Reintentar'}
+          {state.status === 'loading' ? 'Comprobando…' : 'Comprobar actualización'}
         </Button>
       </div>
 
@@ -62,7 +62,7 @@ export const GastappCanonicalV2Section: React.FC<Props> = ({ state, onRefresh, o
         <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-950">
           <div className="font-semibold">Acceso GastApp cerrado</div>
           <div className="mt-1">Los contratos mensuales automáticos siguen disponibles. Express usa acceso estable y sólo se lee al pulsar descargar; Full requiere abrir en GastApp la ventana temporal “Data Room para Aurum” durante 30 min.</div>
-          <div className="mt-1">Después vuelve a pulsar “Reintentar”.</div>
+          <div className="mt-1">Después pulsa “Comprobar actualización”.</div>
           {state.technicalDetail && <div className="mt-1 break-words text-[10px] text-amber-900/80">{state.technicalDetail}</div>}
         </div>
       ) : (
@@ -74,6 +74,9 @@ export const GastappCanonicalV2Section: React.FC<Props> = ({ state, onRefresh, o
           <div className="mt-3 grid grid-cols-1 gap-1 rounded-lg border border-emerald-200 bg-white px-2.5 py-2 text-[11px] text-slate-700 sm:grid-cols-2">
             <div>Proyecto: <span className="font-semibold">duofin-c1894</span></div>
             <div>Hash canónico: <span className="font-semibold break-all">{contracts.metadata.canonicalDataHash}</span></div>
+            <div>Última publicación: <span className="font-semibold">{contracts.metadata.generatedAt || 'sin fecha'}</span></div>
+            <div>Revisión operacional: <span className="font-semibold">{contracts.metadata.operationalRevision ?? '—'}</span></div>
+            <div className="sm:col-span-2">Hash operacional: <span className="font-semibold break-all">{contracts.metadata.operationalDataHash || '—'}</span></div>
             <div>Filas: <span className="font-semibold">{contracts.metadata.counts.canonicalRows?.toLocaleString('es-ES') || '—'}</span></div>
             <div>Total: <span className="font-semibold">{contracts.metadata.totalsEur.exact?.toLocaleString('es-ES', { minimumFractionDigits: 2 }) || '—'} €</span></div>
             <div>Períodos aceptados: <span className="font-semibold">{contracts.metadata.counts.acceptedPeriods ?? '—'}/{contracts.metadata.counts.periods ?? '—'}</span></div>
