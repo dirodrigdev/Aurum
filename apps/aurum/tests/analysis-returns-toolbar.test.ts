@@ -208,6 +208,23 @@ describe('AnalysisAurum returns toolbar', () => {
     expect(container.textContent).not.toContain('Última actualización:');
   });
 
+  it('keeps the return-attribution lab and removes the financial-freedom tab', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        React.createElement(MemoryRouter, null, React.createElement(AnalysisAurum)),
+      );
+    });
+
+    expect(container.textContent).toContain('Retornos');
+    expect(container.textContent).toContain('Validación GastApp');
+    expect(container.textContent).toContain('Lab de retornos');
+    expect(container.textContent).not.toContain('Libertad Financiera');
+  });
+
   it('never presents a secondary GastApp login for the public monthly contract', async () => {
     gastappMonthlyMock.diagnostic = {
       status: 'ready',

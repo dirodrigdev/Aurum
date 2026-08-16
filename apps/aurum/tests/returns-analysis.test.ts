@@ -833,12 +833,12 @@ describe('returns analysis helpers', () => {
     expect(april?.gastosStatus).toBe('pending');
 
     const info = buildPendingOfficialReturnInfo(april!);
-    expect(info.availabilityLabel).toBe('12 may');
-    expect(info.periodRangeLabel).toBe('12 abr - 11 may');
+    expect(info.availabilityLabel).toBeNull();
+    expect(info.periodRangeLabel).toBeNull();
 
     const estimate = buildPendingReturnEstimate(rows);
     expect(estimate?.monthKey).toBe('2026-04');
-    expect(estimate?.availabilityLabel).toBe('12 may');
+    expect(estimate?.availabilityLabel).toBeNull();
     expect(estimate?.scenarios.map((scenario) => scenario.key)).toEqual(['gastapp_partial']);
     expect(estimate?.selectedScenarioKey).toBe('gastapp_partial');
     expect(estimate?.scenarios[0]?.label).toBe('Avance real parcial publicado por GastApp');

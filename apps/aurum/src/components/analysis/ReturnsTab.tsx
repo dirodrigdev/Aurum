@@ -46,6 +46,15 @@ const humanizeDayToDaySource = (source: string | null) => {
   return source || null;
 };
 
+const gastappCloseRecordedAt = (row: MonthlyReturnRow) =>
+  row.gastosClosedAt || row.gastosPublishedAt || row.gastosUpdatedAt || null;
+
+const humanizeGastappStatusReason = (reason: string) => {
+  if (reason === 'partial_boundary_end') return 'el mes calendario aún está en curso';
+  if (reason === 'calendar_contract_unavailable') return 'el contrato mensual aún no está disponible';
+  return reason;
+};
+
 const spendTrustTone = (severity: SpendTrustSeverity) => {
   if (severity === 'ok') return 'border-slate-200 bg-slate-50/70 text-slate-700';
   if (severity === 'warning') return 'border-amber-200 bg-amber-50/60 text-amber-900';
@@ -1086,6 +1095,19 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
         .find((row) => row.gastosSource === 'gastapp_firestore') ?? null,
     [officialMonthlyRowsAsc],
   );
+  const latestConfirmedGastappClose = React.useMemo(
+    () =>
+      [...officialMonthlyRowsAsc]
+        .sort((a, b) => b.monthKey.localeCompare(a.monthKey))
+        .find((row) =>
+          row.gastosSource === 'gastapp_firestore' &&
+          row.gastosStatus === 'complete' &&
+          !row.gastosIsStale &&
+          (row.gastosDataQuality === null || row.gastosDataQuality === 'ok') &&
+          (row.gastosContractStatus === null || row.gastosContractStatus === 'complete'),
+        ) ?? null,
+    [officialMonthlyRowsAsc],
+  );
   const spendTrustState = React.useMemo(() => {
     if (missingSpendMonths.length > 0) {
       return {
@@ -1126,7 +1148,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       return {
         severity: 'warning' as SpendTrustSeverity,
         title: 'Gasto observado con advertencia',
-        body: 'Gasto observado con advertencia: cierre desfasado respecto a movimientos recientes.',
+        body: 'El gasto de este mes todavía no tiene un cierre mensual confirmado por GastApp.',
       };
     }
     return {
@@ -1152,7 +1174,15 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       details.push(`Fuente diaria: ${dayToDaySource}`);
     }
     if (row.gastosPeriodKey) {
-      details.push(`Periodo: ${row.gastosPeriodKey}`);
+      details.push(`Mes en revisión: ${monthLabel(row.monthKey)}`);
+    }
+    if (latestConfirmedGastappClose) {
+      const recordedAt = gastappCloseRecordedAt(latestConfirmedGastappClose);
+      details.push(
+        `Último cierre confirmado por GastApp: ${monthLabel(latestConfirmedGastappClose.monthKey)}${
+          recordedAt ? ` · registrado ${formatIsoDateTime(recordedAt)}` : ''
+        }`,
+      );
     }
     if (row.gastosSchemaVersion || row.gastosMethodologyVersion) {
       details.push(
@@ -1168,7 +1198,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       );
     }
     return details;
-  }, [latestGastappSpendRow, legacySpendMonths.length]);
+  }, [latestConfirmedGastappClose, latestGastappSpendRow, legacySpendMonths.length]);
   const spendTrustDiffs = React.useMemo(() => {
     const row = latestGastappSpendRow;
     if (!row || legacySpendMonths.length > 0) return [];
@@ -1231,8 +1261,8 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     onToggleIncludeEstimatedMonth();
   }, [estimatedToggleEnabled, onToggleIncludeEstimatedMonth]);
   const spendTrustCollapsedLine = React.useMemo(() => {
-    if (mainPendingOfficial?.info?.availabilityLabel) {
-      return `${monthLabel(mainPendingOfficial.row.monthKey)} pendiente de gasto · Oficial disponible ${mainPendingOfficial.info.availabilityLabel}`;
+    if (mainPendingOfficial) {
+      return `${monthLabel(mainPendingOfficial.row.monthKey)} pendiente de cierre mensual de GastApp`;
     }
     if (missingSpendMonths.length > 0) {
       return `${missingSpendMonths.length} mes(es) sin gasto final · no entra(n) en cerrados`;
@@ -1266,7 +1296,6 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
         const retornoDisplay = isPartial ? row.partialRetornoRealDisplay : row.retornoRealDisplay;
         const varDisplay = row.varPatrimonioDisplay;
         const gastosDisplay = isPartial ? row.partialGastosDisplay : row.gastosDisplay;
-        const pendingInfo = row.gastosStatus === 'pending' ? buildPendingOfficialReturnInfo(row) : null;
         const estimatedSuffix = row.isEstimated ? ' (P)' : '';
         return {
           monthKey: row.monthKey,
@@ -1284,9 +1313,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
             row.gastosStatus === 'pending'
               ? isPartial
                 ? `${formatCurrency(retornoDisplay, currency)} (P)`
-                : pendingInfo?.availabilityLabel
-                  ? `Disponible ${pendingInfo.availabilityLabel}`
-                  : 'Pendiente gasto'
+                : 'Pendiente gasto'
               : retornoDisplay === null
                 ? '—'
                 : `${formatCurrency(retornoDisplay, currency)}${estimatedSuffix}`,
@@ -1482,9 +1509,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                   Ver detalle
                 </summary>
                 <div className="mt-1 rounded-lg border border-amber-200 bg-amber-50/70 px-2 py-1.5 text-amber-900">
-                  <div>
-                    {`Mes elegible: ${monthLabel(estimatedMonthMeta.monthKey)} · ${estimatedMonthMeta.officialAvailableDate ? `oficial ${estimatedMonthMeta.officialAvailableDate}` : 'oficial pendiente'}`}
-                  </div>
+                  <div>{`Mes elegible: ${monthLabel(estimatedMonthMeta.monthKey)} · cierre oficial pendiente de GastApp`}</div>
                   {includeEstimatedMonth ? (
                     <div>
                       {`${monthLabel(estimatedMonthMeta.monthKey)} se incluye como parcial (P) · gasto publicado ${formatCurrency(estimatedMonthMeta.estimatedSpendDisplay, currency)}`}
@@ -1547,7 +1572,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                 {`Gasto real: ${formatCurrency(officialAvailabilityNotice.officialSpendDisplay, currency)}`}
               </span>
               <span className="rounded-full border border-emerald-200 bg-white/80 px-2 py-0.5">
-                {`Estado: Oficial cerrado${officialAvailabilityNotice.officialAvailableDate ? ` · ${officialAvailabilityNotice.officialAvailableDate}` : ''}`}
+                {`Cierre GastApp registrado${officialAvailabilityNotice.officialAvailableDate ? ` · ${officialAvailabilityNotice.officialAvailableDate}` : ''}`}
               </span>
             </div>
           </div>
@@ -1595,17 +1620,11 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
             <div>{spendTrustState.body}</div>
             {mainPendingOfficial && (
               <div className="mt-1">
-                {`${monthLabel(mainPendingOfficial.row.monthKey)} tiene cierre patrimonial, pero el gasto asociado aún no está cerrado. El retorno económico oficial estará disponible ${
-                  mainPendingOfficial.info.availabilityLabel ? `el ${mainPendingOfficial.info.availabilityLabel}` : 'cuando cierre GastApp'
-                }${
-                  mainPendingOfficial.info.periodRangeLabel
-                    ? `, cuando cierre el periodo de gasto ${mainPendingOfficial.info.periodRangeLabel}.`
-                    : '.'
-                }`}
+                {`${monthLabel(mainPendingOfficial.row.monthKey)} tiene cierre patrimonial, pero el gasto asociado aún no está cerrado. El retorno económico oficial se incorporará cuando GastApp publique el cierre mensual confirmado.`}
               </div>
             )}
             {latestGastappSpendRow?.gastosStaleReason && legacySpendMonths.length === 0 && (
-              <div className="mt-1 text-[11px]">Motivo: {latestGastappSpendRow.gastosStaleReason}</div>
+              <div className="mt-1 text-[11px]">Estado: {humanizeGastappStatusReason(latestGastappSpendRow.gastosStaleReason)}</div>
             )}
             {spendTrustDetails.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
@@ -1694,7 +1713,6 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
               const gastosDisplay = partial ? row.partialGastosDisplay : row.gastosDisplay;
               const retornoDisplay = partial ? row.partialRetornoRealDisplay : row.retornoRealDisplay;
               const positive = (retornoDisplay || 0) >= 0;
-              const pendingInfo = row.gastosStatus === 'pending' ? buildPendingOfficialReturnInfo(row) : null;
               const estimated = Boolean(row.isEstimated || partial);
               const partialPct =
                 partial && retornoDisplay !== null && row.prevNetDisplay !== null && row.prevNetDisplay > 0
@@ -1727,9 +1745,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                     {row.gastosStatus === 'pending'
                       ? partial && retornoDisplay !== null
                         ? `${formatCurrency(retornoDisplay, currency)} (P)`
-                        : pendingInfo?.availabilityLabel
-                          ? `Disponible ${pendingInfo.availabilityLabel}`
-                          : 'Pendiente gasto'
+                        : 'Pendiente gasto'
                       : retornoDisplay === null
                         ? '—'
                         : `${formatCurrency(retornoDisplay, currency)}${estimated ? ' (P)' : ''}`}
@@ -1830,7 +1846,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
               </span>
             </div>
             <div className="truncate text-[11px] text-slate-500">
-              {`${monthLabel(provisionalEstimate.monthKey)} · ${provisionalEstimate.availabilityLabel ? `oficial disponible ${provisionalEstimate.availabilityLabel}` : 'no oficial'}`}
+              {`${monthLabel(provisionalEstimate.monthKey)} · pendiente de cierre mensual confirmado`}
             </div>
           </div>
           <ChevronDown size={16} className={cn('shrink-0 transition-transform', isProvisionalExpanded ? 'rotate-180' : 'rotate-0')} />
@@ -1839,9 +1855,6 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
           <div className="mt-2 border-t border-slate-200 pt-2">
             <div className="text-[11px] text-slate-500">
               Avance real, no cierre oficial. No se guarda como cierre y será reemplazado por el dato oficial de GastApp.
-            </div>
-            <div className="mt-1 text-[11px] text-slate-500">
-              {provisionalEstimate.periodRangeLabel ? `Periodo ${provisionalEstimate.periodRangeLabel}` : 'Periodo pendiente de cierre'}
             </div>
             <div className="mt-1 text-[11px] text-slate-500">
               Var.Pat. visible: {formatCurrency(provisionalEstimate.varPatrimonioDisplay, currency)}

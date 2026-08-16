@@ -119,7 +119,9 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
   await expect(dismissIncompleteClosure).toBeVisible({ timeout: 30_000 });
   await dismissIncompleteClosure.click();
   await expect(dismissIncompleteClosure).toHaveCount(0);
-  await page.getByRole('button', { name: 'Validación mensual', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Lab de retornos', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Libertad Financiera', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Validación GastApp', exact: true }).click();
   const audit = page.getByTestId('gastapp-canonical-v2-audit');
   await expect(audit).toBeVisible({ timeout: 30_000 });
   await expect(audit).toContainText('Auditoría');
@@ -136,6 +138,25 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
   const mobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(mobileOverflow).toBeLessThanOrEqual(1);
   await page.screenshot({ path: testInfo.outputPath('aurum-monthly-audit-mobile.png'), fullPage: true });
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const returnsLabTab = page.getByRole('button', { name: 'Lab de retornos', exact: true });
+  await returnsLabTab.click();
+  await expect(returnsLabTab).toHaveClass(/bg-blue-600/);
+  await expect(page.getByText('Resultado del período', { exact: true }).first()).toBeVisible();
+  const labDesktopOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(labDesktopOverflow).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-returns-lab-desktop.png'), fullPage: true });
+
+  await page.setViewportSize({ width: 768, height: 1024 });
+  const labTabletOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(labTabletOverflow).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-returns-lab-tablet.png'), fullPage: true });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const labMobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(labMobileOverflow).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-returns-lab-mobile.png'), fullPage: true });
 
   await networkGuard.assertClean(testInfo);
   expect(pageErrors, `page errors: ${pageErrors.join(' | ')}`).toEqual([]);

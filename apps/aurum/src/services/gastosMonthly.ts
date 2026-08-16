@@ -178,22 +178,23 @@ const parseMonthKey = (monthKey: string): { year: number; month: number } | null
   return { year, month };
 };
 
-const monthCloseCutoff = (monthKey: string, closingDay = 11): Date | null => {
+const calendarMonthEnd = (monthKey: string): Date | null => {
   const parsed = parseMonthKey(monthKey);
   if (!parsed) return null;
-  // Regla operativa: el mes YYYY-MM queda "cerrado" desde el día 12 del mes siguiente.
-  const nextMonthIndex = parsed.month; // Date usa base 0
-  return new Date(parsed.year, nextMonthIndex, closingDay + 1, 0, 0, 0, 0);
+  // The calendar boundary only decides whether an unavailable contract is
+  // missing or still pending. It never declares an official close: that can
+  // only come from GastApp's canonical monthly contract.
+  return new Date(parsed.year, parsed.month, 1, 0, 0, 0, 0);
 };
 
-export const isGastappMonthClosed = (monthKey: string, now = new Date(), closingDay = 11): boolean => {
-  const cutoff = monthCloseCutoff(monthKey, closingDay);
+export const hasGastappCalendarMonthEnded = (monthKey: string, now = new Date()): boolean => {
+  const cutoff = calendarMonthEnd(monthKey);
   if (!cutoff) return false;
   return now.getTime() >= cutoff.getTime();
 };
 
 const inferStatusWithoutTotal = (monthKey: string, now: Date): GastosMonthStatus =>
-  isGastappMonthClosed(monthKey, now) ? 'missing' : 'pending';
+  hasGastappCalendarMonthEnded(monthKey, now) ? 'missing' : 'pending';
 
 const readString = (value: unknown): string | null =>
   typeof value === 'string' && value.trim() ? value.trim() : null;

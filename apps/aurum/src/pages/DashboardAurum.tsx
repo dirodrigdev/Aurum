@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { BrainCircuit, CalendarRange, ChevronRight, Home, Landmark, LineChart, Network, RefreshCcw, Settings, Shield, Sparkles, TrendingUp, Zap } from 'lucide-react';
+import { CalendarRange, ChevronRight, Home, Landmark, LineChart, Network, RefreshCcw, Settings, Shield, Sparkles, TrendingUp, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, cn } from '../components/Components';
 import { formatFreedomCompactClp, formatPct } from '../components/analysis/shared';
@@ -711,12 +711,6 @@ export const DashboardAurum: React.FC = () => {
             onClick={() => navigate('/analysis', { state: { analysisTab: 'returns' } })}
           />
           <DashboardNavCard
-            title="Libertad"
-            subtitle="Capacidad, retiro y escenarios"
-            icon={BrainCircuit}
-            onClick={() => navigate('/analysis', { state: { analysisTab: 'freedom' } })}
-          />
-          <DashboardNavCard
             title="Patrimonio"
             subtitle="Activos, deuda y detalle vivo"
             icon={Landmark}
@@ -729,8 +723,8 @@ export const DashboardAurum: React.FC = () => {
             onClick={() => navigate('/closing')}
           />
           <DashboardNavCard
-            title="Lab"
-            subtitle="Simulaciones y sensibilidad"
+            title="Lab de retornos"
+            subtitle="Atribución y sensibilidad"
             icon={Sparkles}
             onClick={() => navigate('/analysis', { state: { analysisTab: 'lab' } })}
           />

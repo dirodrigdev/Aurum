@@ -69,47 +69,21 @@ const previousMonthKey = (monthKey: string) => {
 
 const MONTH_SHORT_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sept', 'oct', 'nov', 'dic'] as const;
 
-const parseYmd = (value: string): Date | null => {
-  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) return null;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const date = new Date(year, month - 1, day, 12, 0, 0, 0);
-  return Number.isFinite(date.getTime()) ? date : null;
-};
-
-const addDays = (date: Date, days: number) =>
-  new Date(date.getFullYear(), date.getMonth(), date.getDate() + days, 12, 0, 0, 0);
-
 const formatCompactDate = (date: Date | null) => {
   if (!date) return null;
   return `${date.getDate()} ${MONTH_SHORT_ES[date.getMonth()]}`;
 };
 
-const fallbackAvailabilityDate = (monthKey: string): Date | null => {
-  const parsed = monthKey.match(/^(\d{4})-(\d{2})$/);
-  if (!parsed) return null;
-  const year = Number(parsed[1]);
-  const month = Number(parsed[2]);
-  if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
-  return new Date(year, month, 12, 12, 0, 0, 0);
-};
-
 export const buildPendingOfficialReturnInfo = (
-  row: Pick<MonthlyReturnRow, 'monthKey' | 'gastosPeriodKey'>,
+  _row: Pick<MonthlyReturnRow, 'monthKey' | 'gastosPeriodKey'>,
 ) => {
-  const parts = String(row.gastosPeriodKey || '').split('__');
-  const start = parts.length === 2 ? parseYmd(parts[0]) : null;
-  const end = parts.length === 2 ? parseYmd(parts[1]) : null;
-  const availabilityDate = end ? addDays(end, 1) : fallbackAvailabilityDate(row.monthKey);
-  const startLabel = formatCompactDate(start);
-  const endLabel = formatCompactDate(end);
-  const availabilityLabel = formatCompactDate(availabilityDate);
+  // GastApp is the authority for publishing a calendar-month close. Never
+  // predict a date from a legacy 11→12 period boundary: until the contract
+  // says complete, this month is simply pending.
   return {
-    availabilityDate,
-    availabilityLabel,
-    periodRangeLabel: startLabel && endLabel ? `${startLabel} - ${endLabel}` : null,
+    availabilityDate: null,
+    availabilityLabel: null,
+    periodRangeLabel: null,
   };
 };
 
@@ -604,7 +578,6 @@ const buildOfficialAvailabilityNotice = (officialRows: MonthlyReturnRow[]) => {
   const maxAgeMs = 10 * 24 * 60 * 60 * 1000;
   if (ageMs < 0 || ageMs > maxAgeMs) return null;
 
-  const info = buildPendingOfficialReturnInfo(candidate);
   const [yearRaw, monthRaw] = candidate.monthKey.split('-').map(Number);
   const monthName = MONTH_SHORT_ES[(monthRaw || 1) - 1] ?? candidate.monthKey;
   return {
@@ -615,7 +588,9 @@ const buildOfficialAvailabilityNotice = (officialRows: MonthlyReturnRow[]) => {
     officialRatePct: Number(candidate.pct),
     officialSpendDisplay: Number(candidate.gastosDisplay),
     officialSpendClp: Number(candidate.gastosClp),
-    officialAvailableDate: info.availabilityLabel,
+    // This is the timestamp recorded by the canonical GastApp document, not
+    // an estimated future availability date.
+    officialAvailableDate: formatCompactDate(sourceDate),
     status: 'official' as const,
     wasEstimatedOrPending: true,
     source: 'returns_series_official' as const,

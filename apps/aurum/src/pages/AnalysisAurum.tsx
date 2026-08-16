@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { BarChart3 } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { Button, Card } from '../components/Components';
-import { FreedomTab } from '../components/analysis/FreedomTab';
 import { LabTab } from '../components/analysis/LabTab';
 import { ReturnsTab, type ReturnsTabProps } from '../components/analysis/ReturnsTab';
 import { GastappMonthlyValidationTab } from '../components/analysis/GastappMonthlyValidationTab';
@@ -10,7 +9,6 @@ import type {
   AggregatedSummary,
   AnalysisTab,
   CrpContributionInsight,
-  FreedomControlDraft,
   MonthlyReturnRow,
 } from '../components/analysis/types';
 import {
@@ -27,11 +25,7 @@ import {
   repairKnownHistoricalUfClpClosures,
   saveIncludeRiskCapitalInTotals,
 } from '../services/wealthStorage';
-import {
-  buildCoveragePlan,
-  buildMonthlyWithdrawalPlan,
-  resolveFinancialFreedomBase,
-} from '../services/financialFreedom';
+import { buildWealthLabModel } from '../services/wealthLab';
 import {
   aggregateRows,
   buildWealthEvolutionComparisonModel,
@@ -42,9 +36,6 @@ import {
   enumerateMonthKeys,
   monthYear,
 } from '../services/returnsAnalysis';
-import {
-  buildWealthLabModel,
-} from '../services/wealthLab';
 import { buildCrpContributionInsight } from '../services/returnsCrpInsight';
 import {
   clearAnalysisSessionCache,
@@ -65,32 +56,6 @@ import {
 } from '../services/gastappCanonicalV2';
 
 const loadWealthClosures = () => loadClosures();
-
-const parseNumericDraft = (value: string): number | null => {
-  const normalized = String(value ?? '')
-    .trim()
-    .replace(/\s+/g, '')
-    .replace(/\.(?=\d{3}(?:\D|$))/g, '')
-    .replace(',', '.');
-  if (!normalized) return null;
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
-const formatDraftPercent = (value: string) => {
-  const cleaned = String(value ?? '').replace(/[^\d,.]/g, '').replace(',', '.');
-  const [whole, decimal] = cleaned.split('.');
-  if (decimal === undefined) return whole;
-  return `${whole}.${decimal.slice(0, 2)}`;
-};
-
-const formatDraftInteger = (value: string) => String(value ?? '').replace(/[^\d]/g, '');
-
-const formatDraftMoney = (value: string) => {
-  const digits = String(value ?? '').replace(/[^\d]/g, '');
-  if (!digits) return '';
-  return Number(digits).toLocaleString('es-CL');
-};
 
 const sortClosuresAsc = (items: WealthMonthlyClosure[]) =>
   [...items].sort((a, b) => a.monthKey.localeCompare(b.monthKey));
@@ -161,20 +126,6 @@ export const AnalysisAurum: React.FC = () => {
   const [exportMessage, setExportMessage] = useState('');
   const [exportingDataRoomKind, setExportingDataRoomKind] = useState<'consolidated' | 'transactions' | null>(null);
   const [analysisRefreshTick, setAnalysisRefreshTick] = useState(0);
-  const [freedomDraft, setFreedomDraft] = useState<FreedomControlDraft>({
-    annualRatePct: '5',
-    horizonYears: '40',
-    monthlySpendClp: '6000000',
-  });
-  const initialFreedomOpen = useMemo(() => {
-    const initialAnnualRatePct = parseNumericDraft('5');
-    const initialHorizonYears = parseNumericDraft('40');
-    const initialMonthlySpendClp = parseNumericDraft('6000000');
-    const hasBase = resolveFinancialFreedomBase(closures, includeRiskCapitalInTotals).status === 'ok';
-    return !(hasBase && initialAnnualRatePct && initialHorizonYears && initialMonthlySpendClp);
-  }, [closures, includeRiskCapitalInTotals]);
-  const [freedomParametersOpen, setFreedomParametersOpen] = useState(initialFreedomOpen);
-
   const refreshClosures = useCallback(() => {
     const loaded = sortClosuresAsc(loadWealthClosures());
     const loadedFingerprint = buildClosuresFingerprint(loaded);
@@ -385,7 +336,6 @@ export const AnalysisAurum: React.FC = () => {
         const heroLastMonthPctMonthlyReal =
           [...monthlyRowsAsc].reverse().find((item) => item.retornoRealDisplay !== null)?.pctReal ?? null;
         const wealthLabModel = buildWealthLabModel(calculationClosures, includeRiskCapitalInTotals);
-        const financialFreedomBase = resolveFinancialFreedomBase(closures, includeRiskCapitalInTotals);
 
         return {
           officialMonthlyRowsAsc,
@@ -405,7 +355,6 @@ export const AnalysisAurum: React.FC = () => {
           heroLastMonthPctMonthly,
           heroLastMonthPctMonthlyReal,
           wealthLabModel,
-          financialFreedomBase,
         };
       }, (value) => {
         const candidate = value as {
@@ -413,7 +362,7 @@ export const AnalysisAurum: React.FC = () => {
           wealthEvolutionModel?: unknown;
           periodSummaries?: unknown;
           yearlySummaries?: unknown;
-          financialFreedomBase?: unknown;
+          wealthLabModel?: unknown;
           officialMonthlyRowsAsc?: unknown;
         } | null;
 
@@ -423,7 +372,7 @@ export const AnalysisAurum: React.FC = () => {
           candidate.wealthEvolutionModel &&
           Array.isArray(candidate.periodSummaries) &&
           Array.isArray(candidate.yearlySummaries) &&
-          candidate.financialFreedomBase &&
+          candidate.wealthLabModel &&
           Array.isArray(candidate.officialMonthlyRowsAsc),
         );
       }),
@@ -447,7 +396,6 @@ export const AnalysisAurum: React.FC = () => {
     heroLastMonthPctMonthly,
     heroLastMonthPctMonthlyReal,
     wealthLabModel,
-    financialFreedomBase,
   } = analysisEntry.value;
   useEffect(() => {
     if (!returnsSeriesView.hasEstimatedMonth) {
@@ -503,39 +451,12 @@ export const AnalysisAurum: React.FC = () => {
     setErrorMessage('');
   }, [analysisDiagnostics, gastappRuntimeDiagnostic, officialMonthlyRowsAsc]);
 
-  const freedomAnnualRatePct = useMemo(() => parseNumericDraft(freedomDraft.annualRatePct) ?? NaN, [freedomDraft.annualRatePct]);
-  const freedomHorizonYears = useMemo(() => parseNumericDraft(freedomDraft.horizonYears) ?? NaN, [freedomDraft.horizonYears]);
-  const freedomMonthlySpendClp = useMemo(() => parseNumericDraft(freedomDraft.monthlySpendClp) ?? NaN, [freedomDraft.monthlySpendClp]);
-  const financialFreedomWithdrawalPlan = useMemo(
-    () => buildMonthlyWithdrawalPlan(closures, freedomAnnualRatePct, freedomHorizonYears, includeRiskCapitalInTotals),
-    [closures, freedomAnnualRatePct, freedomHorizonYears, includeRiskCapitalInTotals],
-  );
-  const financialFreedomCoveragePlan = useMemo(
-    () => buildCoveragePlan(closures, freedomAnnualRatePct, freedomMonthlySpendClp, includeRiskCapitalInTotals),
-    [closures, freedomAnnualRatePct, freedomMonthlySpendClp, includeRiskCapitalInTotals],
-  );
-  const freedomInputsAreValid = Boolean(
-    financialFreedomBase.status === 'ok' &&
-      Number.isFinite(freedomAnnualRatePct) &&
-      freedomAnnualRatePct >= 0 &&
-      Number.isFinite(freedomHorizonYears) &&
-      freedomHorizonYears > 0 &&
-      Number.isFinite(freedomMonthlySpendClp) &&
-      freedomMonthlySpendClp > 0,
-  );
-
   useEffect(() => {
     const requestedTab = (location.state as { analysisTab?: AnalysisTab } | null)?.analysisTab;
-    if (requestedTab === 'returns' || requestedTab === 'gastapp-validation' || requestedTab === 'freedom' || requestedTab === 'lab') {
+    if (requestedTab === 'returns' || requestedTab === 'gastapp-validation' || requestedTab === 'lab') {
       setTab((prev) => (prev === requestedTab ? prev : requestedTab));
     }
   }, [location.state]);
-
-  useEffect(() => {
-    if (!freedomInputsAreValid) {
-      setFreedomParametersOpen(true);
-    }
-  }, [freedomInputsAreValid]);
 
   const refreshAnalysisModels = useCallback(() => {
     clearAnalysisSessionCache(analysisFingerprint);
@@ -613,13 +534,10 @@ export const AnalysisAurum: React.FC = () => {
             Retornos
           </Button>
           <Button size="sm" variant={tab === 'gastapp-validation' ? 'primary' : 'secondary'} onClick={() => setTab('gastapp-validation')}>
-            Validación mensual
-          </Button>
-          <Button size="sm" variant={tab === 'freedom' ? 'primary' : 'secondary'} onClick={() => setTab('freedom')}>
-            Libertad Financiera
+            Validación GastApp
           </Button>
           <Button size="sm" variant={tab === 'lab' ? 'primary' : 'secondary'} onClick={() => setTab('lab')}>
-            Lab
+            Lab de retornos
           </Button>
         </div>
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
@@ -661,29 +579,6 @@ export const AnalysisAurum: React.FC = () => {
           model={wealthLabModel}
           includeRiskCapitalInTotals={includeRiskCapitalInTotals}
           onToggleRiskMode={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
-        />
-      ) : tab === 'freedom' ? (
-        <FreedomTab
-          sourceMonthKey={financialFreedomBase.sourceMonthKey}
-          patrimonioBaseClp={financialFreedomBase.patrimonioBaseClp}
-          draft={freedomDraft}
-          onChange={(key, value) => {
-            if (key === 'annualRatePct') {
-              setFreedomDraft((prev) => ({ ...prev, annualRatePct: formatDraftPercent(value) }));
-              return;
-            }
-            if (key === 'horizonYears') {
-              setFreedomDraft((prev) => ({ ...prev, horizonYears: formatDraftInteger(value) }));
-              return;
-            }
-            setFreedomDraft((prev) => ({ ...prev, monthlySpendClp: formatDraftMoney(value) }));
-          }}
-          includeRiskCapitalInTotals={includeRiskCapitalInTotals}
-          isOpen={freedomParametersOpen}
-          onToggleParameters={() => setFreedomParametersOpen((prev) => !prev)}
-          onToggleRiskMode={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
-          withdrawalPlan={financialFreedomWithdrawalPlan}
-          coveragePlan={financialFreedomCoveragePlan}
         />
       ) : tab === 'gastapp-validation' ? (
         <GastappMonthlyValidationTab

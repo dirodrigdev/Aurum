@@ -335,7 +335,7 @@ describe('ReturnsTab partial month toggle', () => {
       await user.click(summary!);
     });
     expect(checkbox?.checked).toBe(true);
-    expect(container.textContent).toContain('Mes elegible: Junio de 2026 · oficial pendiente');
+    expect(container.textContent).toContain('Mes elegible: Junio de 2026 · cierre oficial pendiente de GastApp');
     expect(container.textContent).toContain('Junio de 2026 se incluye como parcial (P) · gasto publicado $1.500.000');
     expect(container.textContent).toContain('Usado: avance parcial real de GastApp.');
     expect(container.textContent).not.toMatch(/NaN|Infinity|undefined/);
@@ -388,6 +388,60 @@ describe('ReturnsTab partial month toggle', () => {
       await user.click(checkbox!);
     });
     expect(onToggleIncludeEstimatedMonth).not.toHaveBeenCalled();
+  });
+
+  it('shows the last confirmed GastApp close without projecting the retired day-12 availability', async () => {
+    const confirmedJuly = makeMonthlyRow('2026-07', {
+      gastosContractStatus: 'complete',
+      gastosPublishedAt: '2026-08-03T14:30:00.000Z',
+    });
+    const pendingAugust = makeMonthlyRow('2026-08', {
+      gastosStatus: 'pending',
+      gastosContractStatus: 'pending',
+      gastosDataQuality: 'warning',
+      gastosStaleReason: 'partial_boundary_end',
+      gastosPeriodKey: '2026-08-12__2026-09-11',
+      gastosClp: null,
+      gastosDisplay: null,
+      retornoRealClp: null,
+      retornoRealDisplay: null,
+      pct: null,
+    });
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        React.createElement(ReturnsTab, {
+          ...baseProps,
+          includeEstimatedMonth: false,
+          hasEstimatedMonth: false,
+          estimatedMonthMeta: null,
+          pendingEstimateDetail: null,
+          officialMonthlyRowsAsc: [confirmedJuly, pendingAugust],
+          monthlyRowsDesc: [pendingAugust, confirmedJuly],
+        }),
+      );
+    });
+
+    expect(container.textContent).toContain('Agosto de 2026 pendiente de cierre mensual de GastApp');
+    expect(container.textContent).not.toContain('Oficial disponible 12');
+
+    const noticesToggle = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Avisos'),
+    );
+    expect(noticesToggle).toBeTruthy();
+    await act(async () => {
+      await userEvent.setup().click(noticesToggle!);
+    });
+
+    expect(container.textContent).toContain('El gasto de este mes todavía no tiene un cierre mensual confirmado por GastApp.');
+    expect(container.textContent).toContain('Último cierre confirmado por GastApp: Julio de 2026 · registrado');
+    expect(container.textContent).toContain('el mes calendario aún está en curso');
+    expect(container.textContent).not.toContain('cierre desfasado respecto a movimientos recientes');
+    expect(container.textContent).not.toContain('2026-08-12__2026-09-11');
   });
 
   it('shows (R) only in CLP and explains that it discounts Chilean inflation', async () => {

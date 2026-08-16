@@ -189,4 +189,11 @@ describe('gastosMonthly canonical source', () => {
       snapshot: null,
     });
   });
+
+  it('uses the calendar boundary, not the retired day-12 cutoff, when the contract is unavailable', async () => {
+    const { hasGastappCalendarMonthEnded } = await import('../src/services/gastosMonthly');
+
+    expect(hasGastappCalendarMonthEnded('2026-08', new Date('2026-08-31T23:59:59'))).toBe(false);
+    expect(hasGastappCalendarMonthEnded('2026-08', new Date('2026-09-01T00:00:00'))).toBe(true);
+  });
 });
