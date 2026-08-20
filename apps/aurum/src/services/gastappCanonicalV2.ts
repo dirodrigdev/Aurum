@@ -731,13 +731,23 @@ const strictMonthCertification = (
   const operationalRevision = provenance.operationalRevision;
   const canonicalDataHash = provenance.canonicalDataHash;
   assertOfficial(['certified', 'revised', 'open', 'stale', 'invalidated'].includes(String(status)), 'El estado de certificación mensual es desconocido.', path);
-  assertOfficial(isStrictNonNegativeInteger(certificationRevision) && certificationRevision > 0, 'La revisión de certificación mensual no es válida.', path);
-  assertOfficial(typeof certificationHash === 'string' && SHA256_PATTERN.test(certificationHash), 'El hash de certificación mensual no es válido.', path);
+  assertOfficial(isStrictNonNegativeInteger(certificationRevision), 'La revisión de certificación mensual no es válida.', path);
+  if (status !== 'open') {
+    assertOfficial((certificationRevision as number) > 0, 'La revisión de certificación mensual no es válida.', path);
+    assertOfficial(typeof certificationHash === 'string' && SHA256_PATTERN.test(certificationHash), 'El hash de certificación mensual no es válido.', path);
+  } else {
+    assertOfficial(certificationHash === null || certificationHash === undefined || SHA256_PATTERN.test(String(certificationHash)), 'El hash de certificación abierta no es válido.', path);
+  }
   assertOfficial(certification.monthContractRevision === monthContractRevision && certification.monthContractHash === monthContractHash, 'La certificación no referencia la identidad mensual vigente.', path);
   assertOfficial(isStrictNonNegativeInteger(sourceGeneration), 'La provenance de certificación no contiene sourceGeneration válido.', path);
   assertOfficial(isStrictNonNegativeInteger(operationalRevision), 'La provenance de certificación no contiene revisión operacional válida.', path);
   assertOfficial(typeof canonicalDataHash === 'string' && SHA256_PATTERN.test(canonicalDataHash), 'La provenance de certificación no contiene hash canónico válido.', path);
   if (status !== 'certified' && status !== 'revised') return null;
+  assertOfficial(operationalRevision === metadata.operationalRevision, 'La certificación aceptada pertenece a otra revisión operacional.', path);
+  assertOfficial(canonicalDataHash === metadata.canonicalDataHash, 'La certificación aceptada pertenece a otro snapshot canónico.', path);
+  if (metadata.sourceGeneration !== undefined) {
+    assertOfficial(sourceGeneration === metadata.sourceGeneration, 'La certificación aceptada pertenece a otra generación de fuente.', path);
+  }
   return {
     status: status as 'certified' | 'revised',
     certificationRevision: certificationRevision as number,
@@ -764,6 +774,8 @@ export const loadGastappCanonicalV2OfficialMonthContractFresh = async (
   ]);
   const path = GASTAPP_AURUM_MONTHS_V2_PATH;
   const metadataPath = GASTAPP_CANONICAL_V2_CURRENT_PATH;
+  const metadataCounts = readRecord(metadata.counts);
+  const metadataTotals = readRecord(metadata.totalsEur);
   assertOfficial(metadata.publicationMode === 'operational' && metadata.officialPublication === true, 'GastApp no publicó un snapshot mensual oficial.', metadataPath);
   assertOfficial(typeof metadata.canonicalDataHash === 'string' && SHA256_PATTERN.test(metadata.canonicalDataHash), 'El hash canónico oficial no es válido.', metadataPath);
   assertOfficial(typeof metadata.operationalDataHash === 'string' && SHA256_PATTERN.test(metadata.operationalDataHash), 'El hash operacional oficial no es válido.', metadataPath);
@@ -771,6 +783,18 @@ export const loadGastappCanonicalV2OfficialMonthContractFresh = async (
   assertOfficial(contract.contractId === GASTAPP_CANONICAL_V2_CONTRACT.monthsContractId && contract.version === GASTAPP_CANONICAL_V2_CONTRACT.monthsContractVersion && contract.axis === GASTAPP_CANONICAL_V2_CONTRACT.monthsAxis, 'El contrato mensual oficial no coincide con Canonical V2.', path);
   assertOfficial(contract.publicationMode === 'operational' && contract.officialPublication === true, 'months_current no está publicado oficialmente.', path);
   assertOfficial(contract.canonicalDataHash === metadata.canonicalDataHash && contract.operationalDataHash === metadata.operationalDataHash && contract.operationalRevision === metadata.operationalRevision, 'Metadata y months_current pertenecen a snapshots distintos.', path);
+  for (const [field, value] of [['months', metadataCounts.months], ['rowCount', metadataCounts.rowCount ?? metadataCounts.canonicalRows]] as const) {
+    if (value !== undefined) assertOfficial(isStrictNonNegativeInteger(value), `metadata.counts.${field} no es válido.`, metadataPath);
+  }
+  if (metadata.canonicalSnapshotHash !== undefined) {
+    assertOfficial(metadata.canonicalSnapshotHash === metadata.canonicalDataHash && contract.canonicalSnapshotHash === metadata.canonicalDataHash, 'El snapshot canónico no coincide entre documentos.', path);
+  }
+  if (metadataTotals.exact !== undefined || contract.totalEur !== undefined) {
+    assertOfficial(isStrictFiniteNumber(metadataTotals.exact) && isStrictFiniteNumber(contract.totalEur), 'Los totales publicados no son válidos.', path);
+    const metadataTotal = metadataTotals.exact as number;
+    const contractTotal = contract.totalEur as number;
+    assertOfficial(Math.abs(Math.round((metadataTotal - contractTotal) * 100) / 100) <= 0.01, 'Metadata y months_current no concilian su total publicado.', path);
+  }
   if (metadata.sourceGeneration !== undefined || contract.sourceGeneration !== undefined) {
     assertOfficial(isStrictNonNegativeInteger(metadata.sourceGeneration) && contract.sourceGeneration === metadata.sourceGeneration, 'sourceGeneration no coincide entre metadata y months_current.', path);
   }
@@ -809,6 +833,16 @@ export const loadGastappCanonicalV2OfficialMonthContractFresh = async (
       calendarCertification,
     };
   });
+  if (metadataCounts.months !== undefined) {
+    assertOfficial(months.length === metadataCounts.months, 'metadata.counts.months no coincide con months_current.', path);
+  }
+  if (contract.rowCount !== undefined) {
+    assertOfficial(isStrictNonNegativeInteger(contract.rowCount), 'rowCount de months_current no es válido.', path);
+  }
+  if (metadataCounts.rowCount !== undefined || metadataCounts.canonicalRows !== undefined) {
+    const expectedRows = metadataCounts.rowCount ?? metadataCounts.canonicalRows;
+    assertOfficial(contract.rowCount === expectedRows, 'metadata.counts.rowCount no coincide con months_current.', path);
+  }
   assertOfficial(new Set(months.map((month) => month.calendarMonthKey)).size === months.length, 'months_current contiene meses duplicados.', path);
   return {
     canonicalDataHash: metadata.canonicalDataHash as string,

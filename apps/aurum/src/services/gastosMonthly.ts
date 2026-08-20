@@ -494,7 +494,10 @@ const loadGastappMonthlyContable = async () => {
           month.calendarStatus === 'complete' &&
           month.eligibleForAurumReturns === true;
         const certification = month.calendarCertification;
-        const isComplete = completeByContract && certification !== null;
+        const isComplete = completeByContract && Boolean(
+          certification &&
+          (certification.status === 'certified' || certification.status === 'revised'),
+        );
         const contractStatus: GastosContractStatus = isComplete
           ? 'complete'
           : completeByContract

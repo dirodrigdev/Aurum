@@ -387,7 +387,7 @@ test('monthly close keeps final FX stable and carries July balances into August'
     julyUsdClp: 930,
     julyEconomicDate: '2026-07-31',
     gastappExpenseClose: {
-      schemaVersion: 'aurum-gastapp-monthly-close-v1',
+      schemaVersion: 'aurum-gastapp-monthly-close-v2',
       sourcePath: 'gastapp_aurum_contracts_v2/months_current',
       monthKey: '2026-07',
       canonicalDataHash: /^sha256:[a-f0-9]{64}$/,

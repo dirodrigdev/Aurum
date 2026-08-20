@@ -259,6 +259,44 @@ describe('gastosMonthly canonical source', () => {
     });
   });
 
+  it('rejects open, stale and invalidated rows as historical closes while accepting certified and revised', async () => {
+    const statuses = ['certified', 'revised', 'open', 'stale', 'invalidated'] as const;
+    for (const status of statuses) {
+      vi.resetModules();
+      resetFirestoreMock();
+      loadGastappCanonicalV2OfficialMonthContractFreshMock.mockResolvedValue({
+        version: 'gastapp-aurum-calendar-months-v2',
+        canonicalDataHash: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        operationalDataHash: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+        operationalRevision: 4,
+        sourceGeneration: 7,
+        generatedAt: '2026-08-01T00:00:01.000Z',
+        months: [{
+          calendarMonthKey: '2026-07', status: 'complete', calendarStatus: 'complete', eligibleForAurumReturns: true,
+          coverage: { fromYmd: '2026-07-01', toYmd: '2026-07-31' }, totalEur: 210,
+          byFamily: { dayToDay: 120, trips: 60, others: 30 }, monthContractRevision: 1,
+          monthContractHash: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          calendarCertification: {
+            status, certificationRevision: status === 'open' ? 0 : 1,
+            certificationHash: status === 'open' ? null : 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+            monthContractRevision: 1,
+            monthContractHash: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            sourceGeneration: 7, operationalRevision: 4,
+            canonicalDataHash: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          },
+        }],
+      });
+      const freshModule = await import('../src/services/gastosMonthly');
+      await freshModule.warmGastappMonthlyContable();
+      const candidate = freshModule.resolveGastappMonthlyCloseCandidate('2026-07');
+      if (status === 'certified' || status === 'revised') {
+        expect(candidate).toMatchObject({ status: 'complete', snapshot: { totalEur: 210 } });
+      } else {
+        expect(candidate).toMatchObject({ status: 'stale', snapshot: null });
+      }
+    }
+  });
+
   it('uses the calendar boundary, not the retired day-12 cutoff, when the contract is unavailable', async () => {
     const { hasGastappCalendarMonthEnded } = await import('../src/services/gastosMonthly');
 

@@ -15,6 +15,7 @@
     "pointerVersion": "gastapp-canonical-pointer-v2",
     "packageVersion": "gastapp-canonical-calendar-offline-v2",
     "publicationMode": "operational",
+    "officialPublication": true,
     "generatedAt": "2026-08-15T00:00:00.000Z",
     "canonicalDataHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "canonicalSnapshotHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -43,6 +44,7 @@
     "contractId": "gastapp_to_aurum_periods",
     "axis": "periodKeyOriginal",
     "publicationMode": "operational",
+    "officialPublication": true,
     "generatedAt": "2026-08-15T00:00:00.000Z",
     "canonicalDataHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "canonicalSnapshotHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -71,6 +73,7 @@
     "contractId": "gastapp_to_aurum_calendar_months",
     "axis": "calendarMonthKey",
     "publicationMode": "operational",
+    "officialPublication": true,
     "generatedAt": "2026-08-15T00:00:00.000Z",
     "canonicalDataHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "canonicalSnapshotHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -98,6 +101,20 @@
       "canonicalRows": 1,
       "totalEur": 28,
       "byFamily": { "day_to_day": 28, "trips": 0, "others": 0 },
+      "monthContractRevision": 1,
+      "monthContractHash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "calendarCertification": {
+        "status": "certified",
+        "certificationRevision": 1,
+        "certificationHash": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "monthContractRevision": 1,
+        "monthContractHash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "provenance": {
+          "sourceGeneration": 1,
+          "operationalRevision": 7,
+          "canonicalDataHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
       "byCategory": { "hogar": { "key": "hogar", "label": "Hogar", "rowCount": 1, "totalEur": 28 } },
       "byProject": {}
     }]
