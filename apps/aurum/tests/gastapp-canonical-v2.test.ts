@@ -18,6 +18,7 @@ import {
   loadGastappCanonicalV2Contracts,
   loadGastappCanonicalV2ContractsFresh,
   loadGastappCanonicalV2MonthContract,
+  loadGastappCanonicalV2OfficialMonthContractFresh,
   loadGastappDataRoomV2Artifact,
   loadGastappDataRoomV2Pointer,
   validateGastappDataRoomV2FreshnessAgainstMetadata,
@@ -199,6 +200,65 @@ const sharedFixtureReader = (
 
 describe('GastApp Canónico V2', () => {
   beforeEach(() => vi.resetModules());
+
+  it('acepta únicamente months_current oficial, certificado y reconciliado a céntimos', async () => {
+    const canonicalHash = `sha256:${'a'.repeat(64)}`;
+    const operationalHash = `sha256:${'b'.repeat(64)}`;
+    const monthHash = `sha256:${'c'.repeat(64)}`;
+    const certificationHash = `sha256:${'d'.repeat(64)}`;
+    const metadata = {
+      publicationMode: 'operational', officialPublication: true,
+      canonicalDataHash: canonicalHash, operationalDataHash: operationalHash,
+      operationalRevision: 8, sourceGeneration: 12,
+    };
+    const month = {
+      calendarMonthKey: '2025-11', status: 'complete', calendarStatus: 'complete', eligibleForAurumReturns: true,
+      coverage: { fromYmd: '2025-11-01', toYmd: '2025-11-30' }, rowCount: 10,
+      totalEur: 6730.2, byFamily: { day_to_day: 6000, trips: 700.19, others: 30 },
+      monthContractRevision: 2, monthContractHash: monthHash,
+      calendarCertification: {
+        status: 'revised', certificationRevision: 3, certificationHash,
+        monthContractRevision: 2, monthContractHash: monthHash,
+        provenance: { sourceGeneration: 12, operationalRevision: 8, canonicalDataHash: canonicalHash },
+      },
+    };
+    const contract = {
+      contractId: GASTAPP_CANONICAL_V2_CONTRACT.monthsContractId,
+      version: GASTAPP_CANONICAL_V2_CONTRACT.monthsContractVersion,
+      axis: GASTAPP_CANONICAL_V2_CONTRACT.monthsAxis,
+      publicationMode: 'operational', officialPublication: true,
+      canonicalDataHash: canonicalHash, operationalDataHash: operationalHash, operationalRevision: 8, sourceGeneration: 12,
+      generatedAt: '2026-08-20T00:00:00.000Z', months: [month],
+    };
+    const readDocument = vi.fn(async (path: string) =>
+      path === GASTAPP_CANONICAL_V2_CURRENT_PATH ? metadata : path === GASTAPP_AURUM_MONTHS_V2_PATH ? contract : null,
+    );
+
+    await expect(loadGastappCanonicalV2OfficialMonthContractFresh({ readDocument })).resolves.toMatchObject({
+      months: [{ calendarMonthKey: '2025-11', totalEur: 6730.2, calendarCertification: { status: 'revised' } }],
+    });
+    expect(readDocument).toHaveBeenCalledTimes(2);
+    expect(readDocument).not.toHaveBeenCalledWith(GASTAPP_AURUM_PERIODS_V2_PATH);
+
+    for (const mutate of [
+      () => { contract.officialPublication = false; },
+      () => { contract.officialPublication = true; month.calendarCertification.status = 'open'; },
+      () => { month.calendarCertification.status = 'revised'; month.calendarCertification.monthContractHash = `sha256:${'e'.repeat(64)}`; },
+      () => { month.calendarCertification.monthContractHash = monthHash; month.totalEur = 6730.22; },
+    ]) {
+      const isolatedMetadata = structuredClone(metadata);
+      const isolatedContract = structuredClone(contract);
+      // Apply the mutation against a fresh object graph so each rejection is independent.
+      const isolatedMonth = isolatedContract.months[0];
+      if (mutate.toString().includes('officialPublication')) isolatedContract.officialPublication = false;
+      else if (mutate.toString().includes("'open'")) isolatedMonth.calendarCertification.status = 'open';
+      else if (mutate.toString().includes('monthContractHash')) isolatedMonth.calendarCertification.monthContractHash = `sha256:${'e'.repeat(64)}`;
+      else isolatedMonth.totalEur = 6730.22;
+      await expect(loadGastappCanonicalV2OfficialMonthContractFresh({
+        readDocument: async (path) => path === GASTAPP_CANONICAL_V2_CURRENT_PATH ? isolatedMetadata : path === GASTAPP_AURUM_MONTHS_V2_PATH ? isolatedContract : null,
+      })).rejects.toBeInstanceOf(GastappCanonicalV2Error);
+    }
+  });
 
   it('lee metadata y los dos contratos como documentos individuales, sin consultas de colección', async () => {
     const fixture = contractReader();

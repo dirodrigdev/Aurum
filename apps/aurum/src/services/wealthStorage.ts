@@ -127,6 +127,7 @@ export interface WealthMonthlyClosureVersion {
 
 export type GastappMonthlyExpenseCloseInput = {
   monthKey: string;
+  calendarMonthKey: string;
   totalEur: number;
   byFamilyEur: {
     dayToDay: number;
@@ -134,13 +135,21 @@ export type GastappMonthlyExpenseCloseInput = {
     others: number;
   };
   canonicalDataHash: string;
+  operationalDataHash: string;
+  operationalRevision: number;
+  sourceGeneration: number | null;
+  monthContractRevision: number;
+  monthContractHash: string;
+  certificationStatus: 'certified' | 'revised';
+  certificationRevision: number;
+  certificationHash: string;
   contractHash: string;
   contractVersion: string;
   generatedAt: string;
 };
 
 export type GastappMonthlyExpenseCloseSnapshot = GastappMonthlyExpenseCloseInput & {
-  schemaVersion: 'aurum-gastapp-monthly-close-v1';
+  schemaVersion: 'aurum-gastapp-monthly-close-v2';
   sourcePath: 'gastapp_aurum_contracts_v2/months_current';
   capturedAt: string;
   fxRates: WealthFxRates;
@@ -1201,6 +1210,7 @@ export const buildGastappMonthlyExpenseCloseSnapshot = (
   capturedAt = nowIso(),
 ): GastappMonthlyExpenseCloseSnapshot => {
   const monthKey = normalizeCalendarMonthKey(input.monthKey);
+  const calendarMonthKey = normalizeCalendarMonthKey(input.calendarMonthKey);
   const totalEur = Number(input.totalEur);
   const families = normalizeGastappExpenseAmounts({
     total: totalEur,
@@ -1214,8 +1224,17 @@ export const buildGastappMonthlyExpenseCloseSnapshot = (
   );
   if (
     !monthKey ||
+    calendarMonthKey !== monthKey ||
     !families ||
     !GASTAPP_SHA256_PATTERN.test(String(input.canonicalDataHash || '')) ||
+    !GASTAPP_SHA256_PATTERN.test(String(input.operationalDataHash || '')) ||
+    !Number.isInteger(input.operationalRevision) || input.operationalRevision < 0 ||
+    (input.sourceGeneration !== null && (!Number.isInteger(input.sourceGeneration) || input.sourceGeneration < 0)) ||
+    !Number.isInteger(input.monthContractRevision) || input.monthContractRevision < 1 ||
+    !GASTAPP_SHA256_PATTERN.test(String(input.monthContractHash || '')) ||
+    !['certified', 'revised'].includes(String(input.certificationStatus || '')) ||
+    !Number.isInteger(input.certificationRevision) || input.certificationRevision < 1 ||
+    !GASTAPP_SHA256_PATTERN.test(String(input.certificationHash || '')) ||
     !GASTAPP_SHA256_PATTERN.test(String(input.contractHash || '')) ||
     !String(input.contractVersion || '').trim() ||
     !Number.isFinite(new Date(generatedAt).getTime()) ||
@@ -1229,9 +1248,10 @@ export const buildGastappMonthlyExpenseCloseSnapshot = (
     ufClp: Number(fxRates.ufClp),
   };
   return {
-    schemaVersion: 'aurum-gastapp-monthly-close-v1',
+    schemaVersion: 'aurum-gastapp-monthly-close-v2',
     sourcePath: 'gastapp_aurum_contracts_v2/months_current',
     monthKey,
+    calendarMonthKey,
     totalEur: families.total,
     byFamilyEur: {
       dayToDay: families.dayToDay,
@@ -1239,6 +1259,14 @@ export const buildGastappMonthlyExpenseCloseSnapshot = (
       others: families.others,
     },
     canonicalDataHash: String(input.canonicalDataHash),
+    operationalDataHash: String(input.operationalDataHash),
+    operationalRevision: input.operationalRevision,
+    sourceGeneration: input.sourceGeneration,
+    monthContractRevision: input.monthContractRevision,
+    monthContractHash: String(input.monthContractHash),
+    certificationStatus: input.certificationStatus,
+    certificationRevision: input.certificationRevision,
+    certificationHash: String(input.certificationHash),
     contractHash: String(input.contractHash),
     contractVersion: String(input.contractVersion),
     generatedAt,
@@ -1272,7 +1300,7 @@ const normalizeGastappMonthlyExpenseCloseSnapshot = (
   if (!raw || typeof raw !== 'object') return undefined;
   const value = raw as Record<string, unknown>;
   if (
-    value.schemaVersion !== 'aurum-gastapp-monthly-close-v1' ||
+    value.schemaVersion !== 'aurum-gastapp-monthly-close-v2' ||
     value.sourcePath !== 'gastapp_aurum_contracts_v2/months_current' ||
     normalizeCalendarMonthKey(value.monthKey) !== normalizeCalendarMonthKey(expectedMonthKey)
   ) return undefined;
@@ -1286,6 +1314,7 @@ const normalizeGastappMonthlyExpenseCloseSnapshot = (
   try {
     const rebuilt = buildGastappMonthlyExpenseCloseSnapshot({
       monthKey: String(value.monthKey || ''),
+      calendarMonthKey: String(value.calendarMonthKey || ''),
       totalEur: Number(value.totalEur),
       byFamilyEur: {
         dayToDay: Number((value.byFamilyEur as Record<string, unknown> | undefined)?.dayToDay),
@@ -1293,6 +1322,14 @@ const normalizeGastappMonthlyExpenseCloseSnapshot = (
         others: Number((value.byFamilyEur as Record<string, unknown> | undefined)?.others),
       },
       canonicalDataHash: String(value.canonicalDataHash || ''),
+      operationalDataHash: String(value.operationalDataHash || ''),
+      operationalRevision: Number(value.operationalRevision),
+      sourceGeneration: value.sourceGeneration === null ? null : Number(value.sourceGeneration),
+      monthContractRevision: Number(value.monthContractRevision),
+      monthContractHash: String(value.monthContractHash || ''),
+      certificationStatus: value.certificationStatus as 'certified' | 'revised',
+      certificationRevision: Number(value.certificationRevision),
+      certificationHash: String(value.certificationHash || ''),
       contractHash: String(value.contractHash || ''),
       contractVersion: String(value.contractVersion || ''),
       generatedAt: String(value.generatedAt || ''),

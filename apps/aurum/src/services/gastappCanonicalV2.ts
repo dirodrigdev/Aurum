@@ -1,4 +1,4 @@
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, getDocFromServer } from 'firebase/firestore';
 import { getGastappConfiguredProjectId, getGastappFirestore, isGastappFirestoreConfigured } from './firebase';
 
 export const GASTAPP_CANONICAL_V2_PROJECT_ID = 'duofin-c1894';
@@ -225,6 +225,45 @@ export type GastappCanonicalV2Dependencies = {
   allowFixtureByteArray?: boolean;
 };
 
+/**
+ * The monthly close consumes this narrow, public contract only.  It is kept
+ * separate from the broader V2 reader because periods and Data Room remain
+ * useful for their own audit/export paths but are never a monthly fallback.
+ */
+export type GastappCanonicalV2OfficialMonthCertification = {
+  status: 'certified' | 'revised';
+  certificationRevision: number;
+  certificationHash: string;
+  monthContractRevision: number;
+  monthContractHash: string;
+  sourceGeneration: number;
+  operationalRevision: number;
+  canonicalDataHash: string;
+};
+
+export type GastappCanonicalV2OfficialMonth = {
+  calendarMonthKey: string;
+  status: 'complete' | 'pending';
+  calendarStatus: string;
+  eligibleForAurumReturns: boolean;
+  coverage: { fromYmd: string; toYmd: string };
+  totalEur: number;
+  byFamily: { dayToDay: number; trips: number; others: number };
+  monthContractRevision: number;
+  monthContractHash: string;
+  calendarCertification: GastappCanonicalV2OfficialMonthCertification | null;
+};
+
+export type GastappCanonicalV2OfficialMonthContract = {
+  canonicalDataHash: string;
+  operationalDataHash: string;
+  operationalRevision: number;
+  sourceGeneration: number | null;
+  generatedAt: string;
+  version: string;
+  months: GastappCanonicalV2OfficialMonth[];
+};
+
 const readString = (value: unknown): string | null =>
   typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 
@@ -303,6 +342,28 @@ const defaultReadDocument: DocumentReader = async (path) => {
       );
     }
     throw new GastappCanonicalV2Error('unavailable', String(error?.message || error || 'No se pudo leer GastApp.'), path, { cause: error });
+  }
+};
+
+const serverReadDocument: DocumentReader = async (path) => {
+  if (!isGastappFirestoreConfigured()) {
+    throw new GastappCanonicalV2Error('missing_config', 'Falta configurar el Firebase de GastApp.', path);
+  }
+  const configuredProjectId = getGastappConfiguredProjectId();
+  if (configuredProjectId !== GASTAPP_CANONICAL_V2_PROJECT_ID) {
+    throw new GastappCanonicalV2Error('wrong_project', `El Firebase configurado para GastApp es ${configuredProjectId || 'desconocido'}; se esperaba ${GASTAPP_CANONICAL_V2_PROJECT_ID}.`, path);
+  }
+  const db = getGastappFirestore();
+  if (!db) throw new GastappCanonicalV2Error('unavailable', 'Firestore de GastApp no está disponible.', path);
+  try {
+    const snapshot = await getDocFromServer(doc(db, path));
+    return snapshot.exists() ? (snapshot.data() as RecordValue) : null;
+  } catch (error: any) {
+    const code = String(error?.code || '');
+    if (code === 'permission-denied' || code.endsWith('/permission-denied')) {
+      throw new GastappCanonicalV2Error('permission_denied', 'La sesión autorizada de GastApp no tiene permiso de lectura para este documento.', path, { cause: error });
+    }
+    throw new GastappCanonicalV2Error('unavailable', String(error?.message || error || 'No se pudo leer GastApp desde servidor.'), path, { cause: error });
   }
 };
 
@@ -604,6 +665,160 @@ export const loadGastappCanonicalV2MonthContractCached = async (): Promise<{ met
 export const clearGastappCanonicalV2Cache = () => {
   canonicalContractsCache = null;
   canonicalMonthContractCache = null;
+};
+
+const isStrictFiniteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
+
+const isStrictNonNegativeInteger = (value: unknown): value is number =>
+  isStrictFiniteNumber(value) && Number.isInteger(value) && value >= 0;
+
+const assertOfficial = (condition: boolean, message: string, path: string) =>
+  assertExpected(condition, 'invalid_document', message, path);
+
+const strictMonthFamilies = (value: unknown, path: string) => {
+  const family = readRecord(value);
+  const dayToDay = family.day_to_day;
+  const trips = family.trips;
+  const others = family.others;
+  assertOfficial(
+    [dayToDay, trips, others].every((entry) => isStrictFiniteNumber(entry) && entry >= 0),
+    'Las familias mensuales deben ser números finitos no negativos.',
+    path,
+  );
+  return { dayToDay: dayToDay as number, trips: trips as number, others: others as number };
+};
+
+const strictCoverage = (value: unknown, monthKey: string, path: string, requireFullMonth: boolean) => {
+  const coverage = readRecord(value);
+  const fromYmd = coverage.fromYmd;
+  const toYmd = coverage.toYmd;
+  const year = Number(monthKey.slice(0, 4));
+  const month = Number(monthKey.slice(5, 7));
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const fullMonthEnd = `${monthKey}-${String(lastDay).padStart(2, '0')}`;
+  const ymdPattern = /^\d{4}-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/;
+  const boundedPartial =
+    typeof fromYmd === 'string' &&
+    typeof toYmd === 'string' &&
+    ymdPattern.test(fromYmd) &&
+    ymdPattern.test(toYmd) &&
+    fromYmd >= `${monthKey}-01` &&
+    toYmd <= fullMonthEnd &&
+    fromYmd <= toYmd;
+  assertOfficial(
+    requireFullMonth ? fromYmd === `${monthKey}-01` && toYmd === fullMonthEnd : boundedPartial,
+    requireFullMonth ? 'La cobertura mensual no cubre exactamente el mes calendario.' : 'La cobertura provisional mensual es inválida.',
+    path,
+  );
+  return { fromYmd: fromYmd as string, toYmd: toYmd as string };
+};
+
+const strictMonthCertification = (
+  raw: RecordValue,
+  monthContractRevision: number,
+  monthContractHash: string,
+  metadata: RecordValue,
+  path: string,
+): GastappCanonicalV2OfficialMonthCertification | null => {
+  const certification = readRecord(raw.calendarCertification);
+  if (Object.keys(certification).length === 0) return null;
+  const status = certification.status;
+  const certificationRevision = certification.certificationRevision;
+  const certificationHash = certification.certificationHash;
+  const provenance = readRecord(certification.provenance);
+  const sourceGeneration = provenance.sourceGeneration;
+  const operationalRevision = provenance.operationalRevision;
+  const canonicalDataHash = provenance.canonicalDataHash;
+  assertOfficial(['certified', 'revised', 'open', 'stale', 'invalidated'].includes(String(status)), 'El estado de certificación mensual es desconocido.', path);
+  assertOfficial(isStrictNonNegativeInteger(certificationRevision) && certificationRevision > 0, 'La revisión de certificación mensual no es válida.', path);
+  assertOfficial(typeof certificationHash === 'string' && SHA256_PATTERN.test(certificationHash), 'El hash de certificación mensual no es válido.', path);
+  assertOfficial(certification.monthContractRevision === monthContractRevision && certification.monthContractHash === monthContractHash, 'La certificación no referencia la identidad mensual vigente.', path);
+  assertOfficial(isStrictNonNegativeInteger(sourceGeneration), 'La provenance de certificación no contiene sourceGeneration válido.', path);
+  assertOfficial(isStrictNonNegativeInteger(operationalRevision), 'La provenance de certificación no contiene revisión operacional válida.', path);
+  assertOfficial(typeof canonicalDataHash === 'string' && SHA256_PATTERN.test(canonicalDataHash), 'La provenance de certificación no contiene hash canónico válido.', path);
+  if (status !== 'certified' && status !== 'revised') return null;
+  return {
+    status: status as 'certified' | 'revised',
+    certificationRevision: certificationRevision as number,
+    certificationHash: certificationHash as string,
+    monthContractRevision,
+    monthContractHash,
+    sourceGeneration: sourceGeneration as number,
+    operationalRevision: operationalRevision as number,
+    canonicalDataHash: canonicalDataHash as string,
+  };
+};
+
+/**
+ * Exact-document, server-only reader for the sole official monthly authority.
+ * It deliberately does not touch periods, Full, Express, Data Room or rows.
+ */
+export const loadGastappCanonicalV2OfficialMonthContractFresh = async (
+  dependencies?: GastappCanonicalV2Dependencies,
+): Promise<GastappCanonicalV2OfficialMonthContract> => {
+  const readDocument = dependencies?.readDocument || serverReadDocument;
+  const [metadata, contract] = await Promise.all([
+    readRequiredDocument(readDocument, GASTAPP_CANONICAL_V2_CURRENT_PATH),
+    readRequiredDocument(readDocument, GASTAPP_AURUM_MONTHS_V2_PATH),
+  ]);
+  const path = GASTAPP_AURUM_MONTHS_V2_PATH;
+  const metadataPath = GASTAPP_CANONICAL_V2_CURRENT_PATH;
+  assertOfficial(metadata.publicationMode === 'operational' && metadata.officialPublication === true, 'GastApp no publicó un snapshot mensual oficial.', metadataPath);
+  assertOfficial(typeof metadata.canonicalDataHash === 'string' && SHA256_PATTERN.test(metadata.canonicalDataHash), 'El hash canónico oficial no es válido.', metadataPath);
+  assertOfficial(typeof metadata.operationalDataHash === 'string' && SHA256_PATTERN.test(metadata.operationalDataHash), 'El hash operacional oficial no es válido.', metadataPath);
+  assertOfficial(isStrictNonNegativeInteger(metadata.operationalRevision), 'La revisión operacional oficial no es válida.', metadataPath);
+  assertOfficial(contract.contractId === GASTAPP_CANONICAL_V2_CONTRACT.monthsContractId && contract.version === GASTAPP_CANONICAL_V2_CONTRACT.monthsContractVersion && contract.axis === GASTAPP_CANONICAL_V2_CONTRACT.monthsAxis, 'El contrato mensual oficial no coincide con Canonical V2.', path);
+  assertOfficial(contract.publicationMode === 'operational' && contract.officialPublication === true, 'months_current no está publicado oficialmente.', path);
+  assertOfficial(contract.canonicalDataHash === metadata.canonicalDataHash && contract.operationalDataHash === metadata.operationalDataHash && contract.operationalRevision === metadata.operationalRevision, 'Metadata y months_current pertenecen a snapshots distintos.', path);
+  if (metadata.sourceGeneration !== undefined || contract.sourceGeneration !== undefined) {
+    assertOfficial(isStrictNonNegativeInteger(metadata.sourceGeneration) && contract.sourceGeneration === metadata.sourceGeneration, 'sourceGeneration no coincide entre metadata y months_current.', path);
+  }
+  assertOfficial(typeof contract.generatedAt === 'string' && Number.isFinite(new Date(contract.generatedAt).getTime()), 'months_current no declara una fecha de publicación válida.', path);
+  assertOfficial(Array.isArray(contract.months), 'months_current no contiene una lista mensual válida.', path);
+  const months = (contract.months as unknown[]).map((entry: unknown) => {
+    const month = readRecord(entry);
+    const calendarMonthKey = month.calendarMonthKey;
+    assertOfficial(typeof calendarMonthKey === 'string' && MONTH_KEY_PATTERN.test(calendarMonthKey), 'calendarMonthKey mensual inválido.', path);
+    assertOfficial(month.status === 'complete' || month.status === 'pending', 'El estado mensual es desconocido.', path);
+    assertOfficial(typeof month.calendarStatus === 'string' && month.calendarStatus.length > 0, 'calendarStatus mensual inválido.', path);
+    assertOfficial(typeof month.eligibleForAurumReturns === 'boolean', 'eligibleForAurumReturns mensual inválido.', path);
+    assertOfficial(isStrictFiniteNumber(month.totalEur) && month.totalEur >= 0, 'totalEur mensual inválido.', path);
+    assertOfficial(isStrictNonNegativeInteger(month.rowCount), 'rowCount mensual inválido.', path);
+    assertOfficial(isStrictNonNegativeInteger(month.monthContractRevision) && month.monthContractRevision > 0, 'monthContractRevision mensual inválido.', path);
+    assertOfficial(typeof month.monthContractHash === 'string' && SHA256_PATTERN.test(month.monthContractHash), 'monthContractHash mensual inválido.', path);
+    const monthKey = calendarMonthKey as string;
+    const totalEur = month.totalEur as number;
+    const monthContractRevision = month.monthContractRevision as number;
+    const monthContractHash = month.monthContractHash as string;
+    const coverage = strictCoverage(month.coverage, monthKey, path, month.status === 'complete');
+    const byFamily = strictMonthFamilies(month.byFamily, path);
+    const reconciled = Math.abs(Math.round((totalEur - byFamily.dayToDay - byFamily.trips - byFamily.others) * 100) / 100) <= 0.01;
+    assertOfficial(reconciled, 'totalEur mensual no concilia con sus familias dentro de ±0,01 €.', path);
+    const calendarCertification = strictMonthCertification(month, monthContractRevision, monthContractHash, metadata, path);
+    return {
+      calendarMonthKey: monthKey,
+      status: month.status as 'complete' | 'pending',
+      calendarStatus: month.calendarStatus as string,
+      eligibleForAurumReturns: month.eligibleForAurumReturns as boolean,
+      coverage,
+      totalEur,
+      byFamily,
+      monthContractRevision,
+      monthContractHash,
+      calendarCertification,
+    };
+  });
+  assertOfficial(new Set(months.map((month) => month.calendarMonthKey)).size === months.length, 'months_current contiene meses duplicados.', path);
+  return {
+    canonicalDataHash: metadata.canonicalDataHash as string,
+    operationalDataHash: metadata.operationalDataHash as string,
+    operationalRevision: metadata.operationalRevision as number,
+    sourceGeneration: isStrictNonNegativeInteger(metadata.sourceGeneration) ? metadata.sourceGeneration : null,
+    generatedAt: contract.generatedAt as string,
+    version: contract.version as string,
+    months,
+  };
 };
 
 export const loadGastappCanonicalV2PeriodContract = async (

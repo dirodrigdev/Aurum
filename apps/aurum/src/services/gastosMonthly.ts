@@ -47,9 +47,18 @@ export type GastappMonthlyFamilyTotalsEur = {
 
 export type GastappMonthlyCloseSnapshotInput = {
   monthKey: string;
+  calendarMonthKey: string;
   totalEur: number;
   byFamilyEur: GastappMonthlyFamilyTotalsEur;
   canonicalDataHash: string;
+  operationalDataHash: string;
+  operationalRevision: number;
+  sourceGeneration: number | null;
+  monthContractRevision: number;
+  monthContractHash: string;
+  certificationStatus: 'certified' | 'revised';
+  certificationRevision: number;
+  certificationHash: string;
   contractHash: string;
   contractVersion: string;
   generatedAt: string;
@@ -104,15 +113,20 @@ type GastappMonthlyContableEntry = {
   partialByFamilyEur: GastappMonthlyFamilyTotalsEur | null;
   canonicalDataHash: string | null;
   contractHash: string | null;
+  operationalDataHash: string | null;
+  operationalRevision: number | null;
+  sourceGeneration: number | null;
+  monthContractRevision: number | null;
+  monthContractHash: string | null;
+  certificationStatus: 'certified' | 'revised' | null;
+  certificationRevision: number | null;
+  certificationHash: string | null;
 };
 
 export const GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT = 'aurum:gastapp-monthly-source-updated';
 const GASTAPP_DIAG_PREFIX = '[AURUM][gastapp-monthly][diag]';
 const GASTAPP_MONTHLY_CONTRACT_PATH = 'gastapp_aurum_contracts_v2/months_current';
-const GASTAPP_CALENDAR_MONTH_CLOSE_PROTOCOL_VERSION = 'gastapp-calendar-month-close-v1';
-// Shared canonical V2 reconciliation tolerance. The calendar close
-// attestation is only valid when it uses this same monetary threshold.
-const GASTAPP_FAMILY_RECONCILIATION_TOLERANCE_EUR = 1;
+const GASTAPP_FAMILY_RECONCILIATION_TOLERANCE_EUR = 0.01;
 const GASTAPP_DIAG_ENABLED = Boolean(import.meta.env.DEV || import.meta.env.VITE_GASTAPP_DIAG === '1');
 const E2E_GASTAPP_FIXTURE_REASON = 'e2e_gastapp_disabled';
 const USE_E2E_GASTAPP_FIXTURE = import.meta.env.VITE_E2E_USE_FIREBASE_EMULATOR === 'true';
@@ -177,7 +191,7 @@ const loadGastappFirebaseBridge = async (): Promise<GastappFirebaseBridge | null
 
 const loadGastappCanonicalMonthContract = async () => {
   const mod = await import('./gastappCanonicalV2');
-  return mod.loadGastappCanonicalV2MonthContractCached();
+  return mod.loadGastappCanonicalV2OfficialMonthContractFresh();
 };
 
 const parseMonthKey = (monthKey: string): { year: number; month: number } | null => {
@@ -218,26 +232,6 @@ const readNumber = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-const readRecord = (value: unknown): Record<string, unknown> =>
-  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-
-const readMonthFamilies = (raw: Record<string, number>): GastappMonthlyFamilyTotalsEur | null => {
-  const dayToDay = readNumber(raw.day_to_day);
-  const trips = readNumber(raw.trips);
-  const others = readNumber(raw.others);
-  if (
-    dayToDay === null ||
-    trips === null ||
-    others === null ||
-    dayToDay < 0 ||
-    trips < 0 ||
-    others < 0
-  ) {
-    return null;
-  }
-  return { dayToDay, trips, others };
-};
-
 const hasFamilyTotalMatch = (
   totalEur: number | null,
   families: GastappMonthlyFamilyTotalsEur | null,
@@ -248,48 +242,6 @@ const hasFamilyTotalMatch = (
   Math.abs(totalEur - families.dayToDay - families.trips - families.others) <=
     GASTAPP_FAMILY_RECONCILIATION_TOLERANCE_EUR;
 
-const hasGastappCalendarMonthCloseAttestation = (args: {
-  requiredProtocol: string | null;
-  closures: Record<string, unknown>;
-  monthKey: string;
-  canonicalDataHash: string | null;
-  generatedAt: string | null;
-  totalEur: number | null;
-  families: GastappMonthlyFamilyTotalsEur | null;
-}) => {
-  if (!args.requiredProtocol) return { matches: true, closedAt: null, revision: null, reason: null };
-  if (args.requiredProtocol !== GASTAPP_CALENDAR_MONTH_CLOSE_PROTOCOL_VERSION) {
-    return { matches: false, closedAt: null, revision: null, reason: 'GastApp publicó un protocolo de cierre mensual no compatible.' };
-  }
-  const attestation = readRecord(args.closures[args.monthKey]);
-  const attestationFamilies = readMonthFamilies(readRecord(attestation.byFamily) as Record<string, number>);
-  const totalEur = readNumber(attestation.totalEur);
-  const revision = readNumber(attestation.revision);
-  const closedAt = readString(attestation.closedAt);
-  const sourceGeneratedAt = readString(attestation.sourceContractGeneratedAt);
-  const sourceCanonicalHash = readString(attestation.canonicalDataHash);
-  const matches =
-    attestation.state === 'closed' &&
-    readString(attestation.monthKey) === args.monthKey &&
-    Boolean(closedAt) &&
-    revision !== null && revision >= 1 &&
-    sourceCanonicalHash === args.canonicalDataHash &&
-    sourceGeneratedAt === args.generatedAt &&
-    totalEur !== null &&
-    args.totalEur !== null &&
-    Math.abs(totalEur - args.totalEur) <= 1 &&
-    !!attestationFamilies &&
-    !!args.families &&
-    Math.abs(attestationFamilies.dayToDay - args.families.dayToDay) <= 1 &&
-    Math.abs(attestationFamilies.trips - args.families.trips) <= 1 &&
-    Math.abs(attestationFamilies.others - args.families.others) <= 1;
-  return {
-    matches,
-    closedAt,
-    revision: revision === null ? null : Math.floor(revision),
-    reason: matches ? null : 'GastApp aún no certificó este mes calendario contra la revisión mensual vigente.',
-  };
-};
 
 // The old static map contains period totals labelled as months. It must never be
 // used as an official fallback for the calendar contract.
@@ -533,29 +485,19 @@ const loadGastappMonthlyContable = async () => {
       );
       const contractResult = await loadGastappCanonicalMonthContract();
       const loaded: Record<string, GastappMonthlyContableEntry> = {};
-      const metadataRaw = readRecord(contractResult.metadata?.raw);
-      const closeProtocol = readString(metadataRaw.calendarMonthCloseProtocolVersion);
-      const closeAttestations = readRecord(metadataRaw.calendarMonthClosures);
-      contractResult.months.months.forEach((month) => {
+      contractResult.months.forEach((month) => {
         if (!isValidMonthKey(month.calendarMonthKey)) return;
         const totalEur = readNumber(month.totalEur);
-        const families = readMonthFamilies(month.byFamily);
-        const completeByContract = month.status === 'complete' && month.eligibleForAurumReturns;
-        const attestation = hasGastappCalendarMonthCloseAttestation({
-          requiredProtocol: closeProtocol,
-          closures: closeAttestations,
-          monthKey: month.calendarMonthKey,
-          canonicalDataHash: readString(contractResult.months.canonicalDataHash),
-          generatedAt: readString(contractResult.months.generatedAt),
-          totalEur,
-          families,
-        });
-        const isComplete = completeByContract && attestation.matches;
+        const families = { ...month.byFamily };
+        const completeByContract =
+          month.status === 'complete' &&
+          month.calendarStatus === 'complete' &&
+          month.eligibleForAurumReturns === true;
+        const certification = month.calendarCertification;
+        const isComplete = completeByContract && certification !== null;
         const contractStatus: GastosContractStatus = isComplete
           ? 'complete'
-          : completeByContract && !attestation.matches
-            ? 'stale'
-          : month.status === 'stale'
+          : completeByContract
             ? 'stale'
             : month.status === 'pending'
               ? 'pending'
@@ -568,19 +510,19 @@ const loadGastappMonthlyContable = async () => {
           gastosEur: isComplete ? month.totalEur : null,
           dataQuality: isComplete ? 'ok' : 'warning',
           isStale: contractStatus === 'stale',
-          staleReason: isComplete ? null : attestation.reason || month.calendarStatus || month.status,
+          staleReason: isComplete ? null : completeByContract ? 'calendar_certification_missing_or_not_closable' : month.calendarStatus || month.status,
           dayToDaySource: 'gastapp-canonical-calendar-v2',
-          contractSource: contractResult.months.version,
-          schemaVersion: contractResult.months.version,
-          methodologyVersion: readString(contractResult.months.raw.dateSemantics),
+          contractSource: contractResult.version,
+          schemaVersion: contractResult.version,
+          methodologyVersion: 'gastapp-canonical-v2-official-months',
           periodKey: null,
-          publishedAt: contractResult.months.generatedAt,
-          updatedAt: contractResult.months.generatedAt,
-          closedAt: attestation.closedAt,
+          publishedAt: contractResult.generatedAt,
+          updatedAt: contractResult.generatedAt,
+          closedAt: isComplete ? contractResult.generatedAt : null,
           reportUpdatedAt: null,
           summaryUpdatedAt: null,
           lastExpenseUpdatedAt: null,
-          revision: attestation.revision,
+          revision: certification?.certificationRevision || null,
           reportTotalEur: isComplete ? month.totalEur : null,
           summaryTotalEur: isComplete ? month.totalEur : null,
           directExpenseTotalEur: isComplete ? month.totalEur : null,
@@ -593,8 +535,16 @@ const loadGastappMonthlyContable = async () => {
           migratedFrom: null,
           partialGastosEur,
           partialByFamilyEur,
-          canonicalDataHash: readString(contractResult.months.canonicalDataHash),
-          contractHash: readString(contractResult.months.contractHash),
+          canonicalDataHash: contractResult.canonicalDataHash,
+          contractHash: month.monthContractHash,
+          operationalDataHash: contractResult.operationalDataHash,
+          operationalRevision: contractResult.operationalRevision,
+          sourceGeneration: certification?.sourceGeneration ?? contractResult.sourceGeneration,
+          monthContractRevision: month.monthContractRevision,
+          monthContractHash: month.monthContractHash,
+          certificationStatus: certification?.status || null,
+          certificationRevision: certification?.certificationRevision || null,
+          certificationHash: certification?.certificationHash || null,
         };
       });
 
@@ -688,11 +638,11 @@ export const resolveGastappMonthlyCloseCandidate = (
   ): GastappMonthlyCloseCandidate => ({
     ...candidate,
     sourceChangedAfterClosure: Boolean(
-      candidate.snapshot?.contractHash &&
+      candidate.snapshot?.monthContractHash &&
       storedContractHash &&
-      candidate.snapshot.contractHash !== storedContractHash,
+      candidate.snapshot.monthContractHash !== storedContractHash,
     ),
-    currentContractHash: candidate.snapshot?.contractHash || null,
+    currentContractHash: candidate.snapshot?.monthContractHash || null,
     storedContractHash,
   });
   if (gastappMonthlyRuntime.status === 'idle') {
@@ -712,9 +662,18 @@ export const resolveGastappMonthlyCloseCandidate = (
       partialByFamilyEur: byFamilyEur,
       snapshot: {
         monthKey,
+        calendarMonthKey: monthKey,
         totalEur,
         byFamilyEur,
         canonicalDataHash: 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+        operationalDataHash: 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+        operationalRevision: 1,
+        sourceGeneration: 1,
+        monthContractRevision: 1,
+        monthContractHash: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+        certificationStatus: 'certified',
+        certificationRevision: 1,
+        certificationHash: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
         contractHash: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
         contractVersion: 'e2e_fixture',
         generatedAt: gastappMonthlyRuntime.lastUpdatedAt || new Date().toISOString(),
@@ -738,7 +697,18 @@ export const resolveGastappMonthlyCloseCandidate = (
   }
   const status = entry.contractStatus || 'missing';
   const familiesMatch = hasFamilyTotalMatch(entry.partialGastosEur, entry.partialByFamilyEur);
-  const hasIdentity = Boolean(entry.canonicalDataHash && entry.contractHash && entry.contractSource && entry.publishedAt);
+  const hasIdentity = Boolean(
+    entry.canonicalDataHash &&
+    entry.operationalDataHash &&
+    entry.operationalRevision !== null &&
+    entry.monthContractRevision &&
+    entry.monthContractHash &&
+    entry.certificationStatus &&
+    entry.certificationRevision &&
+    entry.certificationHash &&
+    entry.contractSource &&
+    entry.publishedAt,
+  );
   if (status === 'complete' && familiesMatch && hasIdentity && entry.partialGastosEur !== null && entry.partialByFamilyEur) {
     return withChangeState({
       monthKey,
@@ -747,10 +717,19 @@ export const resolveGastappMonthlyCloseCandidate = (
       partialByFamilyEur: entry.partialByFamilyEur,
       snapshot: {
         monthKey,
+        calendarMonthKey: monthKey,
         totalEur: entry.partialGastosEur,
         byFamilyEur: entry.partialByFamilyEur,
         canonicalDataHash: entry.canonicalDataHash!,
-        contractHash: entry.contractHash!,
+        operationalDataHash: entry.operationalDataHash!,
+        operationalRevision: entry.operationalRevision!,
+        sourceGeneration: entry.sourceGeneration,
+        monthContractRevision: entry.monthContractRevision!,
+        monthContractHash: entry.monthContractHash!,
+        certificationStatus: entry.certificationStatus!,
+        certificationRevision: entry.certificationRevision!,
+        certificationHash: entry.certificationHash!,
+        contractHash: entry.monthContractHash!,
         contractVersion: entry.contractSource!,
         generatedAt: entry.publishedAt!,
       },
