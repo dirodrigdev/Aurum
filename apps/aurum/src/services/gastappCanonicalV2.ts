@@ -195,13 +195,14 @@ export type GastappDataRoomV2Pointer = {
   canonicalDataHash: string;
   operationalDataHash: string;
   operationalRevision: number;
-  fullSnapshotHash: string;
-  fullSnapshotOperationalDataHash: string;
-  fullSnapshotGeneratedAt: string;
-  fullSnapshotStale: boolean;
+  fullSnapshotHash: string | null;
+  fullSnapshotOperationalDataHash: string | null;
+  fullSnapshotOperationalRevision: number | null;
+  fullSnapshotGeneratedAt: string | null;
+  fullSnapshotStale: boolean | null;
   express: GastappDataRoomV2ArtifactPointer;
-  full: GastappDataRoomV2ArtifactPointer;
-  fullFreshness: GastappDataRoomV2FullFreshness;
+  full: GastappDataRoomV2ArtifactPointer | null;
+  fullFreshness: GastappDataRoomV2FullFreshness | null;
   raw: RecordValue;
 };
 
@@ -455,18 +456,19 @@ const validateCanonicalMetadata = (raw: RecordValue): GastappCanonicalV2Metadata
   assertExpected(Boolean(metadata.coverage.completeFromMonthKey && MONTH_KEY_PATTERN.test(metadata.coverage.completeFromMonthKey)), 'invalid_document', 'El inicio de cobertura no es válido.', GASTAPP_CANONICAL_V2_CURRENT_PATH);
   assertExpected(Boolean(metadata.coverage.completeThroughMonthKey && MONTH_KEY_PATTERN.test(metadata.coverage.completeThroughMonthKey)), 'invalid_document', 'El final de cobertura no es válido.', GASTAPP_CANONICAL_V2_CURRENT_PATH);
   assertExpected(metadata.coverage.partialBoundaryMonths.every((value) => MONTH_KEY_PATTERN.test(value)), 'invalid_document', 'Las fronteras parciales no son válidas.', GASTAPP_CANONICAL_V2_CURRENT_PATH);
-  const hasOperationalFreshness = [
-    metadata.operationalDataHash,
-    metadata.operationalRevision,
+  const hasOperationalFreshness = [metadata.operationalDataHash, metadata.operationalRevision].some((value) => value !== null);
+  if (hasOperationalFreshness) {
+    assertExpected(SHA256_PATTERN.test(metadata.operationalDataHash || ''), 'invalid_document', 'El hash operacional canónico no es válido.', GASTAPP_CANONICAL_V2_CURRENT_PATH);
+    assertExpected(Number.isInteger(metadata.operationalRevision) && metadata.operationalRevision >= 0, 'invalid_document', 'La revisión operacional canónica no es válida.', GASTAPP_CANONICAL_V2_CURRENT_PATH);
+  }
+  const fullIdentity = [
     metadata.fullSnapshotHash,
     metadata.fullSnapshotOperationalDataHash,
     metadata.fullSnapshotOperationalRevision,
     metadata.fullSnapshotGeneratedAt,
     metadata.fullSnapshotStale,
-  ].some((value) => value !== null);
-  if (hasOperationalFreshness) {
-    assertExpected(SHA256_PATTERN.test(metadata.operationalDataHash || ''), 'invalid_document', 'El hash operacional canónico no es válido.', GASTAPP_CANONICAL_V2_CURRENT_PATH);
-    assertExpected(Number.isInteger(metadata.operationalRevision) && metadata.operationalRevision >= 0, 'invalid_document', 'La revisión operacional canónica no es válida.', GASTAPP_CANONICAL_V2_CURRENT_PATH);
+  ];
+  if (fullIdentity.some((value) => value !== null)) {
     assertExpected(SHA256_PATTERN.test(metadata.fullSnapshotHash || ''), 'invalid_document', 'El hash del snapshot Full no es válido.', GASTAPP_CANONICAL_V2_CURRENT_PATH);
     assertExpected(SHA256_PATTERN.test(metadata.fullSnapshotOperationalDataHash || ''), 'invalid_document', 'El hash operacional del snapshot Full no es válido.', GASTAPP_CANONICAL_V2_CURRENT_PATH);
     assertExpected(Number.isInteger(metadata.fullSnapshotOperationalRevision) && metadata.fullSnapshotOperationalRevision >= 0, 'invalid_document', 'La revisión operacional del snapshot Full no es válida.', GASTAPP_CANONICAL_V2_CURRENT_PATH);
@@ -908,28 +910,44 @@ export const loadGastappDataRoomV2Pointer = async (
   const canonicalDataHash = readString(raw.canonicalDataHash) || '';
   const operationalDataHash = readString(raw.operationalDataHash) || '';
   const operationalRevision = readNumber(raw.operationalRevision);
-  const fullSnapshotHash = readString(raw.fullSnapshotHash) || '';
-  const fullSnapshotOperationalDataHash = readString(raw.fullSnapshotOperationalDataHash) || '';
-  const fullSnapshotGeneratedAt = readString(raw.fullSnapshotGeneratedAt) || '';
+  const fullSnapshotHash = readString(raw.fullSnapshotHash);
+  const fullSnapshotOperationalDataHash = readString(raw.fullSnapshotOperationalDataHash);
+  const fullSnapshotOperationalRevision = readNumber(raw.fullSnapshotOperationalRevision ?? readRecord(raw.full).operationalRevision);
+  const fullSnapshotGeneratedAt = readString(raw.fullSnapshotGeneratedAt);
   const fullSnapshotStale = readBoolean(raw.fullSnapshotStale);
   assertExpected(pointerVersion === 'gastapp-data-room-pointer-v2', 'artifact_pointer_invalid', 'La versión del puntero Data Room no coincide.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
   assertExpected(storageBackend === 'firestore_blob', 'artifact_pointer_invalid', 'El backend del Data Room no es firestore_blob.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
   assertExpected(SHA256_PATTERN.test(canonicalDataHash), 'canonical_hash_mismatch', 'El puntero Data Room no tiene hash canónico SHA-256.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
   assertExpected(SHA256_PATTERN.test(operationalDataHash), 'artifact_pointer_invalid', 'El puntero no tiene hash operacional SHA-256.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
   assertExpected(Number.isInteger(operationalRevision) && operationalRevision >= 0, 'artifact_pointer_invalid', 'El puntero no tiene revisión operacional válida.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
-  assertExpected(SHA256_PATTERN.test(fullSnapshotHash), 'artifact_pointer_invalid', 'El puntero no tiene hash del snapshot Full.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
-  assertExpected(SHA256_PATTERN.test(fullSnapshotOperationalDataHash), 'artifact_pointer_invalid', 'El puntero no tiene hash operacional del snapshot Full.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
-  assertExpected(Boolean(fullSnapshotGeneratedAt), 'artifact_pointer_invalid', 'El puntero no tiene fecha del snapshot Full.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
-  assertExpected(typeof fullSnapshotStale === 'boolean', 'artifact_pointer_invalid', 'El puntero no declara si Full está stale.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
   if (dependencies?.expectedCanonicalDataHash) {
     assertExpected(canonicalDataHash === dependencies.expectedCanonicalDataHash, 'canonical_hash_mismatch', 'El puntero Data Room no coincide con el contrato mensual leído.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
   }
   const express = normalizeArtifactPointer(raw.express, 'express');
-  const full = normalizeArtifactPointer(raw.full, 'full');
-  assertExpected(full.hash === fullSnapshotHash, 'artifact_pointer_invalid', 'El hash Full no coincide con el snapshot anunciado.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
-  assertExpected(full.operationalDataHash === fullSnapshotOperationalDataHash, 'artifact_pointer_invalid', 'El hash operacional de Full no coincide con el snapshot anunciado.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
-  assertExpected(full.generatedAt === fullSnapshotGeneratedAt, 'artifact_pointer_invalid', 'La fecha de Full no coincide con el snapshot anunciado.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
-  assertExpected(full.staleAgainstOperationalHash === fullSnapshotStale, 'artifact_pointer_invalid', 'El estado stale de Full no coincide con el puntero.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
+  const fullAbsent = raw.full === null;
+  const fullIdentityValues = [fullSnapshotHash, fullSnapshotOperationalDataHash, fullSnapshotOperationalRevision, fullSnapshotGeneratedAt, fullSnapshotStale];
+  if (fullAbsent) {
+    assertExpected(fullIdentityValues.every((value) => value === null), 'artifact_pointer_invalid', 'Full ausente no puede conservar una identidad o ventana activa.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
+  } else {
+    assertExpected(fullIdentityValues.every((value) => value !== null), 'artifact_pointer_invalid', 'Full presente requiere una identidad completa.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
+  }
+  const full = fullAbsent ? null : normalizeArtifactPointer(raw.full, 'full');
+  const fullFreshness = full
+    ? {
+        generatedAt: fullSnapshotGeneratedAt!,
+        isStale: fullSnapshotStale!,
+        snapshotOperationalDataHash: fullSnapshotOperationalDataHash!,
+        currentOperationalDataHash: operationalDataHash,
+        snapshotOperationalRevision: full.operationalRevision!,
+        currentOperationalRevision: operationalRevision,
+      }
+    : null;
+  if (full) {
+    assertExpected(full.hash === fullSnapshotHash, 'artifact_pointer_invalid', 'El hash Full no coincide con el snapshot anunciado.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
+    assertExpected(full.operationalDataHash === fullSnapshotOperationalDataHash, 'artifact_pointer_invalid', 'El hash operacional de Full no coincide con el snapshot anunciado.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
+    assertExpected(full.generatedAt === fullSnapshotGeneratedAt, 'artifact_pointer_invalid', 'La fecha de Full no coincide con el snapshot anunciado.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
+    assertExpected(full.staleAgainstOperationalHash === fullSnapshotStale, 'artifact_pointer_invalid', 'El estado stale de Full no coincide con el puntero.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
+  }
   return {
     pointerVersion,
     storageBackend,
@@ -938,18 +956,12 @@ export const loadGastappDataRoomV2Pointer = async (
     operationalRevision,
     fullSnapshotHash,
     fullSnapshotOperationalDataHash,
+    fullSnapshotOperationalRevision,
     fullSnapshotGeneratedAt,
     fullSnapshotStale,
     express,
     full,
-    fullFreshness: {
-      generatedAt: fullSnapshotGeneratedAt,
-      isStale: fullSnapshotStale,
-      snapshotOperationalDataHash: fullSnapshotOperationalDataHash,
-      currentOperationalDataHash: operationalDataHash,
-      snapshotOperationalRevision: full.operationalRevision,
-      currentOperationalRevision: operationalRevision,
-    },
+    fullFreshness,
     raw,
   };
 };
@@ -957,7 +969,7 @@ export const loadGastappDataRoomV2Pointer = async (
 export const validateGastappDataRoomV2FreshnessAgainstMetadata = (
   metadata: GastappCanonicalV2Metadata,
   pointer: GastappDataRoomV2Pointer,
-): GastappDataRoomV2FullFreshness => {
+): GastappDataRoomV2FullFreshness | null => {
   assertExpected(
     metadata.canonicalDataHash === pointer.canonicalDataHash,
     'canonical_hash_mismatch',
@@ -973,10 +985,10 @@ export const validateGastappDataRoomV2FreshnessAgainstMetadata = (
   );
   assertExpected(
     metadata.fullSnapshotHash === pointer.fullSnapshotHash &&
-      metadata.fullSnapshotOperationalDataHash === pointer.fullFreshness.snapshotOperationalDataHash &&
-      metadata.fullSnapshotOperationalRevision === pointer.fullFreshness.snapshotOperationalRevision &&
-      metadata.fullSnapshotGeneratedAt === pointer.fullFreshness.generatedAt &&
-      metadata.fullSnapshotStale === pointer.fullFreshness.isStale,
+      metadata.fullSnapshotOperationalDataHash === pointer.fullSnapshotOperationalDataHash &&
+      metadata.fullSnapshotOperationalRevision === pointer.fullSnapshotOperationalRevision &&
+      metadata.fullSnapshotGeneratedAt === pointer.fullSnapshotGeneratedAt &&
+      metadata.fullSnapshotStale === pointer.fullSnapshotStale,
     'artifact_pointer_invalid',
     'La metadata y el puntero no coinciden en la identidad o frescura del snapshot Full.',
     GASTAPP_DATA_ROOM_V2_POINTER_PATH,
@@ -1002,6 +1014,7 @@ export const loadGastappDataRoomV2Artifact = async (
   const { readDocument, sha256 } = resolveDependencies(dependencies);
   const pointer = await loadGastappDataRoomV2Pointer({ ...dependencies, readDocument });
   const artifactPointer = mode === 'express' ? pointer.express : pointer.full;
+  if (!artifactPointer) throw new GastappCanonicalV2Error('artifact_missing', 'No existe un artefacto Full activo para descargar.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
   const artifactRaw = await readRequiredDocument(readDocument, artifactPointer.document);
   const bytes = toUint8Array(artifactRaw.zipBytes, dependencies?.allowFixtureByteArray === true);
   const expectedBytes = artifactPointer.bytes;
@@ -1018,13 +1031,15 @@ export const loadGastappDataRoomV2Artifact = async (
   const calculatedHash = await sha256(bytes);
   assertExpected(readString(artifactRaw.hash) === expectedHash && calculatedHash === expectedHash, 'artifact_hash_mismatch', 'El SHA-256 del ZIP no coincide con el puntero publicado.', artifactPointer.document);
   if (mode === 'full') {
-    assertExpected(readString(artifactRaw.generatedAt) === pointer.fullFreshness.generatedAt, 'artifact_pointer_invalid', 'La fecha de Full no coincide con el puntero.', artifactPointer.document);
-    assertExpected(readString(artifactRaw.operationalDataHash) === pointer.fullFreshness.snapshotOperationalDataHash, 'artifact_pointer_invalid', 'El hash operacional de Full no coincide con su snapshot.', artifactPointer.document);
-    assertExpected(readString(artifactRaw.fullSnapshotOperationalDataHash) === pointer.fullFreshness.snapshotOperationalDataHash, 'artifact_pointer_invalid', 'El hash operacional declarado por Full no coincide con su snapshot.', artifactPointer.document);
+    const freshness = pointer.fullFreshness;
+    if (!freshness) throw new GastappCanonicalV2Error('artifact_missing', 'No existe un artefacto Full activo para descargar.', GASTAPP_DATA_ROOM_V2_POINTER_PATH);
+    assertExpected(readString(artifactRaw.generatedAt) === freshness.generatedAt, 'artifact_pointer_invalid', 'La fecha de Full no coincide con el puntero.', artifactPointer.document);
+    assertExpected(readString(artifactRaw.operationalDataHash) === freshness.snapshotOperationalDataHash, 'artifact_pointer_invalid', 'El hash operacional de Full no coincide con su snapshot.', artifactPointer.document);
+    assertExpected(readString(artifactRaw.fullSnapshotOperationalDataHash) === freshness.snapshotOperationalDataHash, 'artifact_pointer_invalid', 'El hash operacional declarado por Full no coincide con su snapshot.', artifactPointer.document);
     assertExpected(readString(artifactRaw.fullSnapshotHash) === pointer.fullSnapshotHash, 'artifact_pointer_invalid', 'La identidad inmutable del snapshot Full no coincide con el puntero.', artifactPointer.document);
-    assertExpected(readString(artifactRaw.fullSnapshotGeneratedAt) === pointer.fullFreshness.generatedAt, 'artifact_pointer_invalid', 'La fecha declarada del snapshot Full no coincide con el puntero.', artifactPointer.document);
-    assertExpected(readNumber(artifactRaw.operationalRevision) === pointer.fullFreshness.snapshotOperationalRevision, 'artifact_pointer_invalid', 'La revisión operacional de Full no coincide con el puntero.', artifactPointer.document);
-    assertExpected(readNumber(artifactRaw.fullSnapshotOperationalRevision) === pointer.fullFreshness.snapshotOperationalRevision, 'artifact_pointer_invalid', 'La revisión declarada del snapshot Full no coincide con el puntero.', artifactPointer.document);
+    assertExpected(readString(artifactRaw.fullSnapshotGeneratedAt) === freshness.generatedAt, 'artifact_pointer_invalid', 'La fecha declarada del snapshot Full no coincide con el puntero.', artifactPointer.document);
+    assertExpected(readNumber(artifactRaw.operationalRevision) === freshness.snapshotOperationalRevision, 'artifact_pointer_invalid', 'La revisión operacional de Full no coincide con el puntero.', artifactPointer.document);
+    assertExpected(readNumber(artifactRaw.fullSnapshotOperationalRevision) === freshness.snapshotOperationalRevision, 'artifact_pointer_invalid', 'La revisión declarada del snapshot Full no coincide con el puntero.', artifactPointer.document);
     assertExpected(typeof readBoolean(artifactRaw.fullSnapshotStale) === 'boolean', 'artifact_pointer_invalid', 'Full no declara su estado stale de snapshot.', artifactPointer.document);
   }
   const blobInput = new Uint8Array(bytes.byteLength);

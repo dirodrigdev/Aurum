@@ -639,6 +639,36 @@ describe('GastApp Canónico V2', () => {
     }
   });
 
+  it('acepta una publicación operacional oficial con Full ausente sin convertirlo en fallback mensual', async () => {
+    const fixture = cloneSharedFixture();
+    fixture.pointer.full = null;
+    fixture.pointer.fullSnapshotHash = null;
+    fixture.pointer.fullSnapshotOperationalDataHash = null;
+    fixture.pointer.fullSnapshotOperationalRevision = null;
+    fixture.pointer.fullSnapshotGeneratedAt = null;
+    fixture.pointer.fullSnapshotStale = null;
+    fixture.metadata.fullSnapshotHash = null;
+    fixture.metadata.fullSnapshotOperationalDataHash = null;
+    fixture.metadata.fullSnapshotOperationalRevision = null;
+    fixture.metadata.fullSnapshotGeneratedAt = null;
+    fixture.metadata.fullSnapshotStale = null;
+
+    const pointer = await loadGastappDataRoomV2Pointer({ readDocument: sharedFixtureReader(fixture) });
+    expect(pointer.full).toBeNull();
+    expect(pointer.fullFreshness).toBeNull();
+    await expect(loadGastappCanonicalV2OfficialMonthContractFresh({ readDocument: sharedFixtureReader(fixture) }))
+      .resolves.toMatchObject({ months: [{ calendarMonthKey: '2026-02', totalEur: 28 }] });
+    await expect(loadGastappDataRoomV2Artifact('full', { readDocument: sharedFixtureReader(fixture), sha256: sharedFixtureSha256, allowFixtureByteArray: true }))
+      .rejects.toMatchObject({ code: 'artifact_missing', path: GASTAPP_DATA_ROOM_V2_POINTER_PATH });
+  });
+
+  it('rechaza Full ausente si conserva una identidad Full activa', async () => {
+    const fixture = cloneSharedFixture();
+    fixture.pointer.full = null;
+    await expect(loadGastappDataRoomV2Pointer({ readDocument: sharedFixtureReader(fixture) }))
+      .rejects.toMatchObject({ code: 'artifact_pointer_invalid', path: GASTAPP_DATA_ROOM_V2_POINTER_PATH });
+  });
+
   it('acepta un Full fresco cuando puntero y metadata declaran el mismo estado operacional', async () => {
     const fixture = cloneSharedFixture();
     const snapshotOperationalHash = (fixture.pointer.fullSnapshotOperationalDataHash as string);

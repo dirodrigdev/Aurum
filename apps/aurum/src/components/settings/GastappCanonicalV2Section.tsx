@@ -109,13 +109,15 @@ export const GastappCanonicalV2Section: React.FC<Props> = ({ state, onRefresh, o
           <div className="mt-1 grid grid-cols-1 gap-1 sm:grid-cols-2">
             <div>Express: {pointer.express.bytes.toLocaleString('es-ES')} bytes</div>
             <div className="break-all">{pointer.express.hash}</div>
-            <div>Full: {pointer.full.bytes.toLocaleString('es-ES')} bytes</div>
-            <div className="break-all">{pointer.full.hash}</div>
-            <div className="sm:col-span-2">Fecha Full: <span className="font-semibold">{pointer.fullFreshness.generatedAt}</span></div>
-            <div className="sm:col-span-2">Estado Full: <span className={pointer.fullFreshness.isStale ? 'font-semibold text-amber-700' : 'font-semibold text-emerald-700'}>{pointer.fullFreshness.isStale ? 'Stale: snapshot anterior conservado' : 'Fresco: coincide con la operación vigente'}</span></div>
-            <div className="sm:col-span-2 break-all">Hash operacional del snapshot: <span className="font-semibold">{pointer.fullFreshness.snapshotOperationalDataHash}</span></div>
-            <div className="sm:col-span-2 break-all">Hash operacional vigente: <span className="font-semibold">{pointer.fullFreshness.currentOperationalDataHash}</span></div>
-            {pointer.fullFreshness.isStale && <div className="sm:col-span-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-950">El Full conserva un snapshot inmutable anterior. No afecta gasto mensual, retornos ni Express.</div>}
+            {pointer.full && pointer.fullFreshness ? <>
+              <div>Full: {pointer.full.bytes.toLocaleString('es-ES')} bytes</div>
+              <div className="break-all">{pointer.full.hash}</div>
+              <div className="sm:col-span-2">Fecha Full: <span className="font-semibold">{pointer.fullFreshness.generatedAt}</span></div>
+              <div className="sm:col-span-2">Estado Full: <span className={pointer.fullFreshness.isStale ? 'font-semibold text-amber-700' : 'font-semibold text-emerald-700'}>{pointer.fullFreshness.isStale ? 'Stale: snapshot anterior conservado' : 'Fresco: coincide con la operación vigente'}</span></div>
+              <div className="sm:col-span-2 break-all">Hash operacional del snapshot: <span className="font-semibold">{pointer.fullFreshness.snapshotOperationalDataHash}</span></div>
+              <div className="sm:col-span-2 break-all">Hash operacional vigente: <span className="font-semibold">{pointer.fullFreshness.currentOperationalDataHash}</span></div>
+              {pointer.fullFreshness.isStale && <div className="sm:col-span-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-950">El Full conserva un snapshot inmutable anterior. No afecta gasto mensual, retornos ni Express.</div>}
+            </> : <div className="sm:col-span-2">Full: <span className="font-semibold">no presente</span></div>}
           </div>
         </div>
       )}
