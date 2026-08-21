@@ -16,10 +16,10 @@ describe('gastappAccessGuidance', () => {
 
   it('builds the shared actionable guidance copy', () => {
     const message = buildGastappAccessGuidanceMessage();
-    expect(message).toContain('Acceso GastApp cerrado');
-    expect(message).toContain('Abre GastApp.');
-    expect(message).toContain('Ajustes → Diagnóstico Aurum/Data Room → Data Room para Aurum');
-    expect(message).toContain('Abrir Data Room para Aurum por 30 min');
+    expect(message).toContain('Informe completo no disponible');
+    expect(message).toContain('Comprueba que GastApp está abierta.');
+    expect(message).toContain('sesión autenticada corresponde al administrador autorizado');
+    expect(message).toContain('Vuelve a intentar la descarga del Informe completo.');
   });
 
   it('maps permission denied in settings diagnostic to the GastApp access flow', () => {
@@ -27,7 +27,7 @@ describe('gastappAccessGuidance', () => {
       status: 'permission_denied',
       technicalDetail: 'permission_denied · gastapp_data_room_v2/current',
     });
-    expect(message).toContain('Acceso GastApp cerrado');
+    expect(message).toContain('Informe completo no disponible');
     expect(message).toContain('Reintentar');
     expect(message).toContain('permission_denied · gastapp_data_room_v2/current');
   });
@@ -51,7 +51,7 @@ describe('gastappAccessGuidance', () => {
     });
     expect(message).toContain('months_current');
     expect(message).toContain('lectura pública');
-    expect(message).toContain('no abras Data Room');
+    expect(message).toContain('no descargues el Informe completo');
     expect(message).toContain('2026-03, 2026-04');
   });
 

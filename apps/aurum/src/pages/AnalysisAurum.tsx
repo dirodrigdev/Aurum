@@ -469,11 +469,11 @@ export const AnalysisAurum: React.FC = () => {
     setExportMessage('');
     try {
       const artifact = await downloadGastappDataRoomV2Artifact('express');
-      setExportMessage(`ZIP Express verificado: ${artifact.byteLength.toLocaleString('es-ES')} bytes · ${artifact.sha256} · 2 lecturas documentales · sin filas.`);
+      setExportMessage(`Informe resumido verificado: ${artifact.byteLength.toLocaleString('es-ES')} bytes · ${artifact.sha256} · 2 lecturas documentales · sin filas.`);
     } catch (error: any) {
       setExportMessage(error instanceof GastappCanonicalV2Error && error.code === 'permission_denied'
-        ? buildGastappAccessGuidanceMessage('4. Vuelve a Aurum y presiona “Descargar Express”.', `${error.code} · ${error.path || 'Data Room Express'}`)
-        : String(error?.message || error || 'No pude descargar Express.'));
+        ? buildGastappAccessGuidanceMessage('4. Vuelve a Aurum y presiona “Descargar informe resumido”.', `${error.code} · ${error.path || 'Informe resumido'}`)
+        : String(error?.message || error || 'No pude descargar el informe resumido.'));
     } finally {
       setExportingDataRoomKind(null);
     }
@@ -485,11 +485,11 @@ export const AnalysisAurum: React.FC = () => {
     try {
       const artifact = await downloadGastappDataRoomV2Artifact('full');
       const freshness = artifact.fullFreshness;
-      setExportMessage(`ZIP Full verificado: ${artifact.byteLength.toLocaleString('es-ES')} bytes · ${artifact.sha256} · 2 lecturas documentales · sin reconstrucción. ${freshness ? `Generado: ${freshness.generatedAt}. Hash operacional del snapshot: ${freshness.snapshotOperationalDataHash}. Hash operacional vigente: ${freshness.currentOperationalDataHash}. ${freshness.isStale ? 'Snapshot stale: no afecta gasto mensual, retornos ni Express.' : 'Snapshot fresco.'}` : 'Estado de frescura no disponible.'}`);
+      setExportMessage(`Informe completo verificado: ${artifact.byteLength.toLocaleString('es-ES')} bytes · ${artifact.sha256} · 2 lecturas documentales · sin reconstrucción. ${freshness ? `Generado: ${freshness.generatedAt}. Hash operacional del snapshot: ${freshness.snapshotOperationalDataHash}. Hash operacional vigente: ${freshness.currentOperationalDataHash}. ${freshness.isStale ? 'Versión stale: no afecta gasto mensual, retornos ni informe resumido.' : 'Versión vigente.'}` : 'Estado de frescura no disponible.'}`);
     } catch (error: any) {
       setExportMessage(error instanceof GastappCanonicalV2Error && error.code === 'permission_denied'
-        ? buildGastappAccessGuidanceMessage('4. Abre la ventana “Data Room para Aurum” durante 30 min y vuelve a Aurum.', `${error.code} · ${error.path || 'Data Room Full'}`)
-        : String(error?.message || error || 'No pude descargar Full.'));
+        ? buildGastappAccessGuidanceMessage('4. Comprueba que la sesión admin de GastApp siga activa y vuelve a descargar el Informe completo.', `${error.code} · ${error.path || 'Informe completo'}`)
+        : String(error?.message || error || 'No pude descargar el informe completo.'));
     } finally {
       setExportingDataRoomKind(null);
     }

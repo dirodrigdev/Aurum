@@ -85,10 +85,10 @@ describe('GastApp Canónico V2 diagnostic label', () => {
       }));
     });
 
-    expect(container.textContent).toContain('Estado Full: Stale: snapshot anterior conservado');
+    expect(container.textContent).toContain('Estado informe completo: Stale: versión anterior conservada');
     expect(container.textContent).toContain('Hash operacional del snapshot:');
     expect(container.textContent).toContain('Hash operacional vigente:');
-    expect(container.textContent).toContain('No afecta gasto mensual, retornos ni Express.');
+    expect(container.textContent).toContain('No afecta gasto mensual, retornos ni informe resumido.');
   });
 });
 

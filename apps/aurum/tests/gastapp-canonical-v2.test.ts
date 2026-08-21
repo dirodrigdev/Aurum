@@ -181,7 +181,6 @@ const sharedFixtureSha256 = vi.fn(async (bytes: Uint8Array) => {
 
 const sharedFixtureReader = (
   fixture: Record<string, Record<string, unknown>> = cloneSharedFixture(),
-  fullWindowOpen = true,
 ) => vi.fn(async (path: string) => {
   const paths = fixture.paths;
   const documents: Record<string, Record<string, unknown>> = {
@@ -192,9 +191,6 @@ const sharedFixtureReader = (
     [paths.express as unknown as string]: fixture.express_current,
     [paths.full as unknown as string]: fixture.full_current,
   };
-  if (path === paths.full && !fullWindowOpen) {
-    throw new GastappCanonicalV2Error('permission_denied', 'La ventana Full de 30 minutos está cerrada.', path);
-  }
   return documents[path] ? structuredClone(documents[path]) : null;
 });
 
@@ -378,7 +374,9 @@ describe('GastApp Canónico V2', () => {
       calendarCertification: {
         status: 'revised', certificationRevision: 3, certificationHash,
         monthContractRevision: 2, monthContractHash: monthHash,
-        provenance: { sourceGeneration: 12, operationalRevision: 8, canonicalDataHash: canonicalHash },
+        // The month is unchanged, but the global publication provenance is
+        // intentionally older. Month-local identity must remain authoritative.
+        provenance: { sourceGeneration: 11, operationalRevision: 7, canonicalDataHash: `sha256:${'f'.repeat(64)}` },
       },
     };
     const contract = {
@@ -417,6 +415,74 @@ describe('GastApp Canónico V2', () => {
         readDocument: async (path) => path === GASTAPP_CANONICAL_V2_CURRENT_PATH ? isolatedMetadata : path === GASTAPP_AURUM_MONTHS_V2_PATH ? isolatedContract : null,
       })).rejects.toBeInstanceOf(GastappCanonicalV2Error);
     }
+  });
+
+  it('mantiene la certificación del mes B cuando sólo cambia históricamente el mes A', async () => {
+    const fixture = cloneSharedFixture();
+    const metadata = fixture.metadata as Record<string, any>;
+    const contract = fixture.months_current as Record<string, any>;
+    const monthA = contract.months[0] as Record<string, any>;
+    const monthB = structuredClone(monthA);
+    monthB.calendarMonthKey = '2026-03';
+    monthB.coverage = { fromYmd: '2026-03-01', toYmd: '2026-03-31' };
+    monthB.monthContractHash = `sha256:${'e'.repeat(64)}`;
+    monthB.calendarCertification.monthContractHash = monthB.monthContractHash;
+    contract.months.push(monthB);
+
+    // A historical edit changes the global provenance and only month A's identity.
+    const nextCanonicalHash = `sha256:${'1'.repeat(64)}`;
+    const nextOperationalHash = `sha256:${'2'.repeat(64)}`;
+    metadata.canonicalDataHash = nextCanonicalHash;
+    metadata.canonicalSnapshotHash = nextCanonicalHash;
+    metadata.operationalDataHash = nextOperationalHash;
+    metadata.operationalRevision = 8;
+    metadata.sourceGeneration = 2;
+    metadata.counts.months = 2;
+    metadata.counts.rowCount = 2;
+    metadata.counts.canonicalRows = 2;
+    metadata.totalsEur.exact = 57;
+    metadata.totalsEur.rowCount = 2;
+    metadata.totalsEur.canonicalRows = 2;
+    metadata.coverage.observedMonths = 2;
+    contract.canonicalDataHash = nextCanonicalHash;
+    contract.canonicalSnapshotHash = nextCanonicalHash;
+    contract.operationalDataHash = nextOperationalHash;
+    contract.operationalRevision = 8;
+    contract.sourceGeneration = 2;
+    contract.rowCount = 2;
+    contract.canonicalRows = 2;
+    contract.totalEur = 57;
+    contract.coverage.observedMonths = 2;
+    monthA.totalEur = 29;
+    monthA.byFamily.day_to_day = 29;
+    monthA.monthContractRevision = 2;
+    monthA.monthContractHash = `sha256:${'3'.repeat(64)}`;
+    monthA.calendarCertification = {
+      status: 'open', certificationRevision: 0, certificationHash: null,
+      monthContractRevision: 2, monthContractHash: monthA.monthContractHash,
+      provenance: { sourceGeneration: 2, operationalRevision: 8, canonicalDataHash: nextCanonicalHash },
+    };
+
+    const readDocument = sharedFixtureReader(fixture);
+    const afterHistoricalEdit = await loadGastappCanonicalV2OfficialMonthContractFresh({ readDocument });
+    expect(afterHistoricalEdit.months).toHaveLength(2);
+    expect(afterHistoricalEdit.months[0].calendarCertification).toBeNull();
+    expect(afterHistoricalEdit.months[1]).toMatchObject({
+      calendarMonthKey: '2026-03',
+      calendarCertification: { status: 'certified', monthContractRevision: 1 },
+    });
+
+    // Recertifying A is sufficient; B's month-local certificate remains intact.
+    monthA.calendarCertification = {
+      status: 'certified', certificationRevision: 2, certificationHash: `sha256:${'4'.repeat(64)}`,
+      monthContractRevision: 2, monthContractHash: monthA.monthContractHash,
+      provenance: { sourceGeneration: 2, operationalRevision: 8, canonicalDataHash: nextCanonicalHash },
+    };
+    const afterRecertification = await loadGastappCanonicalV2OfficialMonthContractFresh({
+      readDocument: sharedFixtureReader(fixture),
+    });
+    expect(afterRecertification.months[0]).toMatchObject({ calendarCertification: { status: 'certified', monthContractRevision: 2 } });
+    expect(afterRecertification.months[1]).toMatchObject({ calendarCertification: { status: 'certified', monthContractRevision: 1 } });
   });
 
   it('conserva estados abiertos/stale/invalidated como no cerrables y rechaza identidad certificada incoherente', async () => {
@@ -824,8 +890,8 @@ describe('GastApp Canónico V2', () => {
     await expect(loadSanitizedWith({ mediaType: 'application/octet-stream' })).rejects.toMatchObject({ code: 'artifact_pointer_invalid' });
   });
 
-  it('mantiene Express y la serie mensual disponibles cuando la ventana Full de 30 minutos está cerrada', async () => {
-    const readDocument = sharedFixtureReader(cloneSharedFixture(), false);
+  it('mantiene Express, Full y la serie mensual bajo el modelo admin-only sin ventana temporal', async () => {
+    const readDocument = sharedFixtureReader(cloneSharedFixture());
 
     await expect(loadGastappDataRoomV2Artifact('express', {
       readDocument,
@@ -837,9 +903,9 @@ describe('GastApp Canónico V2', () => {
       readDocument,
       sha256: sharedFixtureSha256,
       allowFixtureByteArray: true,
-    })).rejects.toMatchObject({ code: 'permission_denied', path: GASTAPP_DATA_ROOM_V2_FULL_PATH });
+    })).resolves.toMatchObject({ mode: 'full' });
 
-    const monthlyReader = sharedFixtureReader(cloneSharedFixture(), false);
+    const monthlyReader = sharedFixtureReader(cloneSharedFixture());
     await expect(loadGastappCanonicalV2MonthContract({
       readDocument: monthlyReader,
       sha256: vi.fn(async () => `sha256:${'f'.repeat(64)}`),

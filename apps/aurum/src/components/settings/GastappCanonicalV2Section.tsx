@@ -48,7 +48,7 @@ export const GastappCanonicalV2Section: React.FC<Props> = ({ state, onRefresh, o
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <div className="text-sm font-semibold text-slate-900">GastApp Canónico V2</div>
-          <div className="text-[11px] text-slate-600">Contratos separados y artefactos ZIP preconstruidos · sólo lectura</div>
+          <div className="text-[11px] text-slate-600">Canonical mensual + Informe resumido/completo · sólo lectura</div>
         </div>
         <Button variant="outline" size="sm" onClick={onRefresh} disabled={state.status === 'loading'}>
           {state.status === 'loading' ? 'Comprobando…' : 'Comprobar actualización'}
@@ -60,9 +60,9 @@ export const GastappCanonicalV2Section: React.FC<Props> = ({ state, onRefresh, o
       </div>
       {showAccessGuidance ? (
         <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-950">
-          <div className="font-semibold">Acceso GastApp cerrado</div>
-          <div className="mt-1">Los contratos mensuales automáticos siguen disponibles. Express usa acceso estable y sólo se lee al pulsar descargar; Full requiere abrir en GastApp la ventana temporal “Data Room para Aurum” durante 30 min.</div>
-          <div className="mt-1">Después pulsa “Comprobar actualización”.</div>
+          <div className="font-semibold">Informe completo no disponible</div>
+          <div className="mt-1">El Informe completo sólo puede leerse con una sesión autenticada de administrador. El Canonical mensual y el Informe resumido siguen disponibles de forma independiente.</div>
+          <div className="mt-1">Comprueba la sesión admin y vuelve a intentarlo.</div>
           {state.technicalDetail && <div className="mt-1 break-words text-[10px] text-amber-900/80">{state.technicalDetail}</div>}
         </div>
       ) : (
@@ -107,17 +107,17 @@ export const GastappCanonicalV2Section: React.FC<Props> = ({ state, onRefresh, o
           <div className="font-semibold text-slate-900">Artefactos preconstruidos</div>
           <div className="mt-1">Backend: <span className="font-semibold">{pointer.storageBackend}</span> · lecturas de descarga: puntero → un artefacto</div>
           <div className="mt-1 grid grid-cols-1 gap-1 sm:grid-cols-2">
-            <div>Express: {pointer.express.bytes.toLocaleString('es-ES')} bytes</div>
+            <div>Informe resumido: {pointer.express.bytes.toLocaleString('es-ES')} bytes</div>
             <div className="break-all">{pointer.express.hash}</div>
             {pointer.full && pointer.fullFreshness ? <>
-              <div>Full: {pointer.full.bytes.toLocaleString('es-ES')} bytes</div>
+              <div>Informe completo: {pointer.full.bytes.toLocaleString('es-ES')} bytes</div>
               <div className="break-all">{pointer.full.hash}</div>
-              <div className="sm:col-span-2">Fecha Full: <span className="font-semibold">{pointer.fullFreshness.generatedAt}</span></div>
-              <div className="sm:col-span-2">Estado Full: <span className={pointer.fullFreshness.isStale ? 'font-semibold text-amber-700' : 'font-semibold text-emerald-700'}>{pointer.fullFreshness.isStale ? 'Stale: snapshot anterior conservado' : 'Fresco: coincide con la operación vigente'}</span></div>
+              <div className="sm:col-span-2">Fecha informe completo: <span className="font-semibold">{pointer.fullFreshness.generatedAt}</span></div>
+              <div className="sm:col-span-2">Estado informe completo: <span className={pointer.fullFreshness.isStale ? 'font-semibold text-amber-700' : 'font-semibold text-emerald-700'}>{pointer.fullFreshness.isStale ? 'Stale: versión anterior conservada' : 'Vigente: coincide con la operación actual'}</span></div>
               <div className="sm:col-span-2 break-all">Hash operacional del snapshot: <span className="font-semibold">{pointer.fullFreshness.snapshotOperationalDataHash}</span></div>
               <div className="sm:col-span-2 break-all">Hash operacional vigente: <span className="font-semibold">{pointer.fullFreshness.currentOperationalDataHash}</span></div>
-              {pointer.fullFreshness.isStale && <div className="sm:col-span-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-950">El Full conserva un snapshot inmutable anterior. No afecta gasto mensual, retornos ni Express.</div>}
-            </> : <div className="sm:col-span-2">Full: <span className="font-semibold">no presente</span></div>}
+              {pointer.fullFreshness.isStale && <div className="sm:col-span-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-950">El informe completo conserva una versión anterior. No afecta gasto mensual, retornos ni informe resumido.</div>}
+            </> : <div className="sm:col-span-2">Informe completo: <span className="font-semibold">no presente</span></div>}
           </div>
         </div>
       )}
@@ -127,9 +127,9 @@ export const GastappCanonicalV2Section: React.FC<Props> = ({ state, onRefresh, o
           const download = state.downloads[mode];
           return (
             <div key={mode} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{mode}</div>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{mode === 'express' ? 'Informe resumido' : 'Informe completo'}</div>
               <Button variant="secondary" size="sm" className="mt-1 w-full" disabled={download.status === 'loading'} onClick={() => onDownload(mode)}>
-                {download.status === 'loading' ? 'Verificando…' : `Descargar ${mode}`}
+                {download.status === 'loading' ? 'Verificando…' : `Descargar ${mode === 'express' ? 'informe resumido' : 'informe completo'}`}
               </Button>
               {!!download.message && <div className="mt-1 whitespace-pre-line break-words text-[10px] text-slate-600">{download.message}</div>}
             </div>

@@ -18,8 +18,8 @@ export const buildFinancialDataRoomReadme = (manifest: FinancialDataRoomManifest
     ? `- GastApp ledger preview: incluido como anexo de validación (${formatLedgerPreviewPeriodRange(manifest.gastapp_ledger_preview_period_range)}).`
     : `- GastApp ledger preview: no disponible en este ZIP (${manifest.gastapp_ledger_preview_status}).`;
   const gastappTransactionsLine = includesTransactions && manifest.gastapp_data_room_v2
-    ? `- GastApp Data Room v2: incluido con transacciones (${manifest.gastapp_data_room_v2.period_summaries_count} resúmenes, ${manifest.gastapp_data_room_v2.row_count} filas).`
-    : '- GastApp Data Room v2: no incluido en este ZIP.';
+    ? `- Informe completo detallado de GastApp: incluido con transacciones (${manifest.gastapp_data_room_v2.period_summaries_count} resúmenes, ${manifest.gastapp_data_room_v2.row_count} filas).`
+    : '- Informe completo detallado de GastApp: no incluido en este ZIP.';
 
   return `# ${includesTransactions ? 'Base financiera con transacciones' : 'Base financiera consolidada'}
 
@@ -30,7 +30,7 @@ Este ZIP contiene una base financiera ${includesTransactions ? 'con transaccione
 - \`02_panel_mensual_consolidado.csv\`: serie mensual consolidada para cruces.
 - \`03_aurum_patrimonio_mensual.csv\` y \`05_aurum_detalle_bloques.csv\`: detalle patrimonial de Aurum.
 - \`09_midas_inputs_resultados.csv\`: inputs y snapshots relevantes de MIDAS.
-${includesTransactions ? '- `gastapp_data_room_v2_period_summaries.csv` y `gastapp_data_room_v2_rows.csv`: capa profunda de GastApp Data Room v2.\n' : ''}
+${includesTransactions ? '- `gastapp_data_room_v2_period_summaries.csv` y `gastapp_data_room_v2_rows.csv`: detalle transaccional histórico de GastApp.\n' : ''}
 ## Alcance de este MVP
 - Aurum: patrimonio mensual, cierres, retornos disponibles y detalle patrimonial.
 - MIDAS: configuración activa, universo instrumental y snapshot público de optimizables.
@@ -46,7 +46,7 @@ ${gastappTransactionsLine}
 - No cambia patrimonio.
 - Por ahora cubre solo los períodos publicados en preview (${ledgerPreviewRangeLabel}).
 
-## GastApp Data Room v2
+## Informe completo detallado de GastApp
 - La capa profunda se descarga solo cuando el usuario la pide explícitamente.
 - Incluye el manifest publicado, resúmenes por período y filas paginadas exportadas a JSON/CSV.
 - Si \`readinessStatus=warning\` pero \`officialRefreshAllowed=true\` y \`blockers=[]\`, este ZIP conserva la advertencia y sigue exportando.

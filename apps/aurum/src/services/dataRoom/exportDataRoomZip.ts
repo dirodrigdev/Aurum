@@ -63,7 +63,7 @@ const assertDataRoomV2ReadyForExport = (manifestResult: GastappDataRoomV2Manifes
   if (manifestResult.status === 'not_usable' && manifestResult.manifest) {
     const manifest = manifestResult.manifest;
     throw new Error(
-      `Data Room v2 existe, pero no está habilitado para descarga oficial. readinessStatus=${manifest.readinessStatus || 'unknown'} · officialRefreshAllowed=${String(manifest.officialRefreshAllowed)} · blockers=${manifest.blockers.join(', ') || '[]'}`,
+      `El informe completo detallado existe, pero no está habilitado para descarga oficial. Estado=${manifest.readinessStatus || 'unknown'} · actualizaciónPermitida=${String(manifest.officialRefreshAllowed)} · bloqueos=${manifest.blockers.join(', ') || '[]'}`,
     );
   }
   throw buildDataRoomV2ExportError(
@@ -165,7 +165,7 @@ export const exportFinancialDataRoomWithTransactionsZip = async (
   const manifestResult = await getGastappDataRoomV2Manifest();
   assertDataRoomV2ReadyForExport(manifestResult);
 
-  options?.onProgress?.('Leyendo manifest y resúmenes de GastApp Data Room v2…');
+  options?.onProgress?.('Leyendo manifest y resúmenes del informe completo detallado de GastApp…');
   const periodSummariesResult = await getGastappDataRoomV2PeriodSummaries();
   if (periodSummariesResult.status !== 'usable') {
     throw buildDataRoomV2ExportError(

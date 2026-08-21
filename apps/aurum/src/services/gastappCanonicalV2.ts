@@ -745,11 +745,10 @@ const strictMonthCertification = (
   assertOfficial(isStrictNonNegativeInteger(operationalRevision), 'La provenance de certificación no contiene revisión operacional válida.', path);
   assertOfficial(typeof canonicalDataHash === 'string' && SHA256_PATTERN.test(canonicalDataHash), 'La provenance de certificación no contiene hash canónico válido.', path);
   if (status !== 'certified' && status !== 'revised') return null;
-  assertOfficial(operationalRevision === metadata.operationalRevision, 'La certificación aceptada pertenece a otra revisión operacional.', path);
-  assertOfficial(canonicalDataHash === metadata.canonicalDataHash, 'La certificación aceptada pertenece a otro snapshot canónico.', path);
-  if (metadata.sourceGeneration !== undefined) {
-    assertOfficial(sourceGeneration === metadata.sourceGeneration, 'La certificación aceptada pertenece a otra generación de fuente.', path);
-  }
+  // Certification validity is month-local.  The month hash/revision above
+  // identify the material contract that was certified; global publication
+  // provenance is retained for audit only and must not invalidate an
+  // otherwise unchanged month when another month is republished.
   return {
     status: status as 'certified' | 'revised',
     certificationRevision: certificationRevision as number,
