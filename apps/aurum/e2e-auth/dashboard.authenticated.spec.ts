@@ -125,7 +125,8 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
   const audit = page.getByTestId('gastapp-canonical-v2-audit');
   await expect(audit).toBeVisible({ timeout: 30_000 });
   await expect(audit).toContainText('Auditoría');
-  await expect(page.getByText('Data Room / Exportaciones', { exact: true })).toBeVisible();
+  await expect(audit).toContainText('No se usó legacy como fallback');
+  await expect(page.getByText('Data Room / Exportaciones', { exact: true })).toHaveCount(0);
 
   await page.screenshot({ path: testInfo.outputPath('aurum-monthly-audit-desktop.png'), fullPage: true });
 

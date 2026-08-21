@@ -5650,31 +5650,11 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
       !sameStringList(mergedDeletedRecordAssetMonthKeys, remoteDeletedRecordAssetMonthKeys) ||
       JSON.stringify(remoteFx) !== JSON.stringify(mergedFx);
 
-    // MIDAS consumes only the FX sealed in the confirmed closure. Local browser
-    // FX remains a UI/cache concern and cannot alter the published snapshot.
-    const publishResult = await publishAurumOptimizableInvestmentsSnapshot(mergedClosures).catch((err: any) => ({
-      ok: false as const,
-      reason: String(err?.message || 'No pude publicar el snapshot Aurum → Midas.'),
-      snapshot: null,
-    }));
-    logFxTrace('hydrate_publish_snapshot', {
-      localFxUsdClp: Number(localFx?.usdClp ?? NaN),
-      remoteFxUsdClp: Number(remoteFx?.usdClp ?? NaN),
-      mergedFxUsdClp: Number(mergedFx?.usdClp ?? NaN),
-      preferLocal: merged.preferLocal,
-      publishedFxClpUsd: Number(publishResult?.snapshot?.fxReference?.clpUsd ?? NaN),
-      publishedFxSource: publishResult?.snapshot?.fxReference?.source ?? null,
-      publishOk: publishResult.ok !== false,
-    });
-    if (publishResult.ok === false) {
-      const publishReason = publishResult.reason;
-      const publishMessage = `midas_publish_error ${publishReason}`.trim();
-      console.error('[Aurum→Midas publish]', publishReason);
-      setLastWealthSyncIssue(publishMessage);
-    } else {
-      setLastWealthSyncIssue('');
-    }
-
+    // Hydration is read-only when local and remote state already agree. Any
+    // material merged change schedules the normal cloud sync below; that sync
+    // publishes MIDAS once after its durable wealth write. Publishing here as
+    // well created a fresh publishedAt and rewrote optimizableInvestments on
+    // every cold open even when the payload was otherwise identical.
     if (cloudNeedsUpdate) scheduleWealthCloudSync(10);
 
     if (!hasLocalData && hasRemoteData) return 'cloud';
