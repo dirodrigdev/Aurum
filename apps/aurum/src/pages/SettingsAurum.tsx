@@ -89,6 +89,7 @@ import {
   validateGastappDataRoomV2FreshnessAgainstMetadata,
   type GastappDataRoomV2ArtifactMode,
 } from '../services/gastappCanonicalV2';
+import { requestGastappFullDownload } from '../services/gastappFullHandoff';
 import { buildGastappAccessGuidanceMessage } from '../services/dataRoom/gastappAccessGuidance';
 import {
   prepareAurumOptimizableInvestmentsSnapshot,
@@ -1132,6 +1133,17 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       },
     }));
     try {
+      if (mode === 'full') {
+        await requestGastappFullDownload();
+        setGastappCanonicalV2Diagnostic((current) => ({
+          ...current,
+          downloads: {
+            ...current.downloads,
+            full: { status: 'ok', message: 'Informe completo descargado.' },
+          },
+        }));
+        return;
+      }
       const artifact = await downloadGastappDataRoomV2Artifact(mode, {
         expectedCanonicalDataHash: gastappCanonicalV2Diagnostic.contracts?.metadata.canonicalDataHash || undefined,
       });
@@ -1141,9 +1153,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
           ...current.downloads,
           [mode]: {
             status: 'ok',
-            message: mode === 'full' && artifact.fullFreshness
-              ? `Informe completo descargado. ${artifact.fullFreshness.isStale ? 'Es una versión anterior y no afecta al gasto mensual oficial ni a los retornos.' : 'Está actualizado.'}`
-              : 'Informe resumido descargado.',
+            message: 'Informe resumido descargado.',
           },
         },
       }));
@@ -1156,9 +1166,11 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
           ...current.downloads,
           [mode]: {
             status: 'error',
-            message: isCanonicalError && error.code === 'permission_denied' && mode === 'full'
-              ? buildGastappAccessGuidanceMessage('4. Comprueba que la sesión admin de GastApp siga activa y vuelve a descargar el Informe completo.', detail)
-              : `No se descargó: ${detail}`,
+            message: mode === 'full'
+              ? 'No se pudo preparar el informe completo. El informe anterior se conserva como respaldo interno.'
+              : isCanonicalError && error.code === 'permission_denied'
+                ? buildGastappAccessGuidanceMessage('4. Comprueba la sesión y vuelve a descargar el informe resumido.', detail)
+                : `No se descargó: ${detail}`,
           },
         },
       }));

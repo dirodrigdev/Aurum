@@ -54,6 +54,7 @@ import {
   downloadGastappDataRoomV2Artifact,
   GastappCanonicalV2Error,
 } from '../services/gastappCanonicalV2';
+import { requestGastappFullDownload } from '../services/gastappFullHandoff';
 
 const loadWealthClosures = () => loadClosures();
 
@@ -483,13 +484,12 @@ export const AnalysisAurum: React.FC = () => {
     setExportingDataRoomKind('transactions');
     setExportMessage('');
     try {
-      const artifact = await downloadGastappDataRoomV2Artifact('full');
-      const freshness = artifact.fullFreshness;
-      setExportMessage(`Informe completo verificado: ${artifact.byteLength.toLocaleString('es-ES')} bytes · ${artifact.sha256} · 2 lecturas documentales · sin reconstrucción. ${freshness ? `Generado: ${freshness.generatedAt}. Hash operacional del snapshot: ${freshness.snapshotOperationalDataHash}. Hash operacional vigente: ${freshness.currentOperationalDataHash}. ${freshness.isStale ? 'Versión stale: no afecta gasto mensual, retornos ni informe resumido.' : 'Versión vigente.'}` : 'Estado de frescura no disponible.'}`);
+      await requestGastappFullDownload();
+      setExportMessage('Informe completo descargado.');
     } catch (error: any) {
       setExportMessage(error instanceof GastappCanonicalV2Error && error.code === 'permission_denied'
-        ? buildGastappAccessGuidanceMessage('4. Comprueba que la sesión admin de GastApp siga activa y vuelve a descargar el Informe completo.', `${error.code} · ${error.path || 'Informe completo'}`)
-        : String(error?.message || error || 'No pude descargar el informe completo.'));
+        ? buildGastappAccessGuidanceMessage('4. Comprueba la sesión admin de GastApp y vuelve a descargar el Informe completo.', `${error.code} · ${error.path || 'Informe completo'}`)
+        : 'No se pudo preparar el informe completo. El informe anterior se conserva como respaldo interno.');
     } finally {
       setExportingDataRoomKind(null);
     }

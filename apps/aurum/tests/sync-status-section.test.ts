@@ -50,7 +50,7 @@ describe('Integración con GastApp en Ajustes', () => {
     expect(describeGastappCanonicalV2DiagnosticState(base('error'))).toBe('error');
   });
 
-  it('muestra la frescura stale de Full sin atribuirla a las métricas mensuales', async () => {
+  it('oculta stale en la vista normal y lo conserva sólo en detalles técnicos', async () => {
     const state = base('ok');
     state.pointer = {
       pointerVersion: 'gastapp-data-room-pointer-v2',
@@ -85,6 +85,9 @@ describe('Integración con GastApp en Ajustes', () => {
       }));
     });
 
+    expect(container.textContent).not.toContain('Informe completo: Versión anterior');
+    expect(container.textContent).not.toContain('Pendiente de actualizar');
+    expect(container.textContent).not.toContain('Versión anterior</span>');
     expect(container.textContent).toContain('Estado informe completo: Versión anterior conservada');
     expect(container.textContent).toContain('Hash operacional del snapshot:');
     expect(container.textContent).toContain('Hash operacional vigente:');

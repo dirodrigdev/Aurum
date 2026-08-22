@@ -92,7 +92,7 @@ export const GastappCanonicalV2Section: React.FC<Props> = ({ state, onRefresh, o
             <div>Revisión operacional: <span className="font-semibold">{contracts.metadata.operationalRevision ?? '—'}</span></div>
             <div>Cobertura: <span className="font-semibold">{contracts.metadata.coverage.completeFromMonthKey || '—'} → {contracts.metadata.coverage.completeThroughMonthKey || '—'}</span></div>
             <div>Estado mensual: <span className="font-semibold">{contracts.months.months.length} meses · {contracts.months.rowCount.toLocaleString('es-ES')} filas</span></div>
-            <div className="sm:col-span-2">Informe completo: <span className={pointer?.fullFreshness?.isStale ? 'font-semibold text-amber-700' : 'font-semibold text-emerald-700'}>{pointer?.fullFreshness?.isStale ? 'Versión anterior' : pointer?.full ? 'Actualizado' : 'No disponible'}</span></div>
+            <div className="sm:col-span-2">Informe completo: <span className={pointer?.full ? 'font-semibold text-emerald-700' : 'font-semibold text-slate-500'}>{pointer?.full ? 'Disponible' : 'No disponible'}</span></div>
           </div>
 
           <details className="mt-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[11px] text-slate-700">
