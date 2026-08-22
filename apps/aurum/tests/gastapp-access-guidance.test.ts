@@ -3,7 +3,6 @@ import {
   buildGastappAccessGuidanceMessage,
   describeGastappAnalysisAccessIssue,
   describeGastappDataRoomV2Status,
-  describeGastappZipExportStatus,
   isGastappPermissionDenied,
 } from '../src/services/dataRoom/gastappAccessGuidance';
 
@@ -55,14 +54,4 @@ describe('gastappAccessGuidance', () => {
     expect(message).toContain('2026-03, 2026-04');
   });
 
-  it('keeps zip exports actionable when GastApp access is closed', () => {
-    const message = describeGastappZipExportStatus({
-      filename: 'financial_data_room_2026-06-23.zip',
-      gastappStatus: 'permission_denied',
-      ledgerPreviewStatus: 'available',
-    });
-    expect(message).toContain('ZIP parcial generado');
-    expect(message).toContain('Descargar base financiera consolidada');
-    expect(message).toContain('GastApp mensual oficial');
-  });
 });

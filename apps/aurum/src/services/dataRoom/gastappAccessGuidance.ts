@@ -1,13 +1,15 @@
-import type {
-  DataRoomSourceStatus,
-  GastappDataRoomV2Status,
-  GastappLedgerPreviewStatus,
-} from './dataRoomTypes';
+type GastappDataRoomV2Status =
+  | 'usable'
+  | 'not_usable'
+  | 'missing_current'
+  | 'missing_run'
+  | 'missing_config'
+  | 'permission_denied'
+  | 'unavailable'
+  | 'error';
 
 type GastappPermissionLikeStatus =
-  | DataRoomSourceStatus
   | GastappDataRoomV2Status
-  | GastappLedgerPreviewStatus
   | string
   | null
   | undefined;
@@ -102,38 +104,4 @@ export const describeGastappAnalysisAccessIssue = (input: {
     return `No se pudo leer months_current de GastApp. No se usó el Informe completo ni una ruta legacy. Detalle: ${input.errorMessage || input.errorCode || 'no disponible'}.`;
   }
   return null;
-};
-
-export const describeGastappZipExportStatus = (input: {
-  filename: string;
-  gastappStatus: DataRoomSourceStatus;
-  ledgerPreviewStatus: GastappLedgerPreviewStatus;
-}) => {
-  const { filename, gastappStatus, ledgerPreviewStatus } = input;
-  if (gastappStatus === 'ok' && (ledgerPreviewStatus === 'available' || ledgerPreviewStatus === 'missing_manifest')) {
-    return `ZIP generado: ${filename} · Ledger preview ${ledgerPreviewStatus}`;
-  }
-  if (
-    isGastappPermissionDenied(gastappStatus) ||
-    isGastappPermissionDenied(ledgerPreviewStatus)
-  ) {
-    const blockedSources = [
-      isGastappPermissionDenied(gastappStatus) ? 'GastApp mensual oficial' : null,
-      isGastappPermissionDenied(ledgerPreviewStatus) ? 'Ledger preview' : null,
-    ].filter(Boolean).join(' + ');
-    return [
-      `ZIP parcial generado: ${filename}`,
-      buildGastappAccessGuidanceMessage(
-        '4. Vuelve a Aurum y presiona “Descargar base financiera consolidada”.',
-        `permission_denied en ${blockedSources}. GastApp=${gastappStatus} · Ledger preview=${ledgerPreviewStatus}.`,
-      ),
-    ].join('\n');
-  }
-  if (gastappStatus === 'not_found' || ledgerPreviewStatus === 'missing_manifest') {
-    return `ZIP parcial generado: ${filename} · Falta una ruta publicada de GastApp. GastApp=${gastappStatus} · Ledger preview=${ledgerPreviewStatus}`;
-  }
-  if (gastappStatus === 'unavailable' || ledgerPreviewStatus === 'unavailable') {
-    return `ZIP parcial generado: ${filename} · Error de red o disponibilidad al leer GastApp. GastApp=${gastappStatus} · Ledger preview=${ledgerPreviewStatus}`;
-  }
-  return `ZIP parcial generado: ${filename} · GastApp ${gastappStatus} · Ledger preview ${ledgerPreviewStatus}`;
 };

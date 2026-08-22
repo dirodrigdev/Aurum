@@ -27,7 +27,7 @@ describe('GastApp runtime legacy boundary', () => {
 
   it('does not import the legacy consolidated exporter from the application runtime', () => {
     const legacyExporter = resolve(sourceRoot, 'services/dataRoom/exportDataRoomZip.ts');
-    expect(statSync(legacyExporter).isFile()).toBe(true);
+    expect(() => statSync(legacyExporter)).toThrow();
 
     const runtimeReferences = sourceFiles(sourceRoot)
       .filter((path) => path !== legacyExporter)

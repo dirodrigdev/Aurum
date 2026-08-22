@@ -156,12 +156,6 @@ vi.mock('../src/services/gastosMonthly', () => ({
 
 vi.mock('../src/services/dataRoom/gastappAccessGuidance', () => ({
   describeGastappAnalysisAccessIssue: () => null,
-  describeGastappZipExportStatus: () => 'ok',
-}));
-
-vi.mock('../src/services/dataRoom/exportDataRoomZip', () => ({
-  exportFinancialDataRoomWithTransactionsZip: vi.fn(),
-  exportFinancialDataRoomZip: vi.fn(),
 }));
 
 import { AnalysisAurum } from '../src/pages/AnalysisAurum';
