@@ -84,6 +84,9 @@ test('authenticated Settings exposes the GastApp Canonical V2 read-only panel re
   await expect(canonicalSection).toContainText('GastApp Canónico V2');
   await expect(canonicalSection).toContainText('sólo lectura');
   await expect(canonicalSection).toContainText('Comprobar actualización');
+  await expect(canonicalSection.getByRole('button', { name: 'Descargar informe resumido', exact: true })).toBeVisible();
+  await expect(canonicalSection.getByRole('button', { name: 'Descargar informe completo', exact: true })).toBeVisible();
+  await expect(canonicalSection.getByText('Data Room / Exportaciones', { exact: true })).toHaveCount(0);
   await expect(page.getByText(/(?:Inversiones actualizadas|Patrimonio actualizado)/, { exact: false })).toHaveCount(0, { timeout: 5_000 });
 
   await page.screenshot({ path: testInfo.outputPath('aurum-gastapp-canonical-v2-desktop.png'), fullPage: true });
