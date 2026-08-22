@@ -13,6 +13,7 @@ import { LabToolsSection } from '../components/settings/LabToolsSection';
 import { HistoricalFxCorrectionConsole } from '../components/settings/HistoricalFxCorrectionConsole';
 import { SyncStatusSection } from '../components/settings/SyncStatusSection';
 import type { GastappCanonicalV2DiagnosticViewState } from '../components/settings/GastappCanonicalV2Section';
+import type { GastappReportExportKind } from '../services/gastappFullHandoff';
 import type { MidasPublicationViewState } from '../components/settings/SyncStatusSection';
 import { TypedConfirmModal } from '../components/settings/TypedConfirmModal';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
@@ -81,16 +82,16 @@ import {
   runDestructiveActionWithBackupGuard,
 } from '../services/settingsDestructiveGuard';
 import {
-  downloadGastappDataRoomV2Artifact,
   GastappCanonicalV2Error,
   loadGastappCanonicalV2ContractsCached,
   loadGastappCanonicalV2ContractsFresh,
   loadGastappDataRoomV2Pointer,
   validateGastappDataRoomV2FreshnessAgainstMetadata,
-  type GastappDataRoomV2ArtifactMode,
 } from '../services/gastappCanonicalV2';
-import { requestGastappFullDownload } from '../services/gastappFullHandoff';
+import { requestGastappReportDownload } from '../services/gastappFullHandoff';
 import { buildGastappAccessGuidanceMessage } from '../services/dataRoom/gastappAccessGuidance';
+// downloadGastappDataRoomV2Artifact is intentionally retired from the UI;
+// report clicks now use the single GastApp XLSX/JSON handoff authority below.
 import {
   prepareAurumOptimizableInvestmentsSnapshot,
   publishAurumOptimizableInvestmentsSnapshot,
@@ -111,8 +112,9 @@ const DEFAULT_GASTAPP_CANONICAL_V2_DIAGNOSTIC: GastappCanonicalV2DiagnosticViewS
   contracts: null,
   pointer: null,
   downloads: {
-    express: { status: 'idle', message: '' },
-    full: { status: 'idle', message: '' },
+    summary_xlsx: { status: 'idle', message: '' },
+    full_xlsx: { status: 'idle', message: '' },
+    ai_json: { status: 'idle', message: '' },
   },
 };
 
@@ -1124,36 +1126,23 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     }
   };
 
-  const downloadGastappCanonicalV2 = async (mode: GastappDataRoomV2ArtifactMode) => {
+  const downloadGastappCanonicalV2 = async (kind: GastappReportExportKind) => {
     setGastappCanonicalV2Diagnostic((current) => ({
       ...current,
       downloads: {
         ...current.downloads,
-        [mode]: { status: 'loading', message: 'Comprobando el informe publicado…' },
+        [kind]: { status: 'loading', message: 'Comprobando el informe publicado…' },
       },
     }));
     try {
-      if (mode === 'full') {
-        await requestGastappFullDownload();
-        setGastappCanonicalV2Diagnostic((current) => ({
-          ...current,
-          downloads: {
-            ...current.downloads,
-            full: { status: 'ok', message: 'Informe completo descargado.' },
-          },
-        }));
-        return;
-      }
-      const artifact = await downloadGastappDataRoomV2Artifact(mode, {
-        expectedCanonicalDataHash: gastappCanonicalV2Diagnostic.contracts?.metadata.canonicalDataHash || undefined,
-      });
+      await requestGastappReportDownload(kind);
       setGastappCanonicalV2Diagnostic((current) => ({
         ...current,
         downloads: {
           ...current.downloads,
-          [mode]: {
+          [kind]: {
             status: 'ok',
-            message: 'Informe resumido descargado.',
+            message: 'Descarga completada.',
           },
         },
       }));
@@ -1164,13 +1153,11 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         ...current,
         downloads: {
           ...current.downloads,
-          [mode]: {
+          [kind]: {
             status: 'error',
-            message: mode === 'full'
-              ? 'No se pudo preparar el informe completo. El informe anterior se conserva como respaldo interno.'
-              : isCanonicalError && error.code === 'permission_denied'
-                ? buildGastappAccessGuidanceMessage('4. Comprueba la sesión y vuelve a descargar el informe resumido.', detail)
-                : `No se descargó: ${detail}`,
+            message: isCanonicalError && error.code === 'permission_denied'
+              ? buildGastappAccessGuidanceMessage('Comprueba la sesión admin en GastApp y vuelve a descargar.', detail)
+              : `No se descargó: ${detail}`,
           },
         },
       }));

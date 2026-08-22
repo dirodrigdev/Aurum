@@ -46,15 +46,9 @@ import {
   getGastappMonthlyRuntimeDiagnostic,
   warmGastappMonthlyContable,
 } from '../services/gastosMonthly';
-import {
-  describeGastappAnalysisAccessIssue,
-  buildGastappAccessGuidanceMessage,
-} from '../services/dataRoom/gastappAccessGuidance';
-import {
-  downloadGastappDataRoomV2Artifact,
-  GastappCanonicalV2Error,
-} from '../services/gastappCanonicalV2';
-import { requestGastappFullDownload } from '../services/gastappFullHandoff';
+import { describeGastappAnalysisAccessIssue } from '../services/dataRoom/gastappAccessGuidance';
+// downloadGastappDataRoomV2Artifact is retired from Analysis; the single
+// INFORMES block in Settings uses the GastApp XLSX/JSON handoff.
 
 const loadWealthClosures = () => loadClosures();
 
@@ -124,8 +118,6 @@ export const AnalysisAurum: React.FC = () => {
   const [wealthSourceVersion, setWealthSourceVersion] = useState(0);
   const [includeEstimatedMonth, setIncludeEstimatedMonth] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [exportMessage, setExportMessage] = useState('');
-  const [exportingDataRoomKind, setExportingDataRoomKind] = useState<'consolidated' | 'transactions' | null>(null);
   const [analysisRefreshTick, setAnalysisRefreshTick] = useState(0);
   const refreshClosures = useCallback(() => {
     const loaded = sortClosuresAsc(loadWealthClosures());
@@ -465,36 +457,6 @@ export const AnalysisAurum: React.FC = () => {
     setAnalysisRefreshTick((current) => current + 1);
   }, [analysisFingerprint, refreshClosures]);
 
-  const handleExportDataRoom = useCallback(async () => {
-    setExportingDataRoomKind('consolidated');
-    setExportMessage('');
-    try {
-      const artifact = await downloadGastappDataRoomV2Artifact('express');
-      setExportMessage(`Informe resumido verificado: ${artifact.byteLength.toLocaleString('es-ES')} bytes · ${artifact.sha256} · 2 lecturas documentales · sin filas.`);
-    } catch (error: any) {
-      setExportMessage(error instanceof GastappCanonicalV2Error && error.code === 'permission_denied'
-        ? buildGastappAccessGuidanceMessage('4. Vuelve a Aurum y presiona “Descargar informe resumido”.', `${error.code} · ${error.path || 'Informe resumido'}`)
-        : String(error?.message || error || 'No pude descargar el informe resumido.'));
-    } finally {
-      setExportingDataRoomKind(null);
-    }
-  }, []);
-
-  const handleExportDataRoomWithTransactions = useCallback(async () => {
-    setExportingDataRoomKind('transactions');
-    setExportMessage('');
-    try {
-      await requestGastappFullDownload();
-      setExportMessage('Informe completo descargado.');
-    } catch (error: any) {
-      setExportMessage(error instanceof GastappCanonicalV2Error && error.code === 'permission_denied'
-        ? buildGastappAccessGuidanceMessage('4. Comprueba la sesión admin de GastApp y vuelve a descargar el Informe completo.', `${error.code} · ${error.path || 'Informe completo'}`)
-        : 'No se pudo preparar el informe completo. El informe anterior se conserva como respaldo interno.');
-    } finally {
-      setExportingDataRoomKind(null);
-    }
-  }, []);
-
   const returnsTabProps: ReturnsTabProps = {
     heroSinceStart,
     heroLast12,
@@ -519,11 +481,6 @@ export const AnalysisAurum: React.FC = () => {
     periodSummaries,
     yearlySummaries,
     wealthEvolutionModel,
-    onExportConsolidatedDataRoom: handleExportDataRoom,
-    onExportTransactionalDataRoom: handleExportDataRoomWithTransactions,
-    exportMessage,
-    exportingConsolidatedDataRoom: exportingDataRoomKind === 'consolidated',
-    exportingTransactionalDataRoom: exportingDataRoomKind === 'transactions',
   };
 
   return (

@@ -3,9 +3,9 @@ import { Button, Card } from '../Components';
 import type {
   GastappCanonicalV2Contracts,
   GastappCanonicalV2ReadCode,
-  GastappDataRoomV2ArtifactMode,
   GastappDataRoomV2Pointer,
 } from '../../services/gastappCanonicalV2';
+import type { GastappReportExportKind } from '../../services/gastappFullHandoff';
 
 export type GastappCanonicalV2DownloadState = {
   status: 'idle' | 'loading' | 'ok' | 'error';
@@ -19,7 +19,7 @@ export type GastappCanonicalV2DiagnosticViewState = {
   errorCode: GastappCanonicalV2ReadCode | null;
   contracts: GastappCanonicalV2Contracts | null;
   pointer: GastappDataRoomV2Pointer | null;
-  downloads: Record<GastappDataRoomV2ArtifactMode, GastappCanonicalV2DownloadState>;
+  downloads: Record<GastappReportExportKind, GastappCanonicalV2DownloadState>;
 };
 
 export const describeGastappCanonicalV2DiagnosticState = (
@@ -33,7 +33,7 @@ export const describeGastappCanonicalV2DiagnosticState = (
 type Props = {
   state: GastappCanonicalV2DiagnosticViewState;
   onRefresh: () => void;
-  onDownload: (mode: GastappDataRoomV2ArtifactMode) => void;
+  onDownload: (kind: GastappReportExportKind) => void;
 };
 
 const statusLabel = (status: GastappCanonicalV2DiagnosticViewState['status']) =>
@@ -147,19 +147,26 @@ export const GastappCanonicalV2Section: React.FC<Props> = ({ state, onRefresh, o
         </details>
       )}
 
-      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {(['express', 'full'] as const).map((mode) => {
-          const download = state.downloads[mode];
-          return (
-            <div key={mode} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{mode === 'express' ? 'Informe resumido' : 'Informe completo'}</div>
-              <Button variant="secondary" size="sm" className="mt-1 w-full" disabled={download.status === 'loading'} onClick={() => onDownload(mode)}>
-                {download.status === 'loading' ? 'Verificando…' : `Descargar ${mode === 'express' ? 'informe resumido' : 'informe completo'}`}
-              </Button>
-              {!!download.message && <div className="mt-1 whitespace-pre-line break-words text-[10px] text-slate-600">{download.message}</div>}
-            </div>
-          );
-        })}
+      <div className="mt-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2" data-testid="gastapp-reports-block">
+        <div className="text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">INFORMES</div>
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+          {([
+            ['summary_xlsx', 'Descargar informe resumido (.xlsx)'],
+            ['full_xlsx', 'Descargar informe completo (.xlsx)'],
+            ['ai_json', 'Descargar datos para IA (.json)'],
+          ] as const).map(([kind, label]) => {
+            const legacyDownloads = state.downloads as typeof state.downloads & { express?: GastappCanonicalV2DownloadState; full?: GastappCanonicalV2DownloadState };
+            const download = state.downloads[kind] || (kind === 'summary_xlsx' ? legacyDownloads.express : legacyDownloads.full) || { status: 'idle' as const, message: '' };
+            return (
+              <div key={kind} className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
+                <Button variant="secondary" size="sm" className="w-full" disabled={download.status === 'loading'} onClick={() => onDownload(kind)}>
+                  {download.status === 'loading' ? 'Comprobando…' : label}
+                </Button>
+                {!!download.message && <div className="mt-1 whitespace-pre-line break-words text-[10px] text-slate-600">{download.message}</div>}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </Card>
   );

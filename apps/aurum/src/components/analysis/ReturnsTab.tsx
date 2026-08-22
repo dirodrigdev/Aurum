@@ -1,5 +1,5 @@
 import React from 'react';
-import { CalendarDays, ChevronDown, Download, LineChart, Zap } from 'lucide-react';
+import { CalendarDays, ChevronDown, LineChart, Zap } from 'lucide-react';
 import { Card, cn } from '../Components';
 import type { WealthCurrency } from '../../services/wealthStorage';
 import { formatCurrency, formatIsoDateTime, formatMonthLabel as monthLabel } from '../../utils/wealthFormat';
@@ -185,11 +185,6 @@ export type ReturnsTabProps = {
   periodSummaries: AggregatedSummary[];
   yearlySummaries: AggregatedSummary[];
   wealthEvolutionModel: WealthEvolutionComparisonModel;
-  onExportConsolidatedDataRoom: () => void;
-  onExportTransactionalDataRoom: () => void;
-  exportMessage: string;
-  exportingConsolidatedDataRoom: boolean;
-  exportingTransactionalDataRoom: boolean;
   visualVariant?: 'official' | 'calendar-control';
 };
 
@@ -1052,11 +1047,6 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   periodSummaries,
   yearlySummaries,
   wealthEvolutionModel,
-  onExportConsolidatedDataRoom,
-  onExportTransactionalDataRoom,
-  exportMessage,
-  exportingConsolidatedDataRoom,
-  exportingTransactionalDataRoom,
   visualVariant = 'official',
 }) => {
   const estimatedToggleId = React.useId();
@@ -1783,47 +1773,6 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
             )}
           </tbody>
         </table>
-      </div>
-    </Card>
-
-    <Card className="border-slate-200 p-3">
-      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Informes GastApp</div>
-      <div className="mt-0.5 text-[11px] text-slate-500">
-        Artefactos preconstruidos de GastApp; estas descargas no reconstruyen datos ni cambian la serie mensual.
-      </div>
-      <div className="mt-3 grid gap-2 md:grid-cols-2">
-        <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Informe resumido</div>
-          <button
-            type="button"
-            onClick={onExportConsolidatedDataRoom}
-            disabled={exportingConsolidatedDataRoom || exportingTransactionalDataRoom}
-            className="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-[12px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <Download size={13} />
-            {exportingConsolidatedDataRoom ? 'Verificando…' : 'Descargar informe resumido'}
-          </button>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Informe completo</div>
-          <button
-            type="button"
-            onClick={onExportTransactionalDataRoom}
-            disabled={exportingConsolidatedDataRoom || exportingTransactionalDataRoom}
-            className="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-[12px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <Download size={13} />
-            {exportingTransactionalDataRoom ? 'Verificando…' : 'Descargar informe completo'}
-          </button>
-        </div>
-      </div>
-      {!!exportMessage && (
-        <div className="mt-3 whitespace-pre-line rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-600">
-          {exportMessage}
-        </div>
-      )}
-      <div className="mt-2 text-[10px] text-slate-500">
-        El Informe resumido y el Informe completo se descargan sólo bajo demanda. El Informe completo requiere una sesión admin autenticada. Ninguna descarga se ejecuta al abrir Settings o Analysis.
       </div>
     </Card>
 
