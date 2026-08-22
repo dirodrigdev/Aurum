@@ -55,8 +55,8 @@ export const SyncStatusSection: React.FC<SyncStatusSectionProps> = ({
     <Card className="border border-slate-200 bg-white p-3">
       <button type="button" className="w-full flex items-center justify-between text-left" onClick={onToggle}>
         <div>
-          <div className="text-sm font-semibold text-slate-900">Sincronización</div>
-          <div className="text-[11px] text-slate-500">Estado Firestore y sesión</div>
+          <div className="text-sm font-semibold text-slate-900">Integración con GastApp</div>
+          <div className="text-[11px] text-slate-500">Estado de conexión, sesión e informes</div>
         </div>
         <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>

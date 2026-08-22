@@ -36,7 +36,7 @@ const base = (status: GastappCanonicalV2DiagnosticViewState['status']): GastappC
   },
 });
 
-describe('GastApp Canónico V2 diagnostic label', () => {
+describe('Integración con GastApp en Ajustes', () => {
   it('maps loading to loading', () => {
     expect(describeGastappCanonicalV2DiagnosticState(base('loading'))).toBe('loading');
   });
@@ -85,10 +85,14 @@ describe('GastApp Canónico V2 diagnostic label', () => {
       }));
     });
 
-    expect(container.textContent).toContain('Estado informe completo: Stale: versión anterior conservada');
+    expect(container.textContent).toContain('Estado informe completo: Versión anterior conservada');
     expect(container.textContent).toContain('Hash operacional del snapshot:');
     expect(container.textContent).toContain('Hash operacional vigente:');
-    expect(container.textContent).toContain('No afecta gasto mensual, retornos ni informe resumido.');
+    expect(container.textContent).toContain('No afecta el gasto mensual oficial, los retornos ni el informe resumido.');
+    expect(container.textContent).toContain('Integración con GastApp');
+    expect(container.textContent).not.toContain('Data Room');
+    expect(container.querySelector('details[open]')).toBeNull();
+    expect(container.querySelector('a[href="https://gastapp-chi.vercel.app"]')).toBeTruthy();
   });
 });
 

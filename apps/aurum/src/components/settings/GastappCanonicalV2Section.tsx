@@ -47,23 +47,39 @@ export const GastappCanonicalV2Section: React.FC<Props> = ({ state, onRefresh, o
     <Card className="border border-emerald-200 bg-emerald-50/30 p-3" data-testid="gastapp-canonical-v2-section">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <div className="text-sm font-semibold text-slate-900">GastApp Canónico V2</div>
-          <div className="text-[11px] text-slate-600">Canonical mensual + Informe resumido/completo · sólo lectura</div>
+          <div className="text-sm font-semibold text-slate-900">Integración con GastApp</div>
+          <div className="text-[11px] text-slate-600">Gasto mensual oficial e informes · sólo lectura</div>
         </div>
-        <Button variant="outline" size="sm" onClick={onRefresh} disabled={state.status === 'loading'}>
-          {state.status === 'loading' ? 'Comprobando…' : 'Comprobar actualización'}
-        </Button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <a
+            data-testid="open-gastapp-link"
+            href="https://gastapp-chi.vercel.app"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex min-h-9 items-center rounded-lg border border-slate-200 bg-white px-3 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50"
+          >
+            Abrir GastApp
+          </a>
+          <Button variant="outline" size="sm" onClick={onRefresh} disabled={state.status === 'loading'}>
+            {state.status === 'loading' ? 'Comprobando…' : 'Comprobar actualización'}
+          </Button>
+        </div>
       </div>
 
-      <div className="mt-2 text-[11px] text-slate-700">
-        Estado: <span className="font-semibold">{statusLabel(state.status)}</span>
+      <div className="mt-2 rounded-lg border border-emerald-200 bg-white px-2.5 py-2 text-[11px] text-slate-700">
+        Estado de integración: <span className="font-semibold">{statusLabel(state.status)}</span>
       </div>
       {showAccessGuidance ? (
         <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-950">
           <div className="font-semibold">Informe completo no disponible</div>
           <div className="mt-1">El Informe completo sólo puede leerse con una sesión autenticada de administrador. El Canonical mensual y el Informe resumido siguen disponibles de forma independiente.</div>
           <div className="mt-1">Comprueba la sesión admin y vuelve a intentarlo.</div>
-          {state.technicalDetail && <div className="mt-1 break-words text-[10px] text-amber-900/80">{state.technicalDetail}</div>}
+          {state.technicalDetail && (
+            <details className="mt-2 text-[10px] text-amber-900/80">
+              <summary className="cursor-pointer font-semibold">Detalles técnicos</summary>
+              <div className="mt-1 break-words">{state.technicalDetail}</div>
+            </details>
+          )}
         </div>
       ) : (
         <div className="mt-2 whitespace-pre-line text-[11px] text-slate-600">{state.message}</div>
@@ -71,7 +87,17 @@ export const GastappCanonicalV2Section: React.FC<Props> = ({ state, onRefresh, o
 
       {contracts && (
         <>
-          <div className="mt-3 grid grid-cols-1 gap-1 rounded-lg border border-emerald-200 bg-white px-2.5 py-2 text-[11px] text-slate-700 sm:grid-cols-2">
+          <div className="mt-2 grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-[11px] text-slate-700 sm:grid-cols-2">
+            <div>Última actualización: <span className="font-semibold">{contracts.metadata.generatedAt || 'sin fecha'}</span></div>
+            <div>Revisión operacional: <span className="font-semibold">{contracts.metadata.operationalRevision ?? '—'}</span></div>
+            <div>Cobertura: <span className="font-semibold">{contracts.metadata.coverage.completeFromMonthKey || '—'} → {contracts.metadata.coverage.completeThroughMonthKey || '—'}</span></div>
+            <div>Estado mensual: <span className="font-semibold">{contracts.months.months.length} meses · {contracts.months.rowCount.toLocaleString('es-ES')} filas</span></div>
+            <div className="sm:col-span-2">Informe completo: <span className={pointer?.fullFreshness?.isStale ? 'font-semibold text-amber-700' : 'font-semibold text-emerald-700'}>{pointer?.fullFreshness?.isStale ? 'Versión anterior' : pointer?.full ? 'Actualizado' : 'No disponible'}</span></div>
+          </div>
+
+          <details className="mt-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[11px] text-slate-700">
+            <summary className="cursor-pointer font-semibold text-slate-900">Detalles técnicos</summary>
+            <div className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2">
             <div>Proyecto: <span className="font-semibold">duofin-c1894</span></div>
             <div>Hash canónico: <span className="font-semibold break-all">{contracts.metadata.canonicalDataHash}</span></div>
             <div>Última publicación: <span className="font-semibold">{contracts.metadata.generatedAt || 'sin fecha'}</span></div>
@@ -84,7 +110,6 @@ export const GastappCanonicalV2Section: React.FC<Props> = ({ state, onRefresh, o
             <div>Cobertura completa: <span className="font-semibold">{contracts.metadata.coverage.completeFromMonthKey || '—'} → {contracts.metadata.coverage.completeThroughMonthKey || '—'}</span></div>
             <div>Fronteras parciales: <span className="font-semibold">{contracts.metadata.coverage.partialBoundaryMonths.join(', ') || '—'}</span></div>
           </div>
-
           <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
             <div className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[11px] text-slate-700">
               <div className="font-semibold text-slate-900">Períodos reales</div>
@@ -99,27 +124,27 @@ export const GastappCanonicalV2Section: React.FC<Props> = ({ state, onRefresh, o
               <div>{contracts.months.months.length} meses · {contracts.months.rowCount.toLocaleString('es-ES')} filas · {contracts.months.totalEur.toLocaleString('es-ES', { minimumFractionDigits: 2 })} €</div>
             </div>
           </div>
+          </details>
         </>
       )}
 
       {pointer && (
-        <div className="mt-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[11px] text-slate-700">
-          <div className="font-semibold text-slate-900">Artefactos preconstruidos</div>
-          <div className="mt-1">Backend: <span className="font-semibold">{pointer.storageBackend}</span> · lecturas de descarga: puntero → un artefacto</div>
-          <div className="mt-1 grid grid-cols-1 gap-1 sm:grid-cols-2">
+        <details className="mt-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[11px] text-slate-700">
+          <summary className="cursor-pointer font-semibold text-slate-900">Detalles técnicos de los informes</summary>
+          <div className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2">
             <div>Informe resumido: {pointer.express.bytes.toLocaleString('es-ES')} bytes</div>
             <div className="break-all">{pointer.express.hash}</div>
             {pointer.full && pointer.fullFreshness ? <>
               <div>Informe completo: {pointer.full.bytes.toLocaleString('es-ES')} bytes</div>
               <div className="break-all">{pointer.full.hash}</div>
               <div className="sm:col-span-2">Fecha informe completo: <span className="font-semibold">{pointer.fullFreshness.generatedAt}</span></div>
-              <div className="sm:col-span-2">Estado informe completo: <span className={pointer.fullFreshness.isStale ? 'font-semibold text-amber-700' : 'font-semibold text-emerald-700'}>{pointer.fullFreshness.isStale ? 'Stale: versión anterior conservada' : 'Vigente: coincide con la operación actual'}</span></div>
+              <div className="sm:col-span-2">Estado informe completo: <span className={pointer.fullFreshness.isStale ? 'font-semibold text-amber-700' : 'font-semibold text-emerald-700'}>{pointer.fullFreshness.isStale ? 'Versión anterior conservada' : 'Actualizado'}</span></div>
               <div className="sm:col-span-2 break-all">Hash operacional del snapshot: <span className="font-semibold">{pointer.fullFreshness.snapshotOperationalDataHash}</span></div>
               <div className="sm:col-span-2 break-all">Hash operacional vigente: <span className="font-semibold">{pointer.fullFreshness.currentOperationalDataHash}</span></div>
-              {pointer.fullFreshness.isStale && <div className="sm:col-span-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-950">El informe completo conserva una versión anterior. No afecta gasto mensual, retornos ni informe resumido.</div>}
+              {pointer.fullFreshness.isStale && <div className="sm:col-span-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-950">El informe completo conserva una versión anterior. No afecta el gasto mensual oficial, los retornos ni el informe resumido.</div>}
             </> : <div className="sm:col-span-2">Informe completo: <span className="font-semibold">no presente</span></div>}
           </div>
-        </div>
+        </details>
       )}
 
       <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">

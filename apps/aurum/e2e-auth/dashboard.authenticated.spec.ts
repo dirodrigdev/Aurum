@@ -42,7 +42,7 @@ test('authenticated Settings can regenerate the canonical MIDAS publication', as
   const dismissIncompleteClosure = page.getByRole('button', { name: 'Omitir', exact: true });
   await expect(dismissIncompleteClosure).toBeVisible({ timeout: 30_000 });
   await dismissIncompleteClosure.click();
-  const syncSection = page.getByRole('button', { name: /Sincronización/ });
+  const syncSection = page.getByRole('button', { name: /Integración con GastApp/ });
   await expect(syncSection).toBeVisible({ timeout: 30_000 });
   await syncSection.click();
 
@@ -77,11 +77,16 @@ test('authenticated Settings exposes the GastApp Canonical V2 read-only panel re
   const dismissIncompleteClosure = page.getByRole('button', { name: 'Omitir', exact: true });
   await expect(dismissIncompleteClosure).toBeVisible({ timeout: 30_000 });
   await dismissIncompleteClosure.click();
-  await page.getByRole('button', { name: /Sincronización/ }).click();
+  await page.getByRole('button', { name: /Integración con GastApp/ }).click();
 
   const canonicalSection = page.getByTestId('gastapp-canonical-v2-section');
   await expect(canonicalSection).toBeVisible({ timeout: 30_000 });
-  await expect(canonicalSection).toContainText('GastApp Canónico V2');
+  await expect(canonicalSection).toContainText('Integración con GastApp');
+  const gastappLink = canonicalSection.getByRole('link', { name: 'Abrir GastApp', exact: true });
+  await expect(gastappLink).toHaveAttribute('href', 'https://gastapp-chi.vercel.app');
+  await expect(gastappLink).toHaveAttribute('target', '_blank');
+  await expect(gastappLink).toHaveAttribute('rel', 'noopener noreferrer');
+  await expect(canonicalSection.locator('details[open]')).toHaveCount(0);
   await expect(canonicalSection).toContainText('sólo lectura');
   await expect(canonicalSection).toContainText('Comprobar actualización');
   await expect(canonicalSection.getByRole('button', { name: 'Descargar informe resumido', exact: true })).toBeVisible();

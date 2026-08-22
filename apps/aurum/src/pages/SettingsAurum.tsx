@@ -104,7 +104,7 @@ const BANKS_UPDATE_MODE_KEY = 'aurum.banks.update.mode.v1';
 const BANKS_UPDATE_MODE_CHANGED_EVENT = 'aurum:banks:update-mode';
 const DEFAULT_GASTAPP_CANONICAL_V2_DIAGNOSTIC: GastappCanonicalV2DiagnosticViewState = {
   status: 'idle',
-  message: 'Abre esta sección para leer los contratos Canónico V2 y el puntero de artefactos.',
+  message: 'Abre esta sección para comprobar el gasto mensual oficial y los informes publicados.',
   technicalDetail: null,
   errorCode: null,
   contracts: null,
@@ -1057,7 +1057,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       status: 'loading',
       message: forceFresh
         ? 'Comprobando actualización publicada de GastApp…'
-        : 'Leyendo metadata, contratos y puntero Canónico V2…',
+        : 'Comprobando estado e informes publicados…',
       technicalDetail: null,
       errorCode: null,
     }));
@@ -1087,7 +1087,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         if (error instanceof GastappCanonicalV2Error) {
           pointerError = error;
         } else {
-          pointerError = new GastappCanonicalV2Error('unavailable', String(error || 'No se pudo leer el puntero de informes.'), null, { cause: error });
+          pointerError = new GastappCanonicalV2Error('unavailable', String(error || 'No se pudieron leer los informes publicados.'), null, { cause: error });
         }
       }
       setGastappCanonicalV2Diagnostic((current) => ({
@@ -1096,10 +1096,10 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         message: pointerError?.code === 'permission_denied'
           ? 'Contratos mensuales verificados automáticamente. El Informe completo requiere una sesión admin autenticada.'
           : pointerError
-            ? `Contratos mensuales verificados automáticamente. El puntero de informes no está disponible ahora (${pointerError.code}). Las métricas mensuales no dependen de ese estado.`
+            ? `El gasto mensual oficial está verificado. Los informes no están disponibles ahora (${pointerError.code}); esto no afecta a las métricas mensuales.`
             : forceFresh
-              ? `Comprobación forzada completada: publicación ${publicationDate}, ${publicationRevision}${publicationChanged ? '. Hay una publicación más nueva.' : '. No cambió desde la comprobación anterior.'} Sólo se leyeron los contratos y el puntero; no se leyeron filas ni se reconstruyó ningún ZIP.`
-              : `Contratos y puntero verificados. Última publicación: ${publicationDate} (${publicationRevision}). No se han leído filas ni se ha reconstruido ningún ZIP.`,
+              ? `Comprobación completada: publicación ${publicationDate}, ${publicationRevision}${publicationChanged ? '. Hay una publicación más nueva.' : '. No cambió desde la comprobación anterior.'} No se leyeron filas ni se reconstruyeron informes.`
+              : `Estado e informes verificados. Última publicación: ${publicationDate} (${publicationRevision}). No se leyeron filas ni se reconstruyeron informes.`,
         technicalDetail: pointerError ? `${pointerError.code} · ${pointerError.path || 'Informes GastApp'}` : null,
         errorCode: pointerError?.code || null,
         contracts,
@@ -1114,7 +1114,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         status: 'error',
         message: code === 'permission_denied'
           ? 'El Informe completo requiere una sesión admin autenticada en GastApp. Comprueba la cuenta y reintenta.'
-          : String(error?.message || error || 'No se pudo leer GastApp Canónico V2.'),
+          : String(error?.message || error || 'No se pudo comprobar la integración con GastApp.'),
         technicalDetail: path ? `${code} · ${path}` : code,
         errorCode: code,
         contracts: null,
@@ -1128,7 +1128,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       ...current,
       downloads: {
         ...current.downloads,
-        [mode]: { status: 'loading', message: 'Leyendo puntero y verificando el ZIP…' },
+        [mode]: { status: 'loading', message: 'Comprobando el informe publicado…' },
       },
     }));
     try {
@@ -1142,8 +1142,8 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
           [mode]: {
             status: 'ok',
             message: mode === 'full' && artifact.fullFreshness
-              ? `Descarga ofrecida tras verificar ${artifact.byteLength.toLocaleString('es-ES')} bytes · ${artifact.sha256} · ${artifact.fullFreshness.isStale ? 'Informe completo stale: no afecta gasto mensual ni retornos.' : 'Informe completo vigente.'}`
-              : `Descarga ofrecida tras verificar ${artifact.byteLength.toLocaleString('es-ES')} bytes · ${artifact.sha256}`,
+              ? `Informe completo descargado. ${artifact.fullFreshness.isStale ? 'Es una versión anterior y no afecta al gasto mensual oficial ni a los retornos.' : 'Está actualizado.'}`
+              : 'Informe resumido descargado.',
           },
         },
       }));
@@ -2348,22 +2348,26 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       </Card>
 
       <Card className="border border-slate-200 bg-white p-3">
-        <div className="text-sm font-semibold text-slate-900">Herramientas de auditoría</div>
-        <div className="mt-1 text-[11px] text-slate-500">Operaciones históricas protegidas y trazables</div>
-        <div className="mt-3">
-          <HistoricalFxCorrectionConsole
-            authEmail={authEmail}
-            onApplied={async (cloudRead) => {
-              const current = loadClosures();
-              const authoritative = cloudRead.closure as WealthMonthlyClosure;
-              const next = current.some((closure) => closure.monthKey === authoritative.monthKey)
-                ? current.map((closure) => closure.monthKey === authoritative.monthKey ? authoritative : closure)
-                : [...current, authoritative];
-              saveClosures(next, { skipCloudSync: true, silent: true });
-              refreshLocalState();
-            }}
-          />
-        </div>
+        <details>
+          <summary className="cursor-pointer list-none text-sm font-semibold text-slate-900">
+            Mantenimiento avanzado
+            <span className="mt-1 block text-[11px] font-normal text-slate-500">Operaciones históricas protegidas y trazables</span>
+          </summary>
+          <div className="mt-3">
+            <HistoricalFxCorrectionConsole
+              authEmail={authEmail}
+              onApplied={async (cloudRead) => {
+                const current = loadClosures();
+                const authoritative = cloudRead.closure as WealthMonthlyClosure;
+                const next = current.some((closure) => closure.monthKey === authoritative.monthKey)
+                  ? current.map((closure) => closure.monthKey === authoritative.monthKey ? authoritative : closure)
+                  : [...current, authoritative];
+                saveClosures(next, { skipCloudSync: true, silent: true });
+                refreshLocalState();
+              }}
+            />
+          </div>
+        </details>
       </Card>
 
       <LabToolsSection
