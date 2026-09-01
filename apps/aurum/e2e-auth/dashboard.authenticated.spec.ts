@@ -190,6 +190,17 @@ test('authenticated Analysis keeps GastApp-closed month visible as Aurum P and s
   await expect(page.getByRole('checkbox', { name: 'Incluir parcial actual (P) en cálculos' })).toHaveCount(1);
   await expect(page.getByText(/GastApp cerrado oficialmente · cierre Aurum pendiente/)).toBeVisible();
   await expect(page.getByRole('button', { name: /Mes provisional de Aurum/ })).toBeVisible();
+  const breakdownTrigger = page.getByRole('button', { name: /Ver desglose de GastApp de/ }).first();
+  await expect(breakdownTrigger).toBeVisible();
+  await breakdownTrigger.click();
+  const breakdownDialog = page.getByRole('dialog', { name: 'Desglose de GastApp' });
+  await expect(breakdownDialog).toContainText('Día a día');
+  await expect(breakdownDialog).toContainText('Viajes');
+  await expect(breakdownDialog).toContainText('Otros');
+  await expect(breakdownDialog).toContainText('Total cierre calendario');
+  await expect(breakdownDialog).toContainText('sólo consulta');
+  await breakdownDialog.getByRole('button', { name: 'Cerrar desglose de GastApp' }).click();
+  await expect(page.getByRole('dialog', { name: 'Desglose de GastApp' })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('aurum-returns-closed-desktop.png'), fullPage: true });
 
   await page.setViewportSize({ width: 768, height: 1024 });

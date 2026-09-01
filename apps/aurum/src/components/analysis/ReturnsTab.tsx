@@ -1,5 +1,5 @@
 import React from 'react';
-import { CalendarDays, ChevronDown, LineChart, Zap } from 'lucide-react';
+import { CalendarDays, ChevronDown, Info, LineChart, X, Zap } from 'lucide-react';
 import { Card, cn } from '../Components';
 import type { WealthCurrency } from '../../services/wealthStorage';
 import { formatCurrency, formatIsoDateTime, formatMonthLabel as monthLabel } from '../../utils/wealthFormat';
@@ -17,7 +17,7 @@ import type {
   ReturnCurvePoint,
 } from './types';
 import { buildSmartVisualDomain } from './chartVisuals';
-import { buildReturnSpendInsight, formatCompactCurrency, formatPct, xLabelFromMonthKey } from './shared';
+import { buildReturnSpendInsight, convertFromClp, formatCompactCurrency, formatPct, xLabelFromMonthKey } from './shared';
 
 const MONTH_SHORT_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'] as const;
 
@@ -60,6 +60,86 @@ const spendTrustTone = (severity: SpendTrustSeverity) => {
   if (severity === 'warning') return 'border-amber-200 bg-amber-50/60 text-amber-900';
   return 'border-rose-200 bg-rose-50/70 text-rose-800';
 };
+
+const GastappBreakdownDialog: React.FC<{
+  row: MonthlyReturnRow;
+  currency: WealthCurrency;
+  onClose: () => void;
+}> = ({ row, currency, onClose }) => {
+  const family = row.partialByFamilyEur;
+  if (!family) return null;
+  const toDisplay = (valueEur: number) => convertFromClp(valueEur * row.fx.eurClp, currency, row.fx);
+  const totalEur = row.partialGastosEur ?? family.dayToDay + family.trips + family.others;
+  const families = [
+    { key: 'dayToDay', label: 'Día a día', valueEur: family.dayToDay },
+    { key: 'trips', label: 'Viajes', valueEur: family.trips },
+    { key: 'others', label: 'Otros', valueEur: family.others },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4" role="presentation">
+      <button type="button" className="absolute inset-0 cursor-default" aria-label="Cerrar desglose de GastApp" onClick={onClose} />
+      <div
+        className="relative z-10 w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="gastapp-breakdown-title"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <Info size={16} className="text-blue-600" />
+              <span id="gastapp-breakdown-title">Desglose de GastApp</span>
+            </div>
+            <div className="mt-0.5 text-[11px] text-slate-500">{monthLabel(row.monthKey)} · sólo consulta</div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+            aria-label="Cerrar desglose de GastApp"
+          >
+            <X size={17} />
+          </button>
+        </div>
+
+        <div className="mt-3 divide-y divide-slate-100 rounded-xl border border-slate-200 bg-slate-50">
+          {families.map((item) => (
+            <div key={item.key} className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
+              <span className="text-slate-600">{item.label}</span>
+              <span className="font-semibold text-slate-900">{formatCurrency(toDisplay(item.valueEur), currency)}</span>
+            </div>
+          ))}
+          <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs font-semibold">
+            <span className="text-slate-900">Total cierre calendario</span>
+            <span className="text-blue-700">{formatCurrency(toDisplay(totalEur), currency)}</span>
+          </div>
+        </div>
+
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-900">
+          GastApp ya publicó este cierre calendario. El mes sigue como <strong>P</strong> porque Aurum aún no ha formalizado su cierre patrimonial.
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const GastappBreakdownTrigger: React.FC<{
+  row: MonthlyReturnRow;
+  onOpen: (row: MonthlyReturnRow) => void;
+  children: React.ReactNode;
+}> = ({ row, onOpen, children }) => (
+  <button
+    type="button"
+    onClick={() => onOpen(row)}
+    className="inline-flex items-center gap-1 underline decoration-dotted underline-offset-2 hover:text-blue-700"
+    aria-label={`Ver desglose de GastApp de ${monthLabel(row.monthKey)}`}
+    title="Ver desglose de GastApp"
+  >
+    {children}
+    <Info size={11} aria-hidden="true" />
+  </button>
+);
 
 const coverageLabel = (item: AggregatedSummary) => {
   const suffix = item.coverage.status === 'complete' ? '' : ` · ${item.coverage.status === 'partial' ? 'parcial' : 'insuficiente'}`;
@@ -1053,6 +1133,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   const [isSpendTrustExpanded, setIsSpendTrustExpanded] = React.useState(false);
   const [isProvisionalExpanded, setIsProvisionalExpanded] = React.useState(false);
   const [isOfficialNoticeDismissed, setIsOfficialNoticeDismissed] = React.useState(false);
+  const [gastappBreakdownRow, setGastappBreakdownRow] = React.useState<MonthlyReturnRow | null>(null);
   React.useEffect(() => {
     setIsOfficialNoticeDismissed(false);
   }, [officialAvailabilityNotice?.monthKey]);
@@ -1231,6 +1312,9 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   const mainPendingOfficial = pendingOfficialRows[0] || null;
   const provisionalEstimate = pendingEstimateDetail;
   const gastappOfficialForProvisional = Boolean(provisionalEstimate?.gastappOfficialForProvisional);
+  const provisionalBreakdownRow = provisionalEstimate
+    ? monthlyRowsDesc.find((row) => row.monthKey === provisionalEstimate.monthKey && row.partialByFamilyEur)
+    : null;
   const partialMethodLabel = gastappOfficialForProvisional
     ? 'gasto oficial del cierre calendario de GastApp'
     : 'avance parcial real de GastApp';
@@ -1764,7 +1848,9 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                       ? 'Faltante'
                       : row.gastosStatus === 'pending'
                         ? partial && gastosDisplay !== null
-                          ? `${formatCurrency(gastosDisplay, currency)} (P)`
+                          ? row.gastappOfficialForProvisional && row.partialByFamilyEur
+                            ? <GastappBreakdownTrigger row={row} onOpen={setGastappBreakdownRow}>{`${formatCurrency(gastosDisplay, currency)} (P)`}</GastappBreakdownTrigger>
+                            : `${formatCurrency(gastosDisplay, currency)} (P)`
                           : 'Pendiente'
                         : gastosDisplay === null
                           ? '—'
@@ -1836,7 +1922,11 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                   )}
                   <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
                     <span className="text-slate-500">Gasto usado</span>
-                    <span className="text-right font-medium text-slate-800">{formatCurrency(scenario.spendDisplay, currency)}</span>
+                    <span className="text-right font-medium text-slate-800">
+                      {gastappOfficialForProvisional && provisionalBreakdownRow
+                        ? <GastappBreakdownTrigger row={provisionalBreakdownRow} onOpen={setGastappBreakdownRow}>{formatCurrency(scenario.spendDisplay, currency)}</GastappBreakdownTrigger>
+                        : formatCurrency(scenario.spendDisplay, currency)}
+                    </span>
                     <span className="text-slate-500">Ret.Econ. parcial</span>
                     <span className={cn('text-right font-semibold', scenario.retornoRealDisplay >= 0 ? 'text-emerald-700' : 'text-rose-700')}>
                       {formatCurrency(scenario.retornoRealDisplay, currency)}
@@ -1874,6 +1964,13 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       includesPartial={includeEstimatedMonth}
     />
     <PortfolioAnalyticsPanel monthlyRows={monthlyRowsDesc} currency={currency} />
+    {gastappBreakdownRow && (
+      <GastappBreakdownDialog
+        row={gastappBreakdownRow}
+        currency={currency}
+        onClose={() => setGastappBreakdownRow(null)}
+      />
+    )}
   </>
   );
 };

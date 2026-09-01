@@ -453,6 +453,8 @@ describe('ReturnsTab partial month toggle', () => {
       gastosDisplay: null,
       partialGastosClp: 2_500_000,
       partialGastosDisplay: 2_500_000,
+      partialGastosEur: 2_500,
+      partialByFamilyEur: { dayToDay: 1_600, trips: 600, others: 300 },
       partialRetornoRealClp: 22_500_000,
       partialRetornoRealDisplay: 22_500_000,
       retornoRealClp: null,
@@ -514,6 +516,24 @@ describe('ReturnsTab partial month toggle', () => {
     expect(container.textContent).toContain('Mes provisional de Aurum');
     expect(container.textContent).toContain('Usado: gasto oficial del cierre calendario de GastApp.');
     expect(container.textContent).toContain('GastApp cerrado');
+
+    const breakdownTrigger = container.querySelector('button[aria-label="Ver desglose de GastApp de Agosto de 2026"]') as HTMLButtonElement | null;
+    expect(breakdownTrigger).not.toBeNull();
+    await act(async () => {
+      await userEvent.setup().click(breakdownTrigger!);
+    });
+    const breakdownDialog = container.querySelector('[role="dialog"]');
+    expect(breakdownDialog?.textContent).toContain('Día a día');
+    expect(breakdownDialog?.textContent).toContain('$1.648.000');
+    expect(breakdownDialog?.textContent).toContain('Viajes');
+    expect(breakdownDialog?.textContent).toContain('$618.000');
+    expect(breakdownDialog?.textContent).toContain('Otros');
+    expect(breakdownDialog?.textContent).toContain('$309.000');
+    expect(breakdownDialog?.textContent).toContain('$2.575.000');
+    await act(async () => {
+      await userEvent.setup().click(breakdownDialog?.querySelector('button[aria-label="Cerrar desglose de GastApp"]') as HTMLButtonElement);
+    });
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
 
     const provisionalToggle = Array.from(container.querySelectorAll('button')).find((node) =>
       node.textContent?.includes('Mes provisional de Aurum'),
