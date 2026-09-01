@@ -186,7 +186,7 @@ export interface ClosureEditPropagationResult {
 }
 
 export type MonthlyCloseCheckpointReadinessStatus =
-  | 'BACKUP_READY_FOR_JUNE_CLOSE'
+  | 'BACKUP_READY_FOR_MONTHLY_CLOSE'
   | 'BACKUP_NOT_READY'
   | 'EXTERNAL_BLOCKER_NEEDS_USER_ACTION';
 
@@ -4084,7 +4084,7 @@ export const verifyMonthlyCloseCheckpointReadiness = async (input: {
   }
 
   return {
-    status: 'BACKUP_READY_FOR_JUNE_CLOSE',
+    status: 'BACKUP_READY_FOR_MONTHLY_CLOSE',
     monthKey: normalizedMonthKey,
     message: 'Backup cloud-first verificado correctamente para el cierre.',
     storage: readBack.storage || saveResult.storage,

@@ -1000,7 +1000,7 @@ describe('monthly close undo checkpoint', () => {
       fxRates,
     });
 
-    expect(result.status).toBe('BACKUP_READY_FOR_JUNE_CLOSE');
+    expect(result.status).toBe('BACKUP_READY_FOR_MONTHLY_CLOSE');
     expect(result.monthKey).toBe('2026-06');
     expect(result.schemaVersion).toBe(2);
     expect(result.cloudVerified).toBe(true);
@@ -1085,7 +1085,7 @@ describe('monthly close undo checkpoint', () => {
       fxRates,
     });
 
-    expect(result.status).toBe('BACKUP_READY_FOR_JUNE_CLOSE');
+    expect(result.status).toBe('BACKUP_READY_FOR_MONTHLY_CLOSE');
     expect(result.cloudVerified).toBe(true);
     expect(
       vi.mocked(setDoc).mock.calls.some(([ref, payload]) =>

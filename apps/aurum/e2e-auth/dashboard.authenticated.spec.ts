@@ -250,6 +250,43 @@ test('monthly-close preflight exposes temporary confirmations before final close
   await page.screenshot({ path: testInfo.outputPath('aurum-close-preflight-mobile.png'), fullPage: true });
 });
 
+test('monthly-close backup verification uses a month-neutral success label responsively', async ({ page }, testInfo) => {
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+  const networkGuard = await installLocalNetworkGuard(page);
+
+  await page.goto('/#/dashboard');
+  const dismissIncompleteClosure = page.getByRole('button', { name: 'Omitir', exact: true });
+  await expect(dismissIncompleteClosure).toBeVisible({ timeout: 30_000 });
+  await dismissIncompleteClosure.click();
+  await page.getByRole('link', { name: 'Patrimonio', exact: true }).click();
+
+  const verifyBackup = page.getByRole('button', { name: 'Verificar backup', exact: true });
+  await expect(verifyBackup).toBeVisible({ timeout: 30_000 });
+  await verifyBackup.click();
+  await expect(page.getByText('BACKUP VERIFICADO', { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/BACKUP_READY_FOR_JUNE_CLOSE/)).toHaveCount(0);
+
+  await page.screenshot({ path: testInfo.outputPath('aurum-backup-verification-desktop.png'), fullPage: true });
+
+  await page.setViewportSize({ width: 768, height: 1024 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-backup-verification-tablet.png'), fullPage: true });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await expect(page.getByText('BACKUP VERIFICADO', { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('aurum-backup-verification-mobile.png'), fullPage: true });
+
+  await networkGuard.assertClean(testInfo);
+  expect(pageErrors, `page errors: ${pageErrors.join(' | ')}`).toEqual([]);
+  expect(consoleErrors, `console errors: ${consoleErrors.join(' | ')}`).toEqual([]);
+});
+
 test('Ecosystem is reachable from Aurum Dashboard and works on mobile', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const pageErrors: string[] = [];

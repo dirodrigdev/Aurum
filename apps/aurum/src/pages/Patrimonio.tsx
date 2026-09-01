@@ -7255,7 +7255,7 @@ export const Patrimonio: React.FC = () => {
         fxRates: closeFxValues,
       });
       setCloseBackupCheck(result);
-      if (result.status === 'BACKUP_READY_FOR_JUNE_CLOSE') {
+      if (result.status === 'BACKUP_READY_FOR_MONTHLY_CLOSE') {
         setCloseInfo(`Backup verificado para ${monthLabel(closeMonthDraft).toLowerCase()}.`);
         return;
       }
@@ -7268,7 +7268,7 @@ export const Patrimonio: React.FC = () => {
   const juneCloseReady =
     closeMonthDraft === '2026-06' &&
     closePreflightDiagnostic?.decision === 'GO_PARA_CERRAR' &&
-    closeBackupCheck?.status === 'BACKUP_READY_FOR_JUNE_CLOSE';
+    closeBackupCheck?.status === 'BACKUP_READY_FOR_MONTHLY_CLOSE';
 
   const resolveCloseIssueWithPrevious = (issue: CloseValidationIssue) => {
     if (!issue.canResolveWithPrevious) return;
@@ -8363,14 +8363,18 @@ export const Patrimonio: React.FC = () => {
                   'rounded-full px-3 py-1 text-xs font-semibold',
                   closeBackupRunning
                     ? 'bg-slate-200 text-slate-700'
-                    : closeBackupCheck?.status === 'BACKUP_READY_FOR_JUNE_CLOSE'
+                    : closeBackupCheck?.status === 'BACKUP_READY_FOR_MONTHLY_CLOSE'
                       ? 'bg-emerald-100 text-emerald-800'
                       : closeBackupCheck?.status === 'EXTERNAL_BLOCKER_NEEDS_USER_ACTION'
                         ? 'bg-amber-100 text-amber-800'
                         : 'bg-red-100 text-red-800',
                 )}
               >
-                {closeBackupRunning ? 'Verificando...' : closeBackupCheck?.status}
+                {closeBackupRunning
+                  ? 'Verificando...'
+                  : closeBackupCheck?.status === 'BACKUP_READY_FOR_MONTHLY_CLOSE'
+                    ? 'BACKUP VERIFICADO'
+                    : closeBackupCheck?.status}
               </div>
             </div>
             {closeBackupCheck && (
@@ -8414,8 +8418,8 @@ export const Patrimonio: React.FC = () => {
                 )}
               >
                 {juneCloseReady
-                  ? 'Junio 2026: GO PARA CERRAR + BACKUP_READY_FOR_JUNE_CLOSE.'
-                  : 'Junio 2026 solo queda listo para cerrar cuando el preflight diga GO PARA CERRAR y el backup diga BACKUP_READY_FOR_JUNE_CLOSE.'}
+                  ? 'Junio 2026: GO PARA CERRAR + backup verificado.'
+                  : 'Junio 2026 solo queda listo para cerrar cuando el preflight diga GO PARA CERRAR y el backup esté verificado.'}
               </div>
             )}
           </div>
