@@ -264,6 +264,7 @@ export type ReturnsTabProps = {
   fxExcludedMonths: string[];
   officialMonthlyRowsAsc: MonthlyReturnRow[];
   monthlyRowsDesc: MonthlyReturnRow[];
+  monthlyRowsForAggregates?: MonthlyReturnRow[];
   periodSummaries: AggregatedSummary[];
   yearlySummaries: AggregatedSummary[];
   wealthEvolutionModel: WealthEvolutionComparisonModel;
@@ -1124,6 +1125,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   fxExcludedMonths,
   officialMonthlyRowsAsc,
   monthlyRowsDesc,
+  monthlyRowsForAggregates,
   periodSummaries,
   yearlySummaries,
   wealthEvolutionModel,
@@ -1963,7 +1965,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       lastConsideredLabel={lastConsideredLabel}
       includesPartial={includeEstimatedMonth}
     />
-    <PortfolioAnalyticsPanel monthlyRows={monthlyRowsDesc} currency={currency} />
+    <PortfolioAnalyticsPanel monthlyRows={monthlyRowsForAggregates ?? monthlyRowsDesc} currency={currency} />
     {gastappBreakdownRow && (
       <GastappBreakdownDialog
         row={gastappBreakdownRow}

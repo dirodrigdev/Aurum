@@ -16,7 +16,6 @@ import {
   WealthMonthlyClosure,
   RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
   WEALTH_DATA_UPDATED_EVENT,
-  currentMonthKey,
   defaultFxRates,
   loadClosures,
   loadFxRates,
@@ -33,8 +32,10 @@ import {
   buildGastappPartialMonthClosure,
   buildTrailingSummary,
   computeMonthlyRows,
+  currentOperationalMonthKey,
   enumerateMonthKeys,
   monthYear,
+  selectReturnAggregateRows,
 } from '../services/returnsAnalysis';
 import { buildCrpContributionInsight } from '../services/returnsCrpInsight';
 import {
@@ -242,9 +243,14 @@ export const AnalysisAurum: React.FC = () => {
             ? returnsSeriesView.estimatedRows
             : returnsSeriesView.officialRows;
         const monthlyRowsDesc = [...monthlyRowsAsc].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+        const monthlyRowsForAggregates = selectReturnAggregateRows(
+          monthlyRowsAsc,
+          currentOperationalMonthKey(closures),
+          includeEstimatedMonth && returnsSeriesView.hasEstimatedMonth,
+        );
         const wealthEvolutionModel = buildWealthEvolutionComparisonModel(calculationClosures, includeRiskCapitalInTotals);
         const crpContributionInsight = includeRiskCapitalInTotals
-          ? buildCrpContributionInsight(monthlyRowsAsc, monthlyRowsAscWithoutCrp, currency)
+          ? buildCrpContributionInsight(monthlyRowsForAggregates, monthlyRowsAscWithoutCrp, currency)
           : null;
         const analysisDiagnostics = (() => {
           const eurScaleOutliers = officialMonthlyRowsAsc.filter((row) => row.rawEurClp > 10000);
@@ -262,20 +268,20 @@ export const AnalysisAurum: React.FC = () => {
           return { eurScaleOutliers, invalidNetMonths, anomalyRaw, missingSpendMonths, fxExcludedMonths };
         })();
         const periodSummaries = (() => {
-          const monthKeysAsc = monthlyRowsAsc.map((row) => row.monthKey);
+          const monthKeysAsc = monthlyRowsForAggregates.map((row) => row.monthKey);
           const summaries: AggregatedSummary[] = [];
-          const p12 = buildTrailingSummary(monthlyRowsAsc, 12, 'period-12M', '12M');
+          const p12 = buildTrailingSummary(monthlyRowsForAggregates, 12, 'period-12M', '12M');
           if (p12) summaries.push(p12);
-          const p24 = buildTrailingSummary(monthlyRowsAsc, 24, 'period-24M', '24M');
+          const p24 = buildTrailingSummary(monthlyRowsForAggregates, 24, 'period-24M', '24M');
           if (p24) summaries.push(p24);
           if (monthKeysAsc.length >= 36) {
-            const p36 = buildTrailingSummary(monthlyRowsAsc, 36, 'period-36M', '36M');
+            const p36 = buildTrailingSummary(monthlyRowsForAggregates, 36, 'period-36M', '36M');
             if (p36) summaries.push(p36);
           }
           if (monthKeysAsc.length) {
-            const baseNetDisplay = monthlyRowsAsc.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
+            const baseNetDisplay = monthlyRowsForAggregates.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
             summaries.push(
-              aggregateRows('period-inicio', 'Desde inicio', monthlyRowsAsc, baseNetDisplay, {
+              aggregateRows('period-inicio', 'Desde inicio', monthlyRowsForAggregates, baseNetDisplay, {
                 expectedMonthKeys: enumerateMonthKeys(monthKeysAsc[0], monthKeysAsc[monthKeysAsc.length - 1]),
               }),
             );
@@ -283,12 +289,12 @@ export const AnalysisAurum: React.FC = () => {
           return summaries;
         })();
         const yearlySummaries = (() => {
-          const years = Array.from(new Set(monthlyRowsAsc.map((row) => monthYear(row.monthKey)))).sort((a, b) => a - b);
+          const years = Array.from(new Set(monthlyRowsForAggregates.map((row) => monthYear(row.monthKey)))).sort((a, b) => a - b);
           const latestYear = years[years.length - 1] ?? null;
           return years.map((year) => {
-            const rows = monthlyRowsAsc.filter((row) => monthYear(row.monthKey) === year);
+            const rows = monthlyRowsForAggregates.filter((row) => monthYear(row.monthKey) === year);
             const lastYearMonthKey = year < (latestYear ?? year) ? `${year}-12` : rows[rows.length - 1]?.monthKey ?? `${year}-12`;
-            const previousYearBase = monthlyRowsAsc
+            const previousYearBase = monthlyRowsForAggregates
               .filter((row) => row.monthKey < `${year}-01`)
               .sort((a, b) => a.monthKey.localeCompare(b.monthKey));
             const previousYearBaseValid = previousYearBase.filter((row) => row.netDisplay !== null);
@@ -301,17 +307,17 @@ export const AnalysisAurum: React.FC = () => {
           });
         })();
         const heroSinceStart = (() => {
-          if (!monthlyRowsAsc.length) return null;
-          const baseNetDisplay = monthlyRowsAsc.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
-          return aggregateRows('hero-inicio', 'Desde inicio', monthlyRowsAsc, baseNetDisplay, {
-            expectedMonthKeys: enumerateMonthKeys(monthlyRowsAsc[0].monthKey, monthlyRowsAsc[monthlyRowsAsc.length - 1].monthKey),
+          if (!monthlyRowsForAggregates.length) return null;
+          const baseNetDisplay = monthlyRowsForAggregates.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
+          return aggregateRows('hero-inicio', 'Desde inicio', monthlyRowsForAggregates, baseNetDisplay, {
+            expectedMonthKeys: enumerateMonthKeys(monthlyRowsForAggregates[0].monthKey, monthlyRowsForAggregates[monthlyRowsForAggregates.length - 1].monthKey),
           });
         })();
-        const heroLast12 = buildTrailingSummary(monthlyRowsAsc, 12, 'hero-12m', 'Últ. 12M');
+        const heroLast12 = buildTrailingSummary(monthlyRowsForAggregates, 12, 'hero-12m', 'Últ. 12M');
         const heroYtd2026 = (() => {
-          const ytdRows = monthlyRowsAsc.filter((row) => row.monthKey >= '2026-01' && row.monthKey <= '2026-12');
+          const ytdRows = monthlyRowsForAggregates.filter((row) => row.monthKey >= '2026-01' && row.monthKey <= '2026-12');
           if (!ytdRows.length) return null;
-          const baseRow = monthlyRowsAsc
+          const baseRow = monthlyRowsForAggregates
             .filter((row) => row.monthKey < '2026-01' && row.netDisplay !== null)
             .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
             .at(-1);
@@ -320,16 +326,16 @@ export const AnalysisAurum: React.FC = () => {
           });
         })();
         const heroLastMonth = (() => {
-          const row = [...monthlyRowsAsc].reverse().find((item) => item.retornoRealDisplay !== null) || null;
+          const row = [...monthlyRowsForAggregates].reverse().find((item) => item.retornoRealDisplay !== null) || null;
           if (!row) return null;
           return aggregateRows('hero-ultimo', 'Últ. mes válido', [row], row.prevNetDisplay, {
             expectedMonthKeys: [row.monthKey],
           });
         })();
         const heroLastMonthPctMonthly =
-          [...monthlyRowsAsc].reverse().find((item) => item.retornoRealDisplay !== null)?.pct ?? null;
+          [...monthlyRowsForAggregates].reverse().find((item) => item.retornoRealDisplay !== null)?.pct ?? null;
         const heroLastMonthPctMonthlyReal =
-          [...monthlyRowsAsc].reverse().find((item) => item.retornoRealDisplay !== null)?.pctReal ?? null;
+          [...monthlyRowsForAggregates].reverse().find((item) => item.retornoRealDisplay !== null)?.pctReal ?? null;
         const wealthLabModel = buildWealthLabModel(calculationClosures, includeRiskCapitalInTotals);
 
         return {
@@ -338,6 +344,7 @@ export const AnalysisAurum: React.FC = () => {
           returnsSeriesView,
           monthlyRowsAsc,
           monthlyRowsDesc,
+          monthlyRowsForAggregates,
           wealthEvolutionModel,
           crpContributionInsight,
           analysisDiagnostics,
@@ -379,6 +386,7 @@ export const AnalysisAurum: React.FC = () => {
     returnsSeriesView,
     monthlyRowsAsc,
     monthlyRowsDesc,
+    monthlyRowsForAggregates,
     wealthEvolutionModel,
     crpContributionInsight,
     analysisDiagnostics,
@@ -487,6 +495,7 @@ export const AnalysisAurum: React.FC = () => {
     fxExcludedMonths: analysisDiagnostics.fxExcludedMonths,
     officialMonthlyRowsAsc: returnsSeriesView.officialRows,
     monthlyRowsDesc,
+    monthlyRowsForAggregates,
     periodSummaries,
     yearlySummaries,
     wealthEvolutionModel,

@@ -56,6 +56,7 @@ import {
   calculateAnnualizedCompoundedReturnFromMonthlyPct,
   calculateCompoundedReturnFromMonthlyPct,
   computeMonthlyRows,
+  selectReturnAggregateRows,
 } from '../src/services/returnsAnalysis';
 import { buildReturnSpendInsight } from '../src/components/analysis/shared';
 
@@ -124,6 +125,16 @@ const withGastappPartial = <T extends ReturnType<typeof computeMonthlyRows>[numb
 });
 
 describe('returns analysis helpers', () => {
+  it('excludes the open operational month from aggregates until partial mode is enabled', () => {
+    const rows = [
+      { monthKey: '2026-08' },
+      { monthKey: '2026-09' },
+    ] as ReturnType<typeof computeMonthlyRows>;
+
+    expect(selectReturnAggregateRows(rows, '2026-09', false).map((row) => row.monthKey)).toEqual(['2026-08']);
+    expect(selectReturnAggregateRows(rows, '2026-09', true).map((row) => row.monthKey)).toEqual(['2026-08', '2026-09']);
+  });
+
   it('builds monthly rows excluding the current operational month inferred from the latest closure', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-03-15T12:00:00Z'));

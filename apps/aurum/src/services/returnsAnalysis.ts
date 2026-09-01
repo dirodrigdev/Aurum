@@ -239,6 +239,12 @@ export const currentOperationalMonthKey = (closures: WealthMonthlyClosure[]) => 
   return monthAfter(latestClosedMonth) || fallback;
 };
 
+export const selectReturnAggregateRows = (
+  rows: MonthlyReturnRow[],
+  operationalMonthKey: string,
+  includePartial: boolean,
+) => (includePartial ? rows : rows.filter((row) => row.monthKey !== operationalMonthKey));
+
 const summaryNetClp = (closure: WealthMonthlyClosure, includeRiskCapitalInTotals: boolean): number | null => {
   if (includeRiskCapitalInTotals && Number.isFinite(closure.summary?.netClpWithRisk)) {
     return Number(closure.summary.netClpWithRisk);
