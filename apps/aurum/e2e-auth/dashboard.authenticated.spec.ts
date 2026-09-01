@@ -172,7 +172,7 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
   expect(consoleErrors, `console errors: ${consoleErrors.join(' | ')}`).toEqual([]);
 });
 
-test('authenticated Analysis omits P when GastApp only supplies closed months and stays responsive', async ({ page }, testInfo) => {
+test('authenticated Analysis keeps GastApp-closed month visible as Aurum P and stays responsive', async ({ page }, testInfo) => {
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
@@ -187,7 +187,9 @@ test('authenticated Analysis omits P when GastApp only supplies closed months an
   await dismissIncompleteClosure.click();
 
   await expect(page.getByText('Retorno económico', { exact: true })).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByRole('checkbox', { name: 'Incluir parcial actual (P) en cálculos' })).toHaveCount(0);
+  await expect(page.getByRole('checkbox', { name: 'Incluir parcial actual (P) en cálculos' })).toHaveCount(1);
+  await expect(page.getByText(/GastApp cerrado oficialmente · cierre Aurum pendiente/)).toBeVisible();
+  await expect(page.getByRole('button', { name: /Mes provisional de Aurum/ })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('aurum-returns-closed-desktop.png'), fullPage: true });
 
   await page.setViewportSize({ width: 768, height: 1024 });

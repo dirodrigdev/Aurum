@@ -444,6 +444,89 @@ describe('ReturnsTab partial month toggle', () => {
     expect(container.textContent).not.toContain('2026-08-12__2026-09-11');
   });
 
+  it('keeps GastApp-closed August visible as a yellow P while Aurum closure is pending', async () => {
+    const provisionalAugust = makeMonthlyRow('2026-08', {
+      gastosStatus: 'pending',
+      gastosContractStatus: 'pending',
+      gastosDataQuality: 'ok',
+      gastosClp: null,
+      gastosDisplay: null,
+      partialGastosClp: 2_500_000,
+      partialGastosDisplay: 2_500_000,
+      partialRetornoRealClp: 22_500_000,
+      partialRetornoRealDisplay: 22_500_000,
+      retornoRealClp: null,
+      retornoRealDisplay: null,
+      pct: null,
+      isPartial: true,
+      isEstimated: true,
+      gastappOfficialForProvisional: true,
+    });
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        React.createElement(ReturnsTab, {
+          ...baseProps,
+          includeEstimatedMonth: false,
+          hasEstimatedMonth: true,
+          estimatedMonthMeta: {
+            monthKey: '2026-08',
+            estimateMethod: 'gastapp_partial' as const,
+            estimatedSpendClp: 2_500_000,
+            estimatedSpendDisplay: 2_500_000,
+            estimatedFromMonthsCount: 1,
+            officialAvailableDate: null,
+            gastosPeriodKey: '2026-08',
+            referencePreviousMonthSpendClp: null,
+            gastappOfficialForProvisional: true,
+          },
+          pendingEstimateDetail: {
+            monthKey: '2026-08',
+            availabilityLabel: null,
+            periodRangeLabel: 'Agosto 2026',
+            varPatrimonioDisplay: 8_000_000,
+            gastappOfficialForProvisional: true,
+            selectedScenarioKey: 'gastapp_partial' as const,
+            scenarios: [
+              {
+                key: 'gastapp_partial' as const,
+                label: 'Gasto oficial del cierre calendario GastApp',
+                spendDisplay: 2_500_000,
+                spendClp: 2_500_000,
+                retornoRealDisplay: 10_500_000,
+                retornoRealClp: 10_500_000,
+                pct: 1.1,
+                monthsUsed: 1,
+              },
+            ],
+          },
+          monthlyRowsDesc: [provisionalAugust],
+          officialMonthlyRowsAsc: [provisionalAugust],
+        }),
+      );
+    });
+
+    expect(container.textContent).toContain('Agosto de 2026 · GastApp cerrado oficialmente · cierre Aurum pendiente');
+    expect(container.textContent).toContain('Mes provisional de Aurum');
+    expect(container.textContent).toContain('Usado: gasto oficial del cierre calendario de GastApp.');
+    expect(container.textContent).toContain('GastApp cerrado');
+
+    const provisionalToggle = Array.from(container.querySelectorAll('button')).find((node) =>
+      node.textContent?.includes('Mes provisional de Aurum'),
+    ) as HTMLElement | undefined;
+    expect(provisionalToggle).toBeTruthy();
+    await act(async () => {
+      await userEvent.setup().click(provisionalToggle!);
+    });
+    expect(container.textContent).toContain('Gasto oficial GastApp usado provisionalmente');
+    expect(container.textContent).toContain('P: cierre provisional de Aurum · GastApp ya está cerrado oficialmente.');
+    expect(container.textContent).not.toMatch(/NaN|Infinity|undefined/);
+  });
+
   it('shows (R) only in CLP and explains that it discounts Chilean inflation', async () => {
     container = document.createElement('div');
     document.body.appendChild(container);

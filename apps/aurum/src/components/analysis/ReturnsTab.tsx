@@ -152,12 +152,14 @@ export type ReturnsTabProps = {
     officialAvailableDate: string | null;
     gastosPeriodKey: string | null;
     referencePreviousMonthSpendClp: number | null;
+    gastappOfficialForProvisional?: boolean;
   } | null;
   pendingEstimateDetail: {
     monthKey: string;
     availabilityLabel: string | null;
     periodRangeLabel: string | null;
     varPatrimonioDisplay: number;
+    gastappOfficialForProvisional?: boolean;
     scenarios: ProvisionalReturnScenario[];
     selectedScenarioKey: 'gastapp_partial' | null;
   } | null;
@@ -187,8 +189,6 @@ export type ReturnsTabProps = {
   wealthEvolutionModel: WealthEvolutionComparisonModel;
   visualVariant?: 'official' | 'calendar-control';
 };
-
-const partialMethodLabel = 'avance parcial real de GastApp';
 
 const SummaryTable: React.FC<{
   title: string;
@@ -1230,6 +1230,10 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   );
   const mainPendingOfficial = pendingOfficialRows[0] || null;
   const provisionalEstimate = pendingEstimateDetail;
+  const gastappOfficialForProvisional = Boolean(provisionalEstimate?.gastappOfficialForProvisional);
+  const partialMethodLabel = gastappOfficialForProvisional
+    ? 'gasto oficial del cierre calendario de GastApp'
+    : 'avance parcial real de GastApp';
   const estimatedToggleEnabled = hasEstimatedMonth && !!estimatedMonthMeta;
   const partialScenario = React.useMemo(
     () =>
@@ -1252,7 +1256,9 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   }, [estimatedToggleEnabled, onToggleIncludeEstimatedMonth]);
   const spendTrustCollapsedLine = React.useMemo(() => {
     if (mainPendingOfficial) {
-      return `${monthLabel(mainPendingOfficial.row.monthKey)} pendiente de cierre mensual de GastApp`;
+      return mainPendingOfficial.row.gastappOfficialForProvisional
+        ? `${monthLabel(mainPendingOfficial.row.monthKey)} GastApp cerrado · cierre Aurum pendiente`
+        : `${monthLabel(mainPendingOfficial.row.monthKey)} pendiente de cierre mensual de GastApp`;
     }
     if (missingSpendMonths.length > 0) {
       return `${missingSpendMonths.length} mes(es) sin gasto final · no entra(n) en cerrados`;
@@ -1719,6 +1725,9 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                         </span>
                       )}
                     </div>
+                    {row.gastappOfficialForProvisional && (
+                      <div className="mt-0.5 text-[9px] font-medium text-emerald-700">GastApp cerrado</div>
+                    )}
                   </td>
                   <td className={cn(
                     'py-1.5 pr-2 text-right font-semibold',
@@ -1789,13 +1798,17 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
         >
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-slate-900">Parcial publicado por GastApp</span>
+              <span className="text-sm font-semibold text-slate-900">
+                {gastappOfficialForProvisional ? 'Mes provisional de Aurum' : 'Parcial publicado por GastApp'}
+              </span>
               <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800">
                 Parcial (P)
               </span>
             </div>
             <div className="truncate text-[11px] text-slate-500">
-              {`${monthLabel(provisionalEstimate.monthKey)} · pendiente de cierre mensual confirmado`}
+              {gastappOfficialForProvisional
+                ? `${monthLabel(provisionalEstimate.monthKey)} · GastApp cerrado oficialmente · cierre Aurum pendiente`
+                : `${monthLabel(provisionalEstimate.monthKey)} · pendiente de cierre mensual confirmado`}
             </div>
           </div>
           <ChevronDown size={16} className={cn('shrink-0 transition-transform', isProvisionalExpanded ? 'rotate-180' : 'rotate-0')} />
@@ -1803,7 +1816,9 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
         {isProvisionalExpanded && (
           <div className="mt-2 border-t border-slate-200 pt-2">
             <div className="text-[11px] text-slate-500">
-              Avance real, no cierre oficial. No se guarda como cierre y será reemplazado por el dato oficial de GastApp.
+              {gastappOfficialForProvisional
+                ? 'El gasto de GastApp ya está cerrado oficialmente. Esta fila sigue como P porque el cierre patrimonial de Aurum aún no está confirmado; no se guarda como cierre.'
+                : 'Avance real, no cierre oficial. No se guarda como cierre y será reemplazado por el dato oficial de GastApp.'}
             </div>
             <div className="mt-1 text-[11px] text-slate-500">
               Var.Pat. visible: {formatCurrency(provisionalEstimate.varPatrimonioDisplay, currency)}
@@ -1814,7 +1829,9 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                   <div className="text-[11px] font-semibold text-slate-800">{scenario.label}</div>
                   {provisionalEstimate.selectedScenarioKey === scenario.key && (
                     <div className="mt-1 inline-flex rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-                      Gasto parcial usado en los cálculos
+                      {gastappOfficialForProvisional
+                        ? 'Gasto oficial GastApp usado provisionalmente'
+                        : 'Gasto parcial usado en los cálculos'}
                     </div>
                   )}
                   <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
@@ -1829,7 +1846,11 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                       {formatPct(scenario.pct)}
                     </span>
                   </div>
-                  <div className="mt-2 text-[10px] font-medium text-amber-700">Parcial (P), no cierre oficial.</div>
+                  <div className="mt-2 text-[10px] font-medium text-amber-700">
+                    {gastappOfficialForProvisional
+                      ? 'P: cierre provisional de Aurum · GastApp ya está cerrado oficialmente.'
+                      : 'Parcial (P), no cierre oficial.'}
+                  </div>
                 </div>
               ))}
             </div>

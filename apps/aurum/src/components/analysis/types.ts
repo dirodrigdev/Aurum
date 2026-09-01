@@ -69,6 +69,8 @@ export type MonthlyReturnRow = {
   isEstimated?: boolean;
   estimateMethod?: 'gastapp_partial' | null;
   isPartial?: boolean;
+  /** GastApp is official, but Aurum has not yet formalized this month. */
+  gastappOfficialForProvisional?: boolean;
   estimatedSpendClp?: number | null;
   estimatedFromMonthsCount?: number | null;
   officialAvailableDate?: string | null;

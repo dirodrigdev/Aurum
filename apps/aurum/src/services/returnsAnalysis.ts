@@ -105,6 +105,7 @@ export type PendingReturnEstimate = {
   availabilityLabel: string | null;
   periodRangeLabel: string | null;
   varPatrimonioDisplay: number;
+  gastappOfficialForProvisional?: boolean;
   scenarios: ProvisionalReturnScenario[];
   selectedScenarioKey: AverageEstimateMethod | null;
 };
@@ -118,6 +119,7 @@ export type EstimatedMonthMeta = {
   officialAvailableDate: string | null;
   gastosPeriodKey: string | null;
   referencePreviousMonthSpendClp: number | null;
+  gastappOfficialForProvisional?: boolean;
 };
 
 export type ReturnsSeriesView = {
@@ -271,7 +273,7 @@ export const buildGastappPartialMonthClosure = (input: {
   const monthKey = currentOperationalMonthKey(input.closures);
   const gastapp = resolveGastappMonthlyCloseCandidate(monthKey);
   const hasRealPartial =
-    gastapp.status === 'pending' &&
+    (gastapp.status === 'pending' || gastapp.status === 'complete') &&
     gastapp.partialGastosEur !== null &&
     gastapp.partialByFamilyEur !== null &&
     Math.abs(
@@ -287,6 +289,9 @@ export const buildGastappPartialMonthClosure = (input: {
     id: `gastapp-partial-${monthKey}`,
     monthKey,
     closedAt: new Date().toISOString(),
+    ...(gastapp.status === 'complete'
+      ? { analysisProvisionalReason: 'gastapp_official_aurum_pending' as const }
+      : {}),
     summary: buildCanonicalClosureSummary(snapshotRecords, input.fxRates),
     fxRates: { ...input.fxRates },
     records: snapshotRecords,
@@ -636,10 +641,17 @@ export const computeMonthlyRows = (
     const varPatrimonioDisplay =
       invalidNet || prevNetDisplay === null || netDisplay === null ? null : netDisplay - prevNetDisplay;
     const spend = resolveGastappMonthlySpend(closure.monthKey, new Date());
-    const gastosEur = spend.gastosEur;
+    const gastappOfficialForProvisional = closure.analysisProvisionalReason === 'gastapp_official_aurum_pending';
+    // The current Aurum photo remains provisional even when GastApp has
+    // already published the official calendar-month expense. Keep that
+    // distinction local to analysis so official aggregates never absorb it.
+    const gastosStatus = gastappOfficialForProvisional ? 'pending' as const : spend.status;
+    const gastosEur = gastappOfficialForProvisional ? null : spend.gastosEur;
     const gastosClp = invalidNet || !fxAuditable || gastosEur === null ? null : gastosEur * fx.eurClp;
     const gastosDisplay = gastosClp === null ? null : convertFromClp(gastosClp, currency, fx);
-    const partialGastosEur = spend.partialGastosEur ?? null;
+    const partialGastosEur = gastappOfficialForProvisional
+      ? (spend.partialGastosEur ?? spend.gastosEur ?? null)
+      : (spend.partialGastosEur ?? null);
     const partialGastosClp =
       invalidNet || !fxAuditable || partialGastosEur === null ? null : partialGastosEur * fx.eurClp;
     const partialGastosDisplay =
@@ -710,9 +722,9 @@ export const computeMonthlyRows = (
       fxMethod: fxResolution.method,
       fxAuditable,
       fxMissing: fxResolution.missingKeys,
-      gastosStatus: spend.status,
+      gastosStatus,
       gastosSource: spend.source,
-      gastosContractStatus: spend.contractStatus ?? null,
+      gastosContractStatus: gastappOfficialForProvisional ? 'pending' : spend.contractStatus ?? null,
       gastosDataQuality: spend.dataQuality ?? null,
       gastosIsStale: Boolean(spend.isStale),
       gastosStaleReason: spend.staleReason ?? null,
@@ -755,6 +767,7 @@ export const computeMonthlyRows = (
       pct,
       inflationMonthlyRate,
       pctReal,
+      gastappOfficialForProvisional: gastappOfficialForProvisional || undefined,
     });
   }
 
@@ -944,7 +957,9 @@ export const buildPendingReturnEstimate = (
   const spendClp = pendingRow.partialGastosClp ?? pendingRow.partialGastosEur * pendingRow.fx.eurClp;
   const scenario = buildProvisionalScenario({
     key: 'gastapp_partial',
-    label: 'Avance real parcial publicado por GastApp',
+    label: pendingRow.gastappOfficialForProvisional
+      ? 'Gasto oficial del cierre calendario GastApp'
+      : 'Avance real parcial publicado por GastApp',
     row: pendingRow,
     spendDisplay: pendingRow.partialGastosDisplay ?? convertFromClp(spendClp, pendingRow.currency || 'CLP', pendingRow.fx),
     spendClp,
@@ -956,6 +971,7 @@ export const buildPendingReturnEstimate = (
     availabilityLabel: info.availabilityLabel,
     periodRangeLabel: info.periodRangeLabel,
     varPatrimonioDisplay: pendingRow.varPatrimonioDisplay,
+    gastappOfficialForProvisional: Boolean(pendingRow.gastappOfficialForProvisional),
     scenarios: [scenario],
     selectedScenarioKey: 'gastapp_partial',
   };
@@ -1013,6 +1029,7 @@ export const buildReturnsSeriesView = (
     estimatedFromMonthsCount: primaryScenario.monthsUsed,
     officialAvailableDate: pendingEstimateDetail?.availabilityLabel ?? null,
     referencePreviousMonthSpendClp: null,
+    gastappOfficialForProvisional: pendingRow.gastappOfficialForProvisional,
   };
 
   const estimatedRows = officialRows.map((row) => (row.monthKey === pendingRow.monthKey ? estimatedRow : row));
@@ -1029,6 +1046,7 @@ export const buildReturnsSeriesView = (
       officialAvailableDate: pendingEstimateDetail?.availabilityLabel ?? null,
       gastosPeriodKey: pendingRow.gastosPeriodKey,
       referencePreviousMonthSpendClp: null,
+      gastappOfficialForProvisional: pendingRow.gastappOfficialForProvisional,
     },
     pendingEstimateDetail,
     officialAvailabilityNotice: buildOfficialAvailabilityNotice(officialRows),

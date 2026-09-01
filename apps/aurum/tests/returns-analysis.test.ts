@@ -11,9 +11,14 @@ const TEST_GASTOS_EUR: Record<string, number> = {
   '2026-01': 6288,
   '2026-02': 7928,
   '2026-03': 6567.24,
+  '2026-07': 2200,
+  '2026-08': 2500,
 };
 
+const gastappCloseCandidateMock = vi.hoisted(() => vi.fn());
+
 vi.mock('../src/services/gastosMonthly', () => ({
+  resolveGastappMonthlyCloseCandidate: gastappCloseCandidateMock,
   resolveGastappMonthlySpend: (monthKey: string) => {
     const value = TEST_GASTOS_EUR[monthKey] ?? (monthKey.startsWith('2025-') ? 4200 : undefined);
     if (Number.isFinite(value)) {
@@ -22,6 +27,8 @@ vi.mock('../src/services/gastosMonthly', () => ({
         status: 'complete' as const,
         gastosEur: value,
         source: 'gastapp_firestore' as const,
+        partialGastosEur: value,
+        partialByFamilyEur: { dayToDay: value, trips: 0, others: 0 },
       };
     }
     return {
@@ -38,6 +45,7 @@ vi.mock('../src/services/gastosMonthly', () => ({
 import {
   aggregateRows,
   buildWealthEvolutionComparisonModel,
+  buildGastappPartialMonthClosure,
   buildPendingOfficialReturnInfo,
   buildPendingReturnEstimate,
   buildReturnsSeriesView,
@@ -847,6 +855,74 @@ describe('returns analysis helpers', () => {
 
     const summary = aggregateRows('with-pending', 'With pending', rows, rows[0].netDisplay);
     expect(summary.validMonths).toBe(3);
+  });
+
+  it('keeps an official GastApp month visible as P while Aurum closure is pending', () => {
+    const rows = computeMonthlyRows(
+      [
+        makeClosure('2026-07', { netClp: 940_000_000, eurClp: 1000 }),
+        {
+          ...makeClosure('2026-08', { netClp: 960_000_000, eurClp: 1000 }),
+          analysisProvisionalReason: 'gastapp_official_aurum_pending',
+        },
+      ],
+      false,
+      'CLP',
+    );
+
+    const august = rows.find((row) => row.monthKey === '2026-08');
+    expect(august).toMatchObject({
+      gastosStatus: 'pending',
+      partialGastosEur: 2500,
+      gastappOfficialForProvisional: true,
+    });
+    expect(august?.gastosClp).toBeNull();
+
+    const view = buildReturnsSeriesView(rows);
+    expect(view.hasEstimatedMonth).toBe(true);
+    expect(view.pendingEstimate?.gastappOfficialForProvisional).toBe(true);
+    expect(view.pendingEstimate?.monthKey).toBe('2026-08');
+    expect(view.estimatedRows.find((row) => row.monthKey === '2026-08')).toMatchObject({
+      isEstimated: true,
+      isPartial: true,
+      gastappOfficialForProvisional: true,
+    });
+  });
+
+  it('marks the in-memory August photo as provisional without persisting an Aurum closure', () => {
+    gastappCloseCandidateMock.mockReturnValue({
+      status: 'complete',
+      partialGastosEur: 2500,
+      partialByFamilyEur: { dayToDay: 2500, trips: 0, others: 0 },
+    });
+    const records = [{
+      id: 'asset-1',
+      block: 'bank' as const,
+      source: 'test',
+      label: 'Cuenta de prueba',
+      amount: 1_000_000,
+      currency: 'CLP' as const,
+      snapshotDate: '2026-07-31',
+      createdAt: '2026-07-31T12:00:00.000Z',
+    }];
+
+    const provisional = buildGastappPartialMonthClosure({
+      closures: [{
+        ...makeClosure('2026-07', { netClp: 1_000_000, eurClp: 1000 }),
+        records,
+      }],
+      records,
+      fxRates: { usdClp: 900, eurClp: 1000, ufClp: 38000 },
+    });
+
+    expect(provisional).toMatchObject({
+      id: 'gastapp-partial-2026-08',
+      monthKey: '2026-08',
+      analysisProvisionalReason: 'gastapp_official_aurum_pending',
+    });
+    expect(provisional?.records).toHaveLength(1);
+    expect(provisional?.id).not.toBe('2026-08');
+    gastappCloseCandidateMock.mockReset();
   });
 
   it('builds a P series only when the user opts in and keeps official rows unchanged', () => {

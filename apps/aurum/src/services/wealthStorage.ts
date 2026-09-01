@@ -102,6 +102,8 @@ export interface WealthMonthlyClosure {
   id: string;
   monthKey: string;
   closedAt: string;
+  /** Analysis-only marker for the current month; never persisted as a closure. */
+  analysisProvisionalReason?: 'gastapp_official_aurum_pending';
   summary: WealthSnapshotSummary;
   fxRates?: WealthFxRates;
   fxMetadata?: ClosureFxMetadata;
