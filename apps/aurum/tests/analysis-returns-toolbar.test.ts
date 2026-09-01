@@ -35,7 +35,9 @@ vi.mock('../src/services/wealthStorage', () => ({
   currentMonthKey: () => '2026-07',
   defaultFxRates: () => ({ usdClp: 950, eurClp: 1030, ufClp: 39000 }),
   loadClosures: () => [],
+  loadFxRates: () => ({ usdClp: 950, eurClp: 1030, ufClp: 39000 }),
   loadIncludeRiskCapitalInTotals: () => false,
+  loadWealthRecords: () => [],
   repairKnownHistoricalUfClpClosures: vi.fn(async () => ({ repairedCount: 0 })),
   saveIncludeRiskCapitalInTotals: vi.fn(),
 }));
@@ -76,6 +78,7 @@ vi.mock('../src/services/returnsAnalysis', () => ({
     pendingEstimateDetail: null,
     officialAvailabilityNotice: null,
   }),
+  buildGastappPartialMonthClosure: () => null,
   buildTrailingSummary: () => null,
   computeMonthlyRows: () => [],
   enumerateMonthKeys: () => [],

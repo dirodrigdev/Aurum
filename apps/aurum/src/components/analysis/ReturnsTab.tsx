@@ -36,6 +36,92 @@ const periodRangeLabel = (summary: AggregatedSummary | null | undefined) => {
   return `Período: ${monthLabelShort(start)}–${monthLabelShort(end)}`;
 };
 
+const COPY_CURRENCIES = ['CLP', 'USD', 'EUR', 'UF'] as const;
+const HISTORY_COPY_HEADER = ['monthKey', 'Mes', '%', 'Ret.Econ.', 'Var.Pat', 'Gastos'];
+const HISTORY_COPY_METADATA_HEADER = [
+  ...HISTORY_COPY_HEADER,
+  'isEstimated',
+  'estimateMethod',
+  'estimatedSpendClp',
+  'officialAvailableDate',
+];
+
+const writeClipboardText = async (text: string) => {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+  } catch {
+    // Fall through to the selection-based fallback for browsers without clipboard permission.
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('clipboard_unavailable');
+};
+
+type HistoryCopyRow = {
+  monthKey: string;
+  isEstimated: boolean;
+  estimateMethod: string;
+  estimatedSpendClp: number | null | undefined;
+  officialAvailableDate: string;
+  month: string;
+  pct: string;
+  retorno: string;
+  varPat: string;
+  gastos: string;
+};
+
+const buildHistoryRows = (rows: MonthlyReturnRow[], currency: WealthCurrency): HistoryCopyRow[] =>
+  rows.map((row) => {
+    const isPartial = row.gastosStatus === 'pending' && row.partialGastosDisplay !== null;
+    const retornoDisplay = isPartial ? row.partialRetornoRealDisplay : row.retornoRealDisplay;
+    const varDisplay = row.varPatrimonioDisplay;
+    const gastosDisplay = isPartial ? row.partialGastosDisplay : row.gastosDisplay;
+    const estimatedSuffix = row.isEstimated ? ' (P)' : '';
+    return {
+      monthKey: row.monthKey,
+      isEstimated: Boolean(row.isEstimated),
+      estimateMethod: row.estimateMethod || '',
+      estimatedSpendClp: row.estimatedSpendClp,
+      officialAvailableDate: row.officialAvailableDate || '',
+      month: monthLabelShort(row.monthKey),
+      pct: row.gastosStatus === 'pending'
+        ? isPartial && row.partialRetornoRealDisplay !== null && row.prevNetDisplay
+          ? `${formatPct((row.partialRetornoRealDisplay / row.prevNetDisplay) * 100)} (P)`
+          : 'Pendiente gasto'
+        : `${formatPct(row.pct)}${estimatedSuffix}`,
+      retorno:
+        row.gastosStatus === 'pending'
+          ? isPartial
+            ? `${formatCurrency(retornoDisplay, currency)} (P)`
+            : 'Pendiente gasto'
+          : retornoDisplay === null
+            ? '—'
+            : `${formatCurrency(retornoDisplay, currency)}${estimatedSuffix}`,
+      varPat: varDisplay === null ? '—' : formatCurrency(varDisplay, currency),
+      gastos:
+        row.gastosStatus === 'missing'
+          ? 'Faltante'
+          : row.gastosStatus === 'pending'
+            ? isPartial
+              ? `${formatCurrency(gastosDisplay, currency)} (P)`
+              : 'Pendiente'
+            : gastosDisplay === null
+              ? '—'
+              : `${formatCurrency(gastosDisplay, currency)}${estimatedSuffix}`,
+    };
+  });
+
 type SpendTrustSeverity = 'ok' | 'warning' | 'alert';
 
 const humanizeDayToDaySource = (source: string | null) => {
@@ -264,6 +350,7 @@ export type ReturnsTabProps = {
   fxExcludedMonths: string[];
   officialMonthlyRowsAsc: MonthlyReturnRow[];
   monthlyRowsDesc: MonthlyReturnRow[];
+  monthlyRowsByCurrencyForCopy: Record<WealthCurrency, MonthlyReturnRow[]>;
   monthlyRowsForAggregates?: MonthlyReturnRow[];
   periodSummaries: AggregatedSummary[];
   yearlySummaries: AggregatedSummary[];
@@ -1125,6 +1212,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   fxExcludedMonths,
   officialMonthlyRowsAsc,
   monthlyRowsDesc,
+  monthlyRowsByCurrencyForCopy,
   monthlyRowsForAggregates,
   periodSummaries,
   yearlySummaries,
@@ -1284,6 +1372,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     return diffEntries.map((entry) => `Diferencia detectada entre ${entry.label}: ${formatCurrency(Number(entry.value), 'EUR')}`);
   }, [latestGastappSpendRow, legacySpendMonths.length]);
   const [copyStatus, setCopyStatus] = React.useState<'idle' | 'done' | 'error'>('idle');
+  const [fullCopyStatus, setFullCopyStatus] = React.useState<'idle' | 'done' | 'error'>('idle');
   const returnsSourceDiagnostics = React.useMemo(
     () => buildReturnsMonthlySourceDiagnostics(monthlyRowsDesc),
     [monthlyRowsDesc],
@@ -1372,53 +1461,13 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   }, [estimatedMonthMeta, includeEstimatedMonth, lastOfficialConsideredMonthKey]);
 
   const historyRows = React.useMemo(
-    () =>
-      monthlyRowsDesc.map((row) => {
-        const isPartial = row.gastosStatus === 'pending' && row.partialGastosDisplay !== null;
-        const retornoDisplay = isPartial ? row.partialRetornoRealDisplay : row.retornoRealDisplay;
-        const varDisplay = row.varPatrimonioDisplay;
-        const gastosDisplay = isPartial ? row.partialGastosDisplay : row.gastosDisplay;
-        const estimatedSuffix = row.isEstimated ? ' (P)' : '';
-        return {
-          monthKey: row.monthKey,
-          isEstimated: Boolean(row.isEstimated),
-          estimateMethod: row.estimateMethod || '',
-          estimatedSpendClp: row.estimatedSpendClp,
-          officialAvailableDate: row.officialAvailableDate || '',
-          month: monthLabelShort(row.monthKey),
-          pct: row.gastosStatus === 'pending'
-            ? isPartial && row.partialRetornoRealDisplay !== null && row.prevNetDisplay
-              ? `${formatPct((row.partialRetornoRealDisplay / row.prevNetDisplay) * 100)} (P)`
-              : 'Pendiente gasto'
-            : `${formatPct(row.pct)}${estimatedSuffix}`,
-          retorno:
-            row.gastosStatus === 'pending'
-              ? isPartial
-                ? `${formatCurrency(retornoDisplay, currency)} (P)`
-                : 'Pendiente gasto'
-              : retornoDisplay === null
-                ? '—'
-                : `${formatCurrency(retornoDisplay, currency)}${estimatedSuffix}`,
-          varPat: varDisplay === null ? '—' : formatCurrency(varDisplay, currency),
-          gastos:
-            row.gastosStatus === 'missing'
-              ? 'Faltante'
-              : row.gastosStatus === 'pending'
-                ? isPartial
-                  ? `${formatCurrency(gastosDisplay, currency)} (P)`
-                  : 'Pendiente'
-                : gastosDisplay === null
-                  ? '—'
-                  : `${formatCurrency(gastosDisplay, currency)}${estimatedSuffix}`,
-        };
-      }),
+    () => buildHistoryRows(monthlyRowsDesc, currency),
     [monthlyRowsDesc, currency],
   );
 
   const copyTable = React.useCallback(async () => {
-    const header = ['monthKey', 'Mes', '%', 'Ret.Econ.', 'Var.Pat', 'Gastos', 'isEstimated', 'estimateMethod', 'estimatedSpendClp', 'officialAvailableDate'];
     const lines = [
-      header.join('\t'),
+      HISTORY_COPY_METADATA_HEADER.join('\t'),
       ...historyRows.map((row) => [
         row.monthKey,
         row.month,
@@ -1433,7 +1482,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       ].join('\t')),
     ];
     try {
-      await navigator.clipboard.writeText(lines.join('\n'));
+      await writeClipboardText(lines.join('\n'));
       setCopyStatus('done');
     } catch {
       setCopyStatus('error');
@@ -1441,11 +1490,35 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     window.setTimeout(() => setCopyStatus('idle'), 1600);
   }, [historyRows]);
 
+  const copyAllCurrencies = React.useCallback(async () => {
+    const lines = [
+      'ANÁLISIS DE RETORNOS · HISTORIAL COMPLETO',
+      `Último mes considerado: ${lastConsideredLabel ?? '—'}`,
+      `Parcial actual (P): ${includeEstimatedMonth ? 'incluido' : 'no incluido'}`,
+      '',
+      ...COPY_CURRENCIES.flatMap((currencyKey, index) => {
+        const rows = buildHistoryRows(monthlyRowsByCurrencyForCopy[currencyKey], currencyKey);
+        return [
+          `MONEDA: ${currencyKey}`,
+          HISTORY_COPY_HEADER.join('\t'),
+          ...rows.map((row) => [row.monthKey, row.month, row.pct, row.retorno, row.varPat, row.gastos].join('\t')),
+          ...(index < COPY_CURRENCIES.length - 1 ? [''] : []),
+        ];
+      }),
+    ];
+    try {
+      await writeClipboardText(lines.join('\n'));
+      setFullCopyStatus('done');
+    } catch {
+      setFullCopyStatus('error');
+    }
+    window.setTimeout(() => setFullCopyStatus('idle'), 1600);
+  }, [includeEstimatedMonth, lastConsideredLabel, monthlyRowsByCurrencyForCopy]);
+
   const exportCsv = React.useCallback(() => {
     const escape = (value: string) => `"${String(value).replace(/"/g, '""')}"`;
-    const header = ['monthKey', 'Mes', '%', 'Ret.Econ.', 'Var.Pat', 'Gastos', 'isEstimated', 'estimateMethod', 'estimatedSpendClp', 'officialAvailableDate'];
     const lines = [
-      header.map(escape).join(','),
+      HISTORY_COPY_METADATA_HEADER.map(escape).join(','),
       ...historyRows.map((row) => [
         row.monthKey,
         row.month,
@@ -1758,30 +1831,39 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     )}
 
     <Card className="border-slate-200 p-3">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
           <CalendarDays size={14} />
           Historial completo
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="grid w-full grid-cols-2 gap-1.5 sm:ml-auto sm:flex sm:w-auto">
           <button
             type="button"
             onClick={exportDiagnostics}
-            className="rounded-md border border-slate-200 px-2 py-1 text-[11px] font-medium text-slate-400 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-600"
+            className="min-h-11 w-full rounded-lg border border-slate-200 px-2 py-2 text-[11px] font-medium leading-tight text-slate-400 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-600 touch-manipulation"
           >
             Exportar diagnóstico
           </button>
           <button
             type="button"
             onClick={copyTable}
-            className="rounded-md border border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-slate-50"
+            className="min-h-11 w-full rounded-lg border border-slate-300 px-2 py-2 text-[11px] font-medium leading-tight text-slate-600 transition hover:bg-slate-50 touch-manipulation"
           >
             {copyStatus === 'done' ? 'Copiado' : copyStatus === 'error' ? 'Error al copiar' : 'Copiar tabla'}
           </button>
           <button
             type="button"
+            onClick={copyAllCurrencies}
+            title="Copia el historial completo en CLP, USD, EUR y UF"
+            aria-label="Copiar análisis completo en cuatro monedas"
+            className="min-h-11 w-full rounded-lg border border-blue-200 bg-blue-50 px-2 py-2 text-[11px] font-semibold leading-tight text-blue-700 transition hover:bg-blue-100 touch-manipulation"
+          >
+            {fullCopyStatus === 'done' ? 'Copiado 4 monedas' : fullCopyStatus === 'error' ? 'Error al copiar' : 'Copiar 4 monedas'}
+          </button>
+          <button
+            type="button"
             onClick={exportCsv}
-            className="rounded-md border border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-slate-50"
+            className="min-h-11 w-full rounded-lg border border-slate-300 px-2 py-2 text-[11px] font-medium leading-tight text-slate-600 transition hover:bg-slate-50 touch-manipulation"
           >
             Exportar CSV
           </button>

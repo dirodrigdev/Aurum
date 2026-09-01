@@ -205,6 +205,9 @@ test('authenticated Analysis keeps GastApp-closed month visible as Aurum P and s
   await expect(breakdownDialog).toContainText('sólo consulta');
   await breakdownDialog.getByRole('button', { name: 'Cerrar desglose de GastApp' }).click();
   await expect(page.getByRole('dialog', { name: 'Desglose de GastApp' })).toHaveCount(0);
+  const copyAllButton = page.getByRole('button', { name: 'Copiar análisis completo en cuatro monedas', exact: true });
+  await copyAllButton.click();
+  await expect(copyAllButton).toContainText('Copiado 4 monedas');
   await page.screenshot({ path: testInfo.outputPath('aurum-returns-closed-desktop.png'), fullPage: true });
 
   await page.setViewportSize({ width: 768, height: 1024 });

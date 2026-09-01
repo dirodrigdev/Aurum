@@ -130,6 +130,12 @@ const baseProps = {
   fxExcludedMonths: [],
   officialMonthlyRowsAsc: [],
   monthlyRowsDesc: [],
+  monthlyRowsByCurrencyForCopy: {
+    CLP: [],
+    USD: [],
+    EUR: [],
+    UF: [],
+  },
   periodSummaries: [],
   yearlySummaries: [],
   wealthEvolutionModel: {
@@ -211,6 +217,52 @@ describe('ReturnsTab partial month toggle', () => {
       container = null;
       document.body.innerHTML = '';
     }
+  });
+
+  it('copies the complete history grouped by the four currencies', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        React.createElement(ReturnsTab, {
+          ...baseProps,
+          monthlyRowsDesc: [makeMonthlyRow('2026-06')],
+          officialMonthlyRowsAsc: [makeMonthlyRow('2026-06')],
+          monthlyRowsByCurrencyForCopy: {
+            CLP: [makeMonthlyRow('2026-06', { currency: 'CLP', retornoRealDisplay: 21_400_000 })],
+            USD: [makeMonthlyRow('2026-06', { currency: 'USD', retornoRealDisplay: 22_500 })],
+            EUR: [makeMonthlyRow('2026-06', { currency: 'EUR', retornoRealDisplay: 20_800 })],
+            UF: [makeMonthlyRow('2026-06', { currency: 'UF', retornoRealDisplay: 550 })],
+          },
+          hasEstimatedMonth: false,
+          includeEstimatedMonth: false,
+          estimatedMonthMeta: null,
+          pendingEstimateDetail: null,
+        }),
+      );
+    });
+
+    const user = userEvent.setup();
+    const writeText = vi.fn(async (_value: string) => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    await act(async () => {
+      await user.click(container?.querySelector('button[aria-label="Copiar análisis completo en cuatro monedas"]') as HTMLButtonElement);
+    });
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const copiedText = writeText.mock.calls[0]?.[0] ?? '';
+    expect(copiedText).toContain('ANÁLISIS DE RETORNOS · HISTORIAL COMPLETO');
+    expect(copiedText).toContain('Parcial actual (P): no incluido');
+    expect(copiedText.match(/MONEDA: (CLP|USD|EUR|UF)/g)).toHaveLength(4);
+    expect(copiedText).toContain('2026-06\tJun 2026');
+    expect(copiedText).toContain('21.400.000');
+    expect(copiedText).toContain('22.500');
+    expect(container?.textContent).toContain('Copiado 4 monedas');
   });
 
   it('toggles on desktop by checkbox, label text, full card row, and keyboard', async () => {

@@ -53,9 +53,19 @@ import { describeGastappAnalysisAccessIssue } from '../services/dataRoom/gastapp
 // INFORMES block in Settings uses the GastApp XLSX/JSON handoff.
 
 const loadWealthClosures = () => loadClosures();
+const ANALYSIS_CURRENCIES = ['CLP', 'USD', 'EUR', 'UF'] as const;
 
 const sortClosuresAsc = (items: WealthMonthlyClosure[]) =>
   [...items].sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+
+const buildAnalysisClosures = (closures: WealthMonthlyClosure[]) => {
+  const partialClosure = buildGastappPartialMonthClosure({
+    closures,
+    records: loadWealthRecords(),
+    fxRates: loadFxRates(),
+  });
+  return partialClosure ? [...closures, partialClosure] : closures;
+};
 
 const buildClosuresFingerprint = (closures: WealthMonthlyClosure[]) =>
   closures
@@ -235,12 +245,7 @@ export const AnalysisAurum: React.FC = () => {
   const analysisEntry = useMemo(
     () =>
       getOrBuildAnalysisSessionValue(analysisFingerprint, () => {
-        const partialClosure = buildGastappPartialMonthClosure({
-          closures,
-          records: loadWealthRecords(),
-          fxRates: loadFxRates(),
-        });
-        const analysisClosures = partialClosure ? [...closures, partialClosure] : closures;
+        const analysisClosures = buildAnalysisClosures(closures);
         const calculationClosures = includeEstimatedMonth ? analysisClosures : closures;
         const officialMonthlyRowsAsc = computeMonthlyRows(analysisClosures, includeRiskCapitalInTotals, currency);
         const monthlyRowsAscWithoutCrp = computeMonthlyRows(analysisClosures, false, currency);
@@ -407,6 +412,21 @@ export const AnalysisAurum: React.FC = () => {
     heroLastMonthPctMonthlyReal,
     wealthLabModel,
   } = analysisEntry.value;
+  const monthlyRowsByCurrencyForCopy = useMemo(() => {
+    const analysisClosures = buildAnalysisClosures(closures);
+    return ANALYSIS_CURRENCIES.reduce<Record<WealthCurrency, MonthlyReturnRow[]>>(
+      (result, targetCurrency) => {
+        const officialRowsAsc = computeMonthlyRows(analysisClosures, includeRiskCapitalInTotals, targetCurrency);
+        const returnsSeriesView = buildReturnsSeriesView(officialRowsAsc);
+        const rows = includeEstimatedMonth && returnsSeriesView.hasEstimatedMonth
+          ? returnsSeriesView.estimatedRows
+          : returnsSeriesView.officialRows;
+        result[targetCurrency] = [...rows].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+        return result;
+      },
+      { CLP: [], USD: [], EUR: [], UF: [] },
+    );
+  }, [closures, includeEstimatedMonth, includeRiskCapitalInTotals, gastosSourceVersion, wealthSourceVersion]);
   useEffect(() => {
     if (!returnsSeriesView.hasEstimatedMonth) {
       setIncludeEstimatedMonth(false);
@@ -502,6 +522,7 @@ export const AnalysisAurum: React.FC = () => {
     fxExcludedMonths: analysisDiagnostics.fxExcludedMonths,
     officialMonthlyRowsAsc: returnsSeriesView.officialRows,
     monthlyRowsDesc,
+    monthlyRowsByCurrencyForCopy,
     monthlyRowsForAggregates,
     periodSummaries,
     yearlySummaries,
