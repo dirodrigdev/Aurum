@@ -127,6 +127,9 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
   await expect(dismissIncompleteClosure).toBeVisible({ timeout: 30_000 });
   await dismissIncompleteClosure.click();
   await expect(dismissIncompleteClosure).toHaveCount(0);
+  const analysisSectionToggle = page.getByRole('button', { name: 'Mostrar secciones de Análisis', exact: true });
+  await expect(analysisSectionToggle).toBeVisible();
+  await analysisSectionToggle.click();
   await expect(page.getByRole('button', { name: 'Lab de retornos', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Libertad Financiera', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Validación GastApp', exact: true }).click();
@@ -149,9 +152,10 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
   await page.screenshot({ path: testInfo.outputPath('aurum-monthly-audit-mobile.png'), fullPage: true });
 
   await page.setViewportSize({ width: 1280, height: 800 });
+  await page.getByRole('button', { name: 'Mostrar secciones de Análisis', exact: true }).click();
   const returnsLabTab = page.getByRole('button', { name: 'Lab de retornos', exact: true });
   await returnsLabTab.click();
-  await expect(returnsLabTab).toHaveClass(/bg-blue-600/);
+  await expect(page.getByRole('button', { name: 'Mostrar secciones de Análisis', exact: true })).toContainText('Lab de retornos');
   await expect(page.getByText('Resultado del período', { exact: true }).first()).toBeVisible();
   const labDesktopOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(labDesktopOverflow).toBeLessThanOrEqual(1);
@@ -209,6 +213,18 @@ test('authenticated Analysis keeps GastApp-closed month visible as Aurum P and s
 
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  for (const currency of ['CLP', 'USD', 'EUR', 'UF']) {
+    const currencyBox = await page.getByRole('button', { name: currency, exact: true }).boundingBox();
+    expect(currencyBox?.width ?? 0).toBeGreaterThanOrEqual(44);
+    expect(currencyBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+  }
+  const partialToggleBox = await page.getByTestId('analysis-partial-toggle-hit-area').boundingBox();
+  expect(partialToggleBox?.width ?? 0).toBeGreaterThanOrEqual(44);
+  expect(partialToggleBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+  for (const label of ['Dashboard', 'Patrimonio', 'Cierre', 'Análisis', 'Ajustes']) {
+    const navBox = await page.getByRole('link', { name: label, exact: true }).boundingBox();
+    expect(navBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+  }
   await page.screenshot({ path: testInfo.outputPath('aurum-returns-closed-mobile.png'), fullPage: true });
 
   await networkGuard.assertClean(testInfo);

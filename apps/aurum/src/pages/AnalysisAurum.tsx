@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3 } from 'lucide-react';
+import { BarChart3, ChevronDown } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { Button, Card } from '../components/Components';
 import { LabTab } from '../components/analysis/LabTab';
@@ -106,9 +106,16 @@ const formatAnalysisUpdatedAt = (iso: string) => {
   });
 };
 
+const analysisTabLabel = (tab: AnalysisTab) => {
+  if (tab === 'gastapp-validation') return 'Validación GastApp';
+  if (tab === 'lab') return 'Lab de retornos';
+  return 'Retornos';
+};
+
 export const AnalysisAurum: React.FC = () => {
   const location = useLocation();
   const [tab, setTab] = useState<AnalysisTab>('returns');
+  const [isSectionMenuOpen, setIsSectionMenuOpen] = useState(false);
   const [currency, setCurrency] = useState<WealthCurrency>('CLP');
   const [includeRiskCapitalInTotals, setIncludeRiskCapitalInTotals] = useState(() =>
     loadIncludeRiskCapitalInTotals(),
@@ -504,49 +511,91 @@ export const AnalysisAurum: React.FC = () => {
   return (
     <div className="space-y-3 p-3">
       <Card className="sticky top-[68px] z-20 border-slate-200 bg-white/95 p-2 backdrop-blur">
-        <div className="grid grid-cols-3 gap-2">
-          <Button size="sm" variant={tab === 'returns' ? 'primary' : 'secondary'} onClick={() => setTab('returns')}>
-            Retornos
-          </Button>
-          <Button size="sm" variant={tab === 'gastapp-validation' ? 'primary' : 'secondary'} onClick={() => setTab('gastapp-validation')}>
-            Validación GastApp
-          </Button>
-          <Button size="sm" variant={tab === 'lab' ? 'primary' : 'secondary'} onClick={() => setTab('lab')}>
-            Lab de retornos
-          </Button>
-        </div>
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-          {tab === 'returns' || tab === 'gastapp-validation' ? (
-            <div className="flex min-w-0 flex-wrap items-center gap-1">
-              {(['CLP', 'USD', 'EUR', 'UF'] as WealthCurrency[]).map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setCurrency(item)}
-                  className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold transition ${
-                    currency === item
-                      ? 'border-slate-800 bg-slate-800 text-white'
-                      : 'border-slate-300 bg-white text-slate-600'
-                  }`}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div />
-          )}
-          <div className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] text-slate-500">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            aria-expanded={isSectionMenuOpen}
+            aria-controls="analysis-section-menu"
+            aria-label={`${isSectionMenuOpen ? 'Ocultar' : 'Mostrar'} secciones de Análisis`}
+            onClick={() => setIsSectionMenuOpen((open) => !open)}
+            className="flex min-h-11 min-w-[150px] flex-1 items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left text-xs font-semibold text-slate-700 touch-manipulation"
+          >
+            <span className="min-w-0 leading-tight">
+              <span className="block text-[10px] font-medium uppercase tracking-wide text-slate-400">Sección</span>
+              <span className="block truncate">{analysisTabLabel(tab)}</span>
+            </span>
+            <ChevronDown
+              size={16}
+              aria-hidden="true"
+              className={`shrink-0 transition-transform ${isSectionMenuOpen ? 'rotate-180' : ''}`}
+            />
+          </button>
+          <div className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] text-slate-500">
             <span className="whitespace-nowrap">{`Act. ${formatAnalysisUpdatedAt(analysisEntry.builtAt)}`}</span>
             <button
               type="button"
               onClick={refreshAnalysisModels}
-              className="rounded-full border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 transition hover:bg-slate-50"
+              className="min-h-9 min-w-[84px] rounded-full border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-600 transition hover:bg-slate-50 touch-manipulation"
             >
               Actualizar
             </button>
           </div>
         </div>
+        {tab === 'returns' || tab === 'gastapp-validation' ? (
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5" aria-label="Moneda">
+            {(['CLP', 'USD', 'EUR', 'UF'] as WealthCurrency[]).map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setCurrency(item)}
+                className={`min-h-11 min-w-[52px] rounded-lg border px-3 py-2 text-[11px] font-semibold transition touch-manipulation ${
+                  currency === item
+                    ? 'border-slate-800 bg-slate-800 text-white'
+                    : 'border-slate-300 bg-white text-slate-600'
+                }`}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {isSectionMenuOpen ? (
+          <div id="analysis-section-menu" className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+            <Button
+              size="sm"
+              variant={tab === 'returns' ? 'primary' : 'secondary'}
+              className="min-h-11 leading-tight touch-manipulation"
+              onClick={() => {
+                setTab('returns');
+                setIsSectionMenuOpen(false);
+              }}
+            >
+              Retornos
+            </Button>
+            <Button
+              size="sm"
+              variant={tab === 'gastapp-validation' ? 'primary' : 'secondary'}
+              className="min-h-11 leading-tight touch-manipulation"
+              onClick={() => {
+                setTab('gastapp-validation');
+                setIsSectionMenuOpen(false);
+              }}
+            >
+              Validación GastApp
+            </Button>
+            <Button
+              size="sm"
+              variant={tab === 'lab' ? 'primary' : 'secondary'}
+              className="min-h-11 leading-tight touch-manipulation"
+              onClick={() => {
+                setTab('lab');
+                setIsSectionMenuOpen(false);
+              }}
+            >
+              Lab de retornos
+            </Button>
+          </div>
+        ) : null}
       </Card>
 
       {tab === 'lab' ? (

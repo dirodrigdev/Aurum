@@ -238,6 +238,15 @@ describe('AnalysisAurum returns toolbar', () => {
       );
     });
 
+    const sectionToggle = container.querySelector('button[aria-controls="analysis-section-menu"]');
+    expect(sectionToggle).toBeDefined();
+    expect(sectionToggle?.getAttribute('aria-expanded')).toBe('false');
+
+    await act(async () => {
+      sectionToggle?.click();
+    });
+
+    expect(sectionToggle?.getAttribute('aria-expanded')).toBe('true');
     expect(container.textContent).toContain('Retornos');
     expect(container.textContent).toContain('Validación GastApp');
     expect(container.textContent).toContain('Lab de retornos');

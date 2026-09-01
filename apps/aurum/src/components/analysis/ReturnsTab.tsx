@@ -1571,7 +1571,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
           <div className="min-w-0">
             <label
               htmlFor={estimatedToggleId}
-              className="font-semibold text-slate-900"
+              className="inline-flex min-h-11 cursor-pointer items-center py-2 font-semibold text-slate-900"
               onClick={(event) => event.stopPropagation()}
             >
               Incluir parcial actual (P) en cálculos
@@ -1609,16 +1609,26 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
               </div>
             )}
           </div>
-          <input
-            id={estimatedToggleId}
-            type="checkbox"
-            aria-describedby={!estimatedToggleEnabled && estimatedToggleReason ? `${estimatedToggleId}-reason` : undefined}
-            disabled={!estimatedToggleEnabled}
-            className="mt-0.5 h-5 w-5 shrink-0 rounded border-slate-400 text-slate-700 focus:ring-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
-            checked={includeEstimatedMonth}
-            onChange={handleEstimatedToggle}
+          <label
+            htmlFor={estimatedToggleId}
+            data-testid="analysis-partial-toggle-hit-area"
+            className={cn(
+              'flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-xl border border-transparent touch-manipulation',
+              estimatedToggleEnabled ? 'cursor-pointer' : 'cursor-not-allowed',
+            )}
             onClick={(event) => event.stopPropagation()}
-          />
+          >
+            <input
+              id={estimatedToggleId}
+              type="checkbox"
+              aria-describedby={!estimatedToggleEnabled && estimatedToggleReason ? `${estimatedToggleId}-reason` : undefined}
+              disabled={!estimatedToggleEnabled}
+              className="h-6 w-6 rounded border-slate-400 text-slate-700 focus:ring-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
+              checked={includeEstimatedMonth}
+              onChange={handleEstimatedToggle}
+              onClick={(event) => event.stopPropagation()}
+            />
+          </label>
         </div>
         {!estimatedToggleEnabled && estimatedToggleReason ? (
           <div id={`${estimatedToggleId}-reason`} className="sr-only">

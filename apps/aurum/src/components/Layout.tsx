@@ -58,7 +58,7 @@ export const Layout: React.FC = () => {
                     item.onClick();
                   }}
                   className={cn(
-                    'flex flex-col items-center gap-0.5 flex-1 text-[11px] touch-manipulation text-slate-400 hover:text-slate-600',
+                    'flex min-h-12 flex-1 flex-col items-center justify-center gap-0.5 px-1 py-1 text-[11px] touch-manipulation select-none text-slate-400 hover:text-slate-600',
                   )}
                 >
                   <Icon size={20} />
@@ -84,7 +84,7 @@ export const Layout: React.FC = () => {
                   }
                 }}
                 className={cn(
-                  'flex flex-col items-center gap-0.5 flex-1 text-[11px] touch-manipulation',
+                  'flex min-h-12 flex-1 flex-col items-center justify-center gap-0.5 px-1 py-1 text-[11px] touch-manipulation select-none',
                   isActive ? 'text-blue-600' : 'text-slate-400',
                 )}
               >
