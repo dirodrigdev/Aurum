@@ -89,8 +89,8 @@ test('authenticated Settings exposes the GastApp Canonical V2 read-only panel re
   await expect(canonicalSection.locator('details[open]')).toHaveCount(0);
   await expect(canonicalSection).toContainText('sólo lectura');
   await expect(canonicalSection).toContainText('Comprobar actualización');
-  await expect(canonicalSection.getByRole('button', { name: 'Descargar informe resumido', exact: true })).toBeVisible();
-  await expect(canonicalSection.getByRole('button', { name: 'Descargar informe completo', exact: true })).toBeVisible();
+  await expect(canonicalSection.getByRole('button', { name: 'Descargar informe resumido (.xlsx)', exact: true })).toBeVisible();
+  await expect(canonicalSection.getByRole('button', { name: 'Descargar informe completo (.xlsx)', exact: true })).toBeVisible();
   await expect(canonicalSection.getByText('Data Room / Exportaciones', { exact: true })).toHaveCount(0);
   await expect(page.getByText(/(?:Inversiones actualizadas|Patrimonio actualizado)/, { exact: false })).toHaveCount(0, { timeout: 5_000 });
 

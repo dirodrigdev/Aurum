@@ -6,6 +6,7 @@ import { act } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 
 const gastappMonthlyMock = vi.hoisted(() => ({
+  refresh: vi.fn(async () => undefined),
   diagnostic: {
     status: 'idle' as const,
     mode: null as 'firestore' | 'e2e_fixture' | null,
@@ -151,6 +152,7 @@ vi.mock('../src/services/analysisSessionCache', () => ({
 vi.mock('../src/services/gastosMonthly', () => ({
   GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT: 'gastapp-source-updated',
   getGastappMonthlyRuntimeDiagnostic: () => gastappMonthlyMock.diagnostic,
+  refreshGastappMonthlyContable: gastappMonthlyMock.refresh,
   warmGastappMonthlyContable: vi.fn(async () => undefined),
 }));
 
@@ -176,6 +178,7 @@ describe('AnalysisAurum returns toolbar', () => {
     container?.remove();
     container = null;
     document.body.innerHTML = '';
+    gastappMonthlyMock.refresh.mockClear();
     gastappMonthlyMock.diagnostic = {
       status: 'idle',
       mode: null,
@@ -200,6 +203,28 @@ describe('AnalysisAurum returns toolbar', () => {
     expect(container.textContent).toMatch(/Act\.\s\d{2}:\d{2}/);
     expect(container.textContent).toContain('Actualizar');
     expect(container.textContent).not.toContain('Última actualización:');
+  });
+
+  it('reloads the official GastApp monthly contract before rebuilding returns', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        React.createElement(MemoryRouter, null, React.createElement(AnalysisAurum)),
+      );
+    });
+
+    const updateButton = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Actualizar');
+    expect(updateButton).toBeDefined();
+
+    await act(async () => {
+      updateButton?.click();
+    });
+
+    expect(gastappMonthlyMock.refresh).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the return-attribution lab and removes the financial-freedom tab', async () => {

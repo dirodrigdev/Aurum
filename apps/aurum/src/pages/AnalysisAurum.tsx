@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3 } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { Button, Card } from '../components/Components';
@@ -44,6 +44,7 @@ import {
 import {
   GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT,
   getGastappMonthlyRuntimeDiagnostic,
+  refreshGastappMonthlyContable,
   warmGastappMonthlyContable,
 } from '../services/gastosMonthly';
 import { describeGastappAnalysisAccessIssue } from '../services/dataRoom/gastappAccessGuidance';
@@ -119,6 +120,7 @@ export const AnalysisAurum: React.FC = () => {
   const [includeEstimatedMonth, setIncludeEstimatedMonth] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [analysisRefreshTick, setAnalysisRefreshTick] = useState(0);
+  const analysisRefreshInFlightRef = useRef(false);
   const refreshClosures = useCallback(() => {
     const loaded = sortClosuresAsc(loadWealthClosures());
     const loadedFingerprint = buildClosuresFingerprint(loaded);
@@ -451,11 +453,18 @@ export const AnalysisAurum: React.FC = () => {
     }
   }, [location.state]);
 
-  const refreshAnalysisModels = useCallback(() => {
-    clearAnalysisSessionCache(analysisFingerprint);
-    refreshClosures();
-    setAnalysisRefreshTick((current) => current + 1);
-  }, [analysisFingerprint, refreshClosures]);
+  const refreshAnalysisModels = useCallback(async () => {
+    if (analysisRefreshInFlightRef.current) return;
+    analysisRefreshInFlightRef.current = true;
+    try {
+      if (tab !== 'lab') await refreshGastappMonthlyContable();
+      clearAnalysisSessionCache(analysisFingerprint);
+      refreshClosures();
+      setAnalysisRefreshTick((current) => current + 1);
+    } finally {
+      analysisRefreshInFlightRef.current = false;
+    }
+  }, [analysisFingerprint, refreshClosures, tab]);
 
   const returnsTabProps: ReturnsTabProps = {
     heroSinceStart,
