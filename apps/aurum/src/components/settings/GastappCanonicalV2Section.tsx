@@ -5,7 +5,7 @@ import type {
   GastappCanonicalV2ReadCode,
   GastappDataRoomV2Pointer,
 } from '../../services/gastappCanonicalV2';
-import type { GastappReportExportKind } from '../../services/gastappFullHandoff';
+import type { GastappReportExportKind, GastappReportRange } from '../../services/gastappFullHandoff';
 
 export type GastappCanonicalV2DownloadState = {
   status: 'idle' | 'loading' | 'ok' | 'error';
@@ -33,13 +33,14 @@ export const describeGastappCanonicalV2DiagnosticState = (
 type Props = {
   state: GastappCanonicalV2DiagnosticViewState;
   onRefresh: () => void;
-  onDownload: (kind: GastappReportExportKind) => void;
+  onDownload: (kind: GastappReportExportKind, reportRange: GastappReportRange) => void;
 };
 
 const statusLabel = (status: GastappCanonicalV2DiagnosticViewState['status']) =>
   status === 'loading' ? 'Leyendo…' : status === 'ok' ? 'Verificado' : 'Pendiente';
 
 export const GastappCanonicalV2Section: React.FC<Props> = ({ state, onRefresh, onDownload }) => {
+  const [pendingReportKind, setPendingReportKind] = React.useState<GastappReportExportKind | null>(null);
   const contracts = state.contracts;
   const pointer = state.pointer;
   const showAccessGuidance = state.errorCode === 'permission_denied';
@@ -159,7 +160,7 @@ export const GastappCanonicalV2Section: React.FC<Props> = ({ state, onRefresh, o
             const download = state.downloads[kind] || (kind === 'summary_xlsx' ? legacyDownloads.express : legacyDownloads.full) || { status: 'idle' as const, message: '' };
             return (
               <div key={kind} className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
-                <Button variant="secondary" size="sm" className="w-full" disabled={download.status === 'loading'} onClick={() => onDownload(kind)}>
+                <Button variant="secondary" size="sm" className="w-full" disabled={download.status === 'loading'} onClick={() => setPendingReportKind(kind)}>
                   {download.status === 'loading' ? 'Comprobando…' : label}
                 </Button>
                 {!!download.message && <div className="mt-1 whitespace-pre-line break-words text-[10px] text-slate-600">{download.message}</div>}
@@ -168,6 +169,48 @@ export const GastappCanonicalV2Section: React.FC<Props> = ({ state, onRefresh, o
           })}
         </div>
       </div>
+
+      {pendingReportKind && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/35 px-4 py-6" role="presentation">
+          <div
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="gastapp-report-range-title"
+            data-testid="gastapp-report-range-modal"
+          >
+            <div className="text-base font-bold text-slate-900" id="gastapp-report-range-title">¿Qué período quieres incluir?</div>
+            <div className="mt-1 text-xs text-slate-500">La selección sólo afecta al archivo descargado.</div>
+            <div className="mt-4 grid gap-2">
+              {([
+                ['12m', 'Últimos 12 meses'],
+                ['24m', 'Últimos 24 meses'],
+                ['36m', 'Últimos 36 meses'],
+                ['all', 'Todo el historial'],
+              ] as const).map(([range, rangeLabel]) => (
+                <button
+                  key={range}
+                  type="button"
+                  className="flex min-h-10 items-center justify-between rounded-xl border border-slate-200 px-3 text-left text-sm font-semibold text-slate-700 transition hover:border-emerald-300 hover:bg-emerald-50"
+                  onClick={() => {
+                    const kind = pendingReportKind;
+                    setPendingReportKind(null);
+                    onDownload(kind, range as GastappReportRange);
+                  }}
+                >
+                  <span>{rangeLabel}</span>
+                  <span className="text-[11px] font-normal text-slate-400">{range}</span>
+                </button>
+              ))}
+            </div>
+            <div className="mt-4 flex justify-end">
+              <Button type="button" variant="outline" size="sm" onClick={() => setPendingReportKind(null)}>
+                Cancelar
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </Card>
   );
 };

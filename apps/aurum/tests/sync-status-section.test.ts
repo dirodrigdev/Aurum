@@ -97,6 +97,36 @@ describe('Integración con GastApp en Ajustes', () => {
     expect(container.querySelector('details[open]')).toBeNull();
     expect(container.querySelector('a[href="https://gastapp-chi.vercel.app"]')).toBeTruthy();
   });
+  it('pide el rango antes de iniciar la descarga y transmite la selección', async () => {
+    const onDownload = vi.fn();
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(GastappCanonicalV2Section, {
+        state: base('ok'),
+        onRefresh: vi.fn(),
+        onDownload,
+      }));
+    });
+
+    const summaryButton = Array.from(container.querySelectorAll('button')).find((item) =>
+      item.textContent?.includes('Descargar informe resumido'),
+    );
+    await act(async () => {
+      await userEvent.setup().click(summaryButton!);
+    });
+    expect(container.querySelector('[data-testid="gastapp-report-range-modal"]')).toBeTruthy();
+    expect(onDownload).not.toHaveBeenCalled();
+
+    const rangeButton = Array.from(container.querySelectorAll('[data-testid="gastapp-report-range-modal"] button')).find((item) =>
+      item.textContent?.includes('Últimos 24 meses'),
+    );
+    await act(async () => {
+      await userEvent.setup().click(rangeButton!);
+    });
+    expect(onDownload).toHaveBeenCalledWith('summary_xlsx', '24m');
+  });
 });
 
 describe('SyncStatusSection MIDAS publication recovery', () => {

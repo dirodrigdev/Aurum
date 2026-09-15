@@ -95,16 +95,29 @@ test('authenticated Settings exposes the GastApp Canonical V2 read-only panel re
   await expect(page.getByText(/(?:Inversiones actualizadas|Patrimonio actualizado)/, { exact: false })).toHaveCount(0, { timeout: 5_000 });
 
   await page.screenshot({ path: testInfo.outputPath('aurum-gastapp-canonical-v2-desktop.png'), fullPage: true });
+  await canonicalSection.getByRole('button', { name: 'Descargar informe resumido (.xlsx)', exact: true }).click();
+  const reportRangeModal = page.getByTestId('gastapp-report-range-modal');
+  await expect(reportRangeModal).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('aurum-gastapp-report-range-desktop.png'), fullPage: true });
+  await reportRangeModal.getByRole('button', { name: 'Cancelar', exact: true }).click();
 
   await page.setViewportSize({ width: 768, height: 1024 });
   const tabletOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(tabletOverflow).toBeLessThanOrEqual(1);
   await page.screenshot({ path: testInfo.outputPath('aurum-gastapp-canonical-v2-tablet.png'), fullPage: true });
+  await canonicalSection.getByRole('button', { name: 'Descargar informe completo (.xlsx)', exact: true }).click();
+  await expect(reportRangeModal).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('aurum-gastapp-report-range-tablet.png'), fullPage: true });
+  await reportRangeModal.getByRole('button', { name: 'Cancelar', exact: true }).click();
 
   await page.setViewportSize({ width: 390, height: 844 });
   const mobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(mobileOverflow).toBeLessThanOrEqual(1);
   await page.screenshot({ path: testInfo.outputPath('aurum-gastapp-canonical-v2-mobile.png'), fullPage: true });
+  await canonicalSection.getByRole('button', { name: 'Descargar datos para IA (.json)', exact: true }).click();
+  await expect(reportRangeModal).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('aurum-gastapp-report-range-mobile.png'), fullPage: true });
+  await reportRangeModal.getByRole('button', { name: 'Cancelar', exact: true }).click();
 
   await networkGuard.assertClean(testInfo);
   expect(pageErrors, `page errors: ${pageErrors.join(' | ')}`).toEqual([]);

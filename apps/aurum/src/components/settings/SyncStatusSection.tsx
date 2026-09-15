@@ -5,7 +5,7 @@ import {
   GastappCanonicalV2Section,
   type GastappCanonicalV2DiagnosticViewState,
 } from './GastappCanonicalV2Section';
-import type { GastappReportExportKind } from '../../services/gastappFullHandoff';
+import type { GastappReportExportKind, GastappReportRange } from '../../services/gastappFullHandoff';
 import type { FirestoreStatus } from '../../services/firestoreStatus';
 
 export type MidasPublicationViewState = {
@@ -25,7 +25,7 @@ interface SyncStatusSectionProps {
   onSyncNow: () => void;
   onSignOut: () => void | Promise<void>;
   onRefreshGastappCanonicalV2: () => void;
-  onDownloadGastappCanonicalV2: (kind: GastappReportExportKind) => void;
+  onDownloadGastappCanonicalV2: (kind: GastappReportExportKind, reportRange: GastappReportRange) => void;
   onRepublishMidas: () => void;
 }
 

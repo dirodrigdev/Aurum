@@ -25,19 +25,22 @@ describe('Aurum Full handoff', () => {
     expect(() => requestGastappFullDownload()).toThrow('gastapp_full_handoff_popup_blocked');
   });
 
-  it('transporta los tres formatos al único publisher GastApp', async () => {
+  it('transporta el formato y cada uno de los cuatro rangos al único publisher GastApp', async () => {
     const popup = { closed: false };
     const open = vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
-    const promise = requestGastappReportDownload('ai_json');
-    const target = String(open.mock.calls[0]?.[0] || '');
-    const url = new URL(target);
-    const actionId = url.searchParams.get('handoffId');
-    expect(url.searchParams.get('gastappAction')).toBe('download_report');
-    expect(url.searchParams.get('reportKind')).toBe('ai_json');
-    window.dispatchEvent(new MessageEvent('message', {
-      origin: 'https://gastapp-chi.vercel.app',
-      data: { type: 'gastapp_report_handoff', actionId, kind: 'ai_json', status: 'success', update: 'not_required', byteLength: 10 },
-    }));
-    await expect(promise).resolves.toMatchObject({ status: 'success', kind: 'ai_json', update: 'not_required' });
+    for (const reportRange of ['12m', '24m', '36m', 'all'] as const) {
+      const promise = requestGastappReportDownload('ai_json', reportRange);
+      const target = String(open.mock.calls.at(-1)?.[0] || '');
+      const url = new URL(target);
+      const actionId = url.searchParams.get('handoffId');
+      expect(url.searchParams.get('gastappAction')).toBe('download_report');
+      expect(url.searchParams.get('reportKind')).toBe('ai_json');
+      expect(url.searchParams.get('reportRange')).toBe(reportRange);
+      window.dispatchEvent(new MessageEvent('message', {
+        origin: 'https://gastapp-chi.vercel.app',
+        data: { type: 'gastapp_report_handoff', actionId, kind: 'ai_json', reportRange, status: 'success', update: 'not_required', byteLength: 10 },
+      }));
+      await expect(promise).resolves.toMatchObject({ status: 'success', kind: 'ai_json', reportRange, update: 'not_required' });
+    }
   });
 });

@@ -13,7 +13,7 @@ import { LabToolsSection } from '../components/settings/LabToolsSection';
 import { HistoricalFxCorrectionConsole } from '../components/settings/HistoricalFxCorrectionConsole';
 import { SyncStatusSection } from '../components/settings/SyncStatusSection';
 import type { GastappCanonicalV2DiagnosticViewState } from '../components/settings/GastappCanonicalV2Section';
-import type { GastappReportExportKind } from '../services/gastappFullHandoff';
+import type { GastappReportExportKind, GastappReportRange } from '../services/gastappFullHandoff';
 import type { MidasPublicationViewState } from '../components/settings/SyncStatusSection';
 import { TypedConfirmModal } from '../components/settings/TypedConfirmModal';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
@@ -1126,7 +1126,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     }
   };
 
-  const downloadGastappCanonicalV2 = async (kind: GastappReportExportKind) => {
+  const downloadGastappCanonicalV2 = async (kind: GastappReportExportKind, reportRange: GastappReportRange) => {
     setGastappCanonicalV2Diagnostic((current) => ({
       ...current,
       downloads: {
@@ -1135,7 +1135,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       },
     }));
     try {
-      await requestGastappReportDownload(kind);
+      await requestGastappReportDownload(kind, reportRange);
       setGastappCanonicalV2Diagnostic((current) => ({
         ...current,
         downloads: {
@@ -2107,8 +2107,8 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         onRefreshGastappCanonicalV2={() => {
           void loadGastappCanonicalV2Diagnostic(true);
         }}
-        onDownloadGastappCanonicalV2={(mode) => {
-          void downloadGastappCanonicalV2(mode);
+        onDownloadGastappCanonicalV2={(mode, reportRange) => {
+          void downloadGastappCanonicalV2(mode, reportRange);
         }}
         onRepublishMidas={() => {
           void regenerateMidasPublication();

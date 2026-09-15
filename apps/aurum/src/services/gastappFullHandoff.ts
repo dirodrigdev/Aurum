@@ -5,6 +5,7 @@ export const GASTAPP_REPORT_HANDOFF_ACTION = 'download_report';
 export const GASTAPP_REPORT_HANDOFF_MESSAGE = 'gastapp_report_handoff';
 
 export type GastappReportExportKind = 'summary_xlsx' | 'full_xlsx' | 'ai_json';
+export type GastappReportRange = '12m' | '24m' | '36m' | 'all';
 
 export type GastappFullHandoffCompletion = {
   status: 'success';
@@ -23,6 +24,7 @@ const makeActionId = () => {
 export type GastappReportHandoffCompletion = {
   status: 'success';
   kind: GastappReportExportKind;
+  reportRange: GastappReportRange;
   update: 'skipped_current' | 'updated' | 'not_required';
   byteLength?: number;
   sha256?: string;
@@ -32,12 +34,16 @@ export type GastappReportHandoffCompletion = {
  * GastApp owns the canonical read and export algorithm. Aurum only transports
  * the explicit click and waits for one postMessage completion.
  */
-export const requestGastappReportDownload = (kind: GastappReportExportKind): Promise<GastappReportHandoffCompletion> => {
+export const requestGastappReportDownload = (
+  kind: GastappReportExportKind,
+  reportRange: GastappReportRange = 'all',
+): Promise<GastappReportHandoffCompletion> => {
   if (typeof window === 'undefined') throw new Error('gastapp_report_handoff_browser_required');
   const actionId = makeActionId();
   const url = new URL(GASTAPP_FULL_HANDOFF_TARGET);
   url.searchParams.set('gastappAction', GASTAPP_REPORT_HANDOFF_ACTION);
   url.searchParams.set('reportKind', kind);
+  url.searchParams.set('reportRange', reportRange);
   url.searchParams.set('handoffId', actionId);
   url.searchParams.set('returnOrigin', window.location.origin);
 
@@ -56,7 +62,7 @@ export const requestGastappReportDownload = (kind: GastappReportExportKind): Pro
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== new URL(GASTAPP_FULL_HANDOFF_TARGET).origin) return;
       const data = event.data as Record<string, unknown> | null;
-      if (!data || data.type !== GASTAPP_REPORT_HANDOFF_MESSAGE || data.actionId !== actionId || data.kind !== kind) return;
+      if (!data || data.type !== GASTAPP_REPORT_HANDOFF_MESSAGE || data.actionId !== actionId || data.kind !== kind || data.reportRange !== reportRange) return;
       cleanup();
       if (data.status !== 'success') {
         reject(new Error('gastapp_report_handoff_failed'));
@@ -65,6 +71,7 @@ export const requestGastappReportDownload = (kind: GastappReportExportKind): Pro
       resolve({
         status: 'success',
         kind,
+        reportRange,
         update: data.update === 'updated' ? 'updated' : data.update === 'not_required' ? 'not_required' : 'skipped_current',
         byteLength: typeof data.byteLength === 'number' ? data.byteLength : undefined,
         sha256: typeof data.sha256 === 'string' ? data.sha256 : undefined,
