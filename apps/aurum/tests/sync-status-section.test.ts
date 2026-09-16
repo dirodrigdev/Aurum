@@ -8,6 +8,7 @@ import {
   describeGastappCanonicalV2DiagnosticState,
   GastappCanonicalV2Section,
 } from '../src/components/settings/GastappCanonicalV2Section';
+import { GastappReportDownloads } from '../src/components/GastappReportDownloads';
 import { SyncStatusSection } from '../src/components/settings/SyncStatusSection';
 import type { GastappCanonicalV2DiagnosticViewState } from '../src/components/settings/GastappCanonicalV2Section';
 
@@ -30,10 +31,6 @@ const base = (status: GastappCanonicalV2DiagnosticViewState['status']): GastappC
   errorCode: null,
   contracts: null,
   pointer: null,
-  downloads: {
-    express: { status: 'idle', message: '' },
-    full: { status: 'idle', message: '' },
-  },
 });
 
 describe('Integración con GastApp en Ajustes', () => {
@@ -81,7 +78,6 @@ describe('Integración con GastApp en Ajustes', () => {
       root?.render(React.createElement(GastappCanonicalV2Section, {
         state,
         onRefresh: vi.fn(),
-        onDownload: vi.fn(),
       }));
     });
 
@@ -97,8 +93,7 @@ describe('Integración con GastApp en Ajustes', () => {
     expect(container.querySelector('details[open]')).toBeNull();
     expect(container.querySelector('a[href="https://gastapp-chi.vercel.app"]')).toBeTruthy();
   });
-  it('pide el rango antes de iniciar la descarga y transmite la selección', async () => {
-    const onDownload = vi.fn();
+  it('mantiene las descargas fuera de la tarjeta de integración', async () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -106,10 +101,21 @@ describe('Integración con GastApp en Ajustes', () => {
       root?.render(React.createElement(GastappCanonicalV2Section, {
         state: base('ok'),
         onRefresh: vi.fn(),
-        onDownload,
       }));
     });
 
+    expect(container.querySelector('[data-testid="gastapp-reports-block"]')).toBeNull();
+  });
+});
+
+describe('Descargas de GastApp en Análisis', () => {
+  it('muestra el selector con los cuatro rangos', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(GastappReportDownloads));
+    });
     const summaryButton = Array.from(container.querySelectorAll('button')).find((item) =>
       item.textContent?.includes('Descargar informe resumido'),
     );
@@ -117,15 +123,10 @@ describe('Integración con GastApp en Ajustes', () => {
       await userEvent.setup().click(summaryButton!);
     });
     expect(container.querySelector('[data-testid="gastapp-report-range-modal"]')).toBeTruthy();
-    expect(onDownload).not.toHaveBeenCalled();
-
-    const rangeButton = Array.from(container.querySelectorAll('[data-testid="gastapp-report-range-modal"] button')).find((item) =>
-      item.textContent?.includes('Últimos 24 meses'),
-    );
-    await act(async () => {
-      await userEvent.setup().click(rangeButton!);
-    });
-    expect(onDownload).toHaveBeenCalledWith('summary_xlsx', '24m');
+    expect(container.textContent).toContain('Últimos 12 períodos');
+    expect(container.textContent).toContain('Últimos 24 períodos');
+    expect(container.textContent).toContain('Últimos 36 períodos');
+    expect(container.textContent).toContain('Todo el historial');
   });
 });
 
@@ -151,7 +152,6 @@ describe('SyncStatusSection MIDAS publication recovery', () => {
         onSyncNow: vi.fn(),
         onSignOut: vi.fn(),
         onRefreshGastappCanonicalV2: vi.fn(),
-        onDownloadGastappCanonicalV2: vi.fn(),
         onRepublishMidas,
       }));
     });

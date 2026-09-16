@@ -26,9 +26,10 @@ describe('Aurum Full handoff', () => {
   });
 
   it('transporta el formato y cada uno de los cuatro rangos al único publisher GastApp', async () => {
-    const popup = { closed: false };
+    const close = vi.fn();
+    const popup = { closed: false, close };
     const open = vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
-    for (const reportRange of ['12m', '24m', '36m', 'all'] as const) {
+    for (const reportRange of ['12p', '24p', '36p', 'all'] as const) {
       const promise = requestGastappReportDownload('ai_json', reportRange);
       const target = String(open.mock.calls.at(-1)?.[0] || '');
       const url = new URL(target);
@@ -42,5 +43,6 @@ describe('Aurum Full handoff', () => {
       }));
       await expect(promise).resolves.toMatchObject({ status: 'success', kind: 'ai_json', reportRange, update: 'not_required' });
     }
+    expect(close).toHaveBeenCalledTimes(4);
   });
 });

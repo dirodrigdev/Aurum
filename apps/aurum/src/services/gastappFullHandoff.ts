@@ -5,7 +5,7 @@ export const GASTAPP_REPORT_HANDOFF_ACTION = 'download_report';
 export const GASTAPP_REPORT_HANDOFF_MESSAGE = 'gastapp_report_handoff';
 
 export type GastappReportExportKind = 'summary_xlsx' | 'full_xlsx' | 'ai_json';
-export type GastappReportRange = '12m' | '24m' | '36m' | 'all';
+export type GastappReportRange = '12p' | '24p' | '36p' | 'all';
 
 export type GastappFullHandoffCompletion = {
   status: 'success';
@@ -53,11 +53,16 @@ export const requestGastappReportDownload = (
   return new Promise<GastappReportHandoffCompletion>((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       cleanup();
+      closePopupAndReturn();
       reject(new Error('gastapp_report_handoff_timeout'));
     }, 5 * 60 * 1000);
     const cleanup = () => {
       window.clearTimeout(timeout);
       window.removeEventListener('message', onMessage);
+    };
+    const closePopupAndReturn = () => {
+      if (!popup.closed && typeof popup.close === 'function') popup.close();
+      window.focus();
     };
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== new URL(GASTAPP_FULL_HANDOFF_TARGET).origin) return;
@@ -65,9 +70,11 @@ export const requestGastappReportDownload = (
       if (!data || data.type !== GASTAPP_REPORT_HANDOFF_MESSAGE || data.actionId !== actionId || data.kind !== kind || data.reportRange !== reportRange) return;
       cleanup();
       if (data.status !== 'success') {
+        closePopupAndReturn();
         reject(new Error('gastapp_report_handoff_failed'));
         return;
       }
+      closePopupAndReturn();
       resolve({
         status: 'success',
         kind,

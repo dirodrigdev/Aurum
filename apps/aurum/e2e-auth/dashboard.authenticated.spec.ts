@@ -89,35 +89,23 @@ test('authenticated Settings exposes the GastApp Canonical V2 read-only panel re
   await expect(canonicalSection.locator('details[open]')).toHaveCount(0);
   await expect(canonicalSection).toContainText('sólo lectura');
   await expect(canonicalSection).toContainText('Comprobar actualización');
-  await expect(canonicalSection.getByRole('button', { name: 'Descargar informe resumido (.xlsx)', exact: true })).toBeVisible();
-  await expect(canonicalSection.getByRole('button', { name: 'Descargar informe completo (.xlsx)', exact: true })).toBeVisible();
+  await expect(canonicalSection.getByTestId('gastapp-reports-block')).toHaveCount(0);
   await expect(canonicalSection.getByText('Data Room / Exportaciones', { exact: true })).toHaveCount(0);
   await expect(page.getByText(/(?:Inversiones actualizadas|Patrimonio actualizado)/, { exact: false })).toHaveCount(0, { timeout: 5_000 });
 
   await page.screenshot({ path: testInfo.outputPath('aurum-gastapp-canonical-v2-desktop.png'), fullPage: true });
-  await canonicalSection.getByRole('button', { name: 'Descargar informe resumido (.xlsx)', exact: true }).click();
-  const reportRangeModal = page.getByTestId('gastapp-report-range-modal');
-  await expect(reportRangeModal).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath('aurum-gastapp-report-range-desktop.png'), fullPage: true });
-  await reportRangeModal.getByRole('button', { name: 'Cancelar', exact: true }).click();
 
   await page.setViewportSize({ width: 768, height: 1024 });
   const tabletOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(tabletOverflow).toBeLessThanOrEqual(1);
   await page.screenshot({ path: testInfo.outputPath('aurum-gastapp-canonical-v2-tablet.png'), fullPage: true });
-  await canonicalSection.getByRole('button', { name: 'Descargar informe completo (.xlsx)', exact: true }).click();
-  await expect(reportRangeModal).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath('aurum-gastapp-report-range-tablet.png'), fullPage: true });
-  await reportRangeModal.getByRole('button', { name: 'Cancelar', exact: true }).click();
+  await expect(canonicalSection.getByTestId('gastapp-report-range-modal')).toHaveCount(0);
 
   await page.setViewportSize({ width: 390, height: 844 });
   const mobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(mobileOverflow).toBeLessThanOrEqual(1);
   await page.screenshot({ path: testInfo.outputPath('aurum-gastapp-canonical-v2-mobile.png'), fullPage: true });
-  await canonicalSection.getByRole('button', { name: 'Descargar datos para IA (.json)', exact: true }).click();
-  await expect(reportRangeModal).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath('aurum-gastapp-report-range-mobile.png'), fullPage: true });
-  await reportRangeModal.getByRole('button', { name: 'Cancelar', exact: true }).click();
+  await expect(canonicalSection.getByTestId('gastapp-report-range-modal')).toHaveCount(0);
 
   await networkGuard.assertClean(testInfo);
   expect(pageErrors, `page errors: ${pageErrors.join(' | ')}`).toEqual([]);
@@ -151,6 +139,20 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
   await expect(audit).toContainText('Auditoría');
   await expect(audit).toContainText('No se usó legacy como fallback');
   await expect(page.getByText('Data Room / Exportaciones', { exact: true })).toHaveCount(0);
+
+  const reportDownloads = page.getByTestId('gastapp-reports-block');
+  await expect(reportDownloads).toBeVisible();
+  await expect(reportDownloads.getByRole('button', { name: 'Descargar informe resumido (.xlsx)', exact: true })).toBeVisible();
+  await expect(reportDownloads.getByRole('button', { name: 'Descargar informe completo (.xlsx)', exact: true })).toBeVisible();
+  await expect(reportDownloads.getByRole('button', { name: 'Descargar datos para IA (.json)', exact: true })).toBeVisible();
+  await reportDownloads.getByRole('button', { name: 'Descargar informe resumido (.xlsx)', exact: true }).click();
+  const reportRangeModal = page.getByTestId('gastapp-report-range-modal');
+  await expect(reportRangeModal).toBeVisible();
+  await expect(reportRangeModal).toContainText('Últimos 12 períodos');
+  await expect(reportRangeModal).toContainText('Últimos 24 períodos');
+  await expect(reportRangeModal).toContainText('Últimos 36 períodos');
+  await expect(reportRangeModal).toContainText('Todo el historial');
+  await reportRangeModal.getByRole('button', { name: 'Cancelar', exact: true }).click();
 
   await page.screenshot({ path: testInfo.outputPath('aurum-monthly-audit-desktop.png'), fullPage: true });
 

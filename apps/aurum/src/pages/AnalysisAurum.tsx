@@ -5,6 +5,7 @@ import { Button, Card } from '../components/Components';
 import { LabTab } from '../components/analysis/LabTab';
 import { ReturnsTab, type ReturnsTabProps } from '../components/analysis/ReturnsTab';
 import { GastappMonthlyValidationTab } from '../components/analysis/GastappMonthlyValidationTab';
+import { GastappReportDownloads } from '../components/GastappReportDownloads';
 import type {
   AggregatedSummary,
   AnalysisTab,
@@ -49,8 +50,8 @@ import {
   warmGastappMonthlyContable,
 } from '../services/gastosMonthly';
 import { describeGastappAnalysisAccessIssue } from '../services/dataRoom/gastappAccessGuidance';
-// downloadGastappDataRoomV2Artifact is retired from Analysis; the single
-// INFORMES block in Settings uses the GastApp XLSX/JSON handoff.
+// GastApp remains the single XLSX/JSON generation authority; Analysis only
+// exposes the existing handoff entry point.
 
 const loadWealthClosures = () => loadClosures();
 const ANALYSIS_CURRENCIES = ['CLP', 'USD', 'EUR', 'UF'] as const;
@@ -644,6 +645,8 @@ export const AnalysisAurum: React.FC = () => {
           Datos en solo lectura: los cálculos de Análisis no modifican cierres ni registros persistidos.
         </div>
       </Card>
+
+      <GastappReportDownloads />
     </div>
   );
 };

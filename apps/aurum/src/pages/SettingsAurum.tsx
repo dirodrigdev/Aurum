@@ -13,7 +13,6 @@ import { LabToolsSection } from '../components/settings/LabToolsSection';
 import { HistoricalFxCorrectionConsole } from '../components/settings/HistoricalFxCorrectionConsole';
 import { SyncStatusSection } from '../components/settings/SyncStatusSection';
 import type { GastappCanonicalV2DiagnosticViewState } from '../components/settings/GastappCanonicalV2Section';
-import type { GastappReportExportKind, GastappReportRange } from '../services/gastappFullHandoff';
 import type { MidasPublicationViewState } from '../components/settings/SyncStatusSection';
 import { TypedConfirmModal } from '../components/settings/TypedConfirmModal';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
@@ -88,8 +87,6 @@ import {
   loadGastappDataRoomV2Pointer,
   validateGastappDataRoomV2FreshnessAgainstMetadata,
 } from '../services/gastappCanonicalV2';
-import { requestGastappReportDownload } from '../services/gastappFullHandoff';
-import { buildGastappAccessGuidanceMessage } from '../services/dataRoom/gastappAccessGuidance';
 // downloadGastappDataRoomV2Artifact is intentionally retired from the UI;
 // report clicks now use the single GastApp XLSX/JSON handoff authority below.
 import {
@@ -111,11 +108,6 @@ const DEFAULT_GASTAPP_CANONICAL_V2_DIAGNOSTIC: GastappCanonicalV2DiagnosticViewS
   errorCode: null,
   contracts: null,
   pointer: null,
-  downloads: {
-    summary_xlsx: { status: 'idle', message: '' },
-    full_xlsx: { status: 'idle', message: '' },
-    ai_json: { status: 'idle', message: '' },
-  },
 };
 
 const describeMidasPublicationReadiness = (
@@ -1126,43 +1118,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     }
   };
 
-  const downloadGastappCanonicalV2 = async (kind: GastappReportExportKind, reportRange: GastappReportRange) => {
-    setGastappCanonicalV2Diagnostic((current) => ({
-      ...current,
-      downloads: {
-        ...current.downloads,
-        [kind]: { status: 'loading', message: 'Comprobando el informe publicado…' },
-      },
-    }));
-    try {
-      await requestGastappReportDownload(kind, reportRange);
-      setGastappCanonicalV2Diagnostic((current) => ({
-        ...current,
-        downloads: {
-          ...current.downloads,
-          [kind]: {
-            status: 'ok',
-            message: 'Descarga completada.',
-          },
-        },
-      }));
-    } catch (error: any) {
-      const isCanonicalError = error instanceof GastappCanonicalV2Error;
-      const detail = isCanonicalError && error.path ? `${error.code} · ${error.path}` : String(error?.message || error || 'error');
-      setGastappCanonicalV2Diagnostic((current) => ({
-        ...current,
-        downloads: {
-          ...current.downloads,
-          [kind]: {
-            status: 'error',
-            message: isCanonicalError && error.code === 'permission_denied'
-              ? buildGastappAccessGuidanceMessage('Comprueba la sesión admin en GastApp y vuelve a descargar.', detail)
-              : `No se descargó: ${detail}`,
-          },
-        },
-      }));
-    }
-  };
 
   const openClosureReview = (monthKeys: string[], source: ClosureReviewSource) => {
     const targetMonthKeys = Array.from(new Set(monthKeys.filter(Boolean)));
@@ -2106,9 +2061,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         onSignOut={signOutUser}
         onRefreshGastappCanonicalV2={() => {
           void loadGastappCanonicalV2Diagnostic(true);
-        }}
-        onDownloadGastappCanonicalV2={(mode, reportRange) => {
-          void downloadGastappCanonicalV2(mode, reportRange);
         }}
         onRepublishMidas={() => {
           void regenerateMidasPublication();
