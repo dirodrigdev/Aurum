@@ -1,5 +1,80 @@
 import { expect, test } from '@playwright/test';
+import { getApps, initializeApp } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
 import { installLocalNetworkGuard } from '../../../packages/e2e-harness/playwright/local-network-guard.mjs';
+
+let restoreFinancialPerformanceClosures: (() => Promise<void>) | null = null;
+
+test.afterEach(async () => {
+  if (!restoreFinancialPerformanceClosures) return;
+  const restore = restoreFinancialPerformanceClosures;
+  restoreFinancialPerformanceClosures = null;
+  await restore();
+});
+
+const addFinancialPerformanceClosureFixture = async () => {
+  const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST || '';
+  if (!/^127\.0\.0\.1:\d+$/.test(emulatorHost)) {
+    throw new Error('El fixture de performance sólo puede escribir en el Firestore Emulator local.');
+  }
+  const appName = 'aurum-financial-performance-e2e';
+  const app = getApps().find((candidate) => candidate.name === appName)
+    || initializeApp({ projectId: 'aurum-e2e-local' }, appName);
+  const closureRef = getFirestore(app).doc('aurum_wealth/aurum-e2e-user');
+  const snapshot = await closureRef.get();
+  if (!snapshot.exists) throw new Error('No existe el usuario sintético de Aurum E2E.');
+  const originalClosures = Array.isArray(snapshot.get('closures')) ? snapshot.get('closures') : [];
+
+  const makeClosure = (monthKey: string, index: number) => {
+    const [year, month] = monthKey.split('-').map(Number);
+    const snapshotDate = `${monthKey}-15`;
+    const wave = Math.round(Math.sin(index / 3) * 1_200_000);
+    const records = [
+      ['bank', 'Saldo bancos CLP', 30_000_000 + index * 220_000 + wave],
+      ['investment', 'Fondo diversificado ficticio', 86_000_000 + index * 1_450_000 + wave * 2],
+      ['investment', 'Capital de riesgo CLP', 14_000_000 + index * 180_000],
+    ].map(([block, label, amount], recordIndex) => ({
+      id: `e2e-${monthKey}-${recordIndex + 1}`,
+      block,
+      source: 'e2e_fixture',
+      label,
+      amount: Math.max(1_000_000, Number(amount)),
+      currency: 'CLP',
+      snapshotDate,
+      createdAt: `${snapshotDate}T12:00:00.000Z`,
+    }));
+    const fxRates = { usdClp: 820 + index * 3, eurClp: 900 + index * 4, ufClp: 35_000 + index * 120 };
+    const economicDate = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+    const base = originalClosures.find((closure: { monthKey?: string }) => closure.monthKey === '2026-06');
+    return {
+      id: `e2e-closure-${monthKey}`,
+      monthKey,
+      closedAt: new Date(Date.UTC(year, month, 1, 12)).toISOString(),
+      fxRates,
+      fxMetadata: {
+        economicMonthKey: monthKey,
+        economicDate,
+        usedFxRates: fxRates,
+        rateOrigin: { usd: 'automatic-final', eur: 'automatic-final', uf: 'automatic-final' },
+        source: { usd: 'e2e-fixture', eur: 'e2e-fixture', uf: 'e2e-fixture' },
+        retrievedAt: `${economicDate}T12:00:00.000Z`,
+      },
+      summary: base?.summary,
+      records,
+    };
+  };
+
+  restoreFinancialPerformanceClosures = async () => {
+    await closureRef.update({ closures: originalClosures });
+  };
+  await closureRef.update({
+    closures: [
+      ...originalClosures,
+      makeClosure('2026-07', 38),
+      makeClosure('2026-08', 39),
+    ],
+  });
+};
 
 test('local emulator session loads Dashboard without external traffic', async ({ page }, testInfo) => {
   const pageErrors: string[] = [];
@@ -123,6 +198,8 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
   });
   const networkGuard = await installLocalNetworkGuard(page);
 
+  await addFinancialPerformanceClosureFixture();
+
   await page.goto('/#/analysis');
   const dismissIncompleteClosure = page.getByRole('button', { name: 'Omitir', exact: true });
   await expect(dismissIncompleteClosure).toBeVisible({ timeout: 30_000 });
@@ -172,6 +249,34 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
   await returnsLabTab.click();
   await expect(page.getByRole('button', { name: 'Mostrar secciones de Análisis', exact: true })).toContainText('Lab de retornos');
   await expect(page.getByText('Resultado del período', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('Performance financiera V1', { exact: true })).toBeVisible();
+  await expect(page.getByText('INDICATIVO', { exact: true })).toBeVisible();
+  await expect(page.getByText('No hubo flujos este mes', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'No hubo flujos este mes', exact: true }).click();
+  await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
+  await expect(page.getByText('Simple', { exact: true })).toBeVisible();
+  await expect(page.getByText('Lista completa · 0 movimientos', { exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Agregar aporte', exact: true }).click();
+  await page.getByLabel('Fecha efectiva').fill('2026-08-16');
+  await page.getByLabel('Monto CLP').fill('10000000');
+  await expect(page.getByText('INDICATIVO', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Guardar confirmación', exact: true }).click();
+  await expect(page.getByText(/^Guardado como revisión 2\./)).toBeVisible();
+  await page.getByRole('button', { name: 'Lista completa', exact: true }).click();
+  await page.getByRole('button', { name: 'Guardar confirmación', exact: true }).click();
+  await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
+  await expect(page.getByText('Modified Dietz · reconstruido', { exact: true })).toBeVisible();
+  await expect(page.getByText('Lista completa · 1 movimiento', { exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Mostrar secciones de Análisis', exact: true }).click();
+  await page.getByRole('button', { name: 'Retornos', exact: true }).click();
+  await page.getByRole('button', { name: 'Mostrar secciones de Análisis', exact: true }).click();
+  await page.getByRole('button', { name: 'Lab de retornos', exact: true }).click();
+  await expect(page.getByText(/^Guardado como revisión 3\./)).toBeVisible();
+  await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
+  await expect(page.getByText('Modified Dietz · reconstruido', { exact: true })).toBeVisible();
+
   const labDesktopOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(labDesktopOverflow).toBeLessThanOrEqual(1);
   await page.screenshot({ path: testInfo.outputPath('aurum-returns-lab-desktop.png'), fullPage: true });

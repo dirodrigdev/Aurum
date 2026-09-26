@@ -623,6 +623,7 @@ export const AnalysisAurum: React.FC = () => {
       {tab === 'lab' ? (
         <LabTab
           model={wealthLabModel}
+          closures={closures}
           includeRiskCapitalInTotals={includeRiskCapitalInTotals}
           onToggleRiskMode={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
         />
