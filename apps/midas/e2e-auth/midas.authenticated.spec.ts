@@ -103,10 +103,11 @@ test('Ecosystem is reachable from MIDAS Dashboard and works on mobile', async ({
   await expect(page).toHaveURL(/#\/ecosystem$/);
   const ecosystem = page.getByTestId('midas-ecosystem');
   await expect(ecosystem).toBeVisible();
-  await expect(ecosystem).toContainText('GastApp observa. Aurum integra. MIDAS proyecta.');
-  await expect(ecosystem).toContainText('Acceso protegido');
-  await expect(ecosystem).toContainText('Pruebas automáticas');
-  await expect(ecosystem).toContainText('Firebase Auth · Firestore · GitHub · Vercel · Playwright');
+  await expect(ecosystem).toContainText('Del comportamiento cotidiano a las decisiones de largo plazo');
+  await expect(ecosystem).toContainText('La información mensual de GastApp alimenta análisis en Aurum.');
+  await expect(ecosystem).toContainText('La base patrimonial de Aurum sirve de partida para MIDAS.');
+  await expect(ecosystem).toContainText('Volver a GastApp');
+  await expect(ecosystem).not.toContainText('Firebase');
   const ecosystemHtml = await ecosystem.evaluate((element) => element.outerHTML);
   expect(ecosystemHtml).not.toMatch(/(?:CLP|USD|EUR|UF)\s*[\$€]?\s*\d[\d.,]{2,}/i);
   expect(ecosystemHtml).not.toMatch(/(?:\$|€)\s*\d/);
@@ -118,6 +119,59 @@ test('Ecosystem is reachable from MIDAS Dashboard and works on mobile', async ({
   const desktopOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(desktopOverflow).toBeLessThanOrEqual(1);
   await page.screenshot({ path: testInfo.outputPath('midas-ecosystem-desktop.png'), fullPage: true });
+
+  await networkGuard.assertClean(testInfo);
+  expect(pageErrors, `page errors: ${pageErrors.join(' | ')}`).toEqual([]);
+  expect(consoleErrors, `console errors: ${consoleErrors.join(' | ')}`).toEqual([]);
+});
+
+test('privacy-safe presentation and concise ecosystem work across screen sizes', async ({ page }, testInfo) => {
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()); });
+  const networkGuard = await installLocalNetworkGuard(page);
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/#/presentation');
+  await expect(page).toHaveURL(/#\/presentation$/);
+  const presentation = page.getByTestId('midas-presentation');
+  await expect(presentation).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('heading', { name: '¿Puede mantenerse el plan sin deteriorar la calidad de vida?' })).toBeVisible();
+  await expect(presentation).toContainText('El resultado cambia con el entorno');
+  await expect(presentation).toContainText('Favorable');
+  await expect(presentation).toContainText('Evaluado');
+  await expect(presentation).toContainText('Adverso');
+  await expect(presentation).toContainText('No disponible');
+  await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Simulación', exact: true })).toHaveCount(0);
+  const text = await presentation.innerText();
+  expect(text).not.toMatch(/(?:CLP|USD|EUR|UF)\s*[$€]?\s*\d[\d.,]{2,}/i);
+  expect(text).not.toMatch(/(?:\$|€)\s*\d/);
+  expect(text).not.toMatch(/capital inicial|gasto mensual|edad objetivo|patrimonio neto/i);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('midas-presentation-desktop.png'), fullPage: true });
+
+  await page.setViewportSize({ width: 1024, height: 768 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('midas-presentation-tablet.png'), fullPage: true });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('midas-presentation-mobile.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Ver el ecosistema' }).click();
+  await expect(page).toHaveURL(/#\/ecosystem$/);
+  const ecosystem = page.getByTestId('midas-ecosystem');
+  await expect(ecosystem).toBeVisible();
+  await expect(ecosystem).toContainText('La información mensual de GastApp alimenta análisis en Aurum.');
+  await expect(ecosystem).toContainText('La base patrimonial de Aurum sirve de partida para MIDAS.');
+  await expect(ecosystem).toContainText('Es una relación entre decisiones y comportamiento, no un envío automático de datos de vuelta.');
+  await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('midas-ecosystem-presentation-mobile.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Volver a MIDAS' }).click();
+  await expect(page).toHaveURL(/#\/presentation$/);
+  await expect(page.getByTestId('midas-presentation')).toBeVisible();
 
   await networkGuard.assertClean(testInfo);
   expect(pageErrors, `page errors: ${pageErrors.join(' | ')}`).toEqual([]);

@@ -320,6 +320,8 @@ const base = () => {
 })();
 
 (() => {
+  const originalNow = Date.now;
+  Date.now = () => FIXED_NOW_MS;
   const trace = buildM8ReplayTrace({
     paramsLabel: 'Desde Aurum · abril 2026',
     effectiveEngineInput: {
@@ -407,6 +409,7 @@ const base = () => {
     },
     warnings: ['Hay ajustes manuales locales fuera del modo canónico: no cambian el input M8 comparable.'],
   });
+  Date.now = originalNow;
   assert.ok(trace.warnings.some((warning) => warning.includes('modo canónico')));
   assert.equal(trace.canonicalInput.effectiveCapitalInitialClp, 1_530_974_913);
   assert.equal(trace.sourcePolicy.status, 'canonical_with_warnings');

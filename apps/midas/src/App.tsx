@@ -120,6 +120,8 @@ import {
 } from './domain/simulation/manualCapitalAdjustments';
 import { buildStrategyDashboardModel } from './domain/dashboard/strategyDashboardModel';
 import type { M8Input } from './domain/simulation/m8.types';
+import { buildMidasPresentationModel } from './domain/dashboard/presentationModel';
+import { PresentationPage } from './components/PresentationPage';
 
 const DashboardPageLazy = React.lazy(() =>
   import('./components/DashboardPage').then((module) => ({ default: module.DashboardPage })),
@@ -268,6 +270,7 @@ class MidasErrorBoundary extends React.Component<
 
   render() {
     if (!this.state.hasError) return this.props.children;
+    const presentationRoute = isPresentationHash();
     return (
       <div style={{ ...css.app, padding: 24 }}>
         <div
@@ -286,7 +289,7 @@ class MidasErrorBoundary extends React.Component<
           </div>
           <div style={{ fontSize: 18, fontWeight: 700 }}>Se produjo un error al renderizar</div>
           <div style={{ color: T.textSecondary, fontSize: 14 }}>
-            {this.state.message || 'Intenta recargar la página o reintentar la sincronización.'}
+            {presentationRoute ? 'La presentación no está disponible ahora.' : this.state.message || 'Intenta recargar la página o reintentar la sincronización.'}
           </div>
           <button
             onClick={() => window.location.reload()}
@@ -1024,8 +1027,12 @@ export const resolveInitialProductTab = (): TabId => {
   const hashRoute = window.location.hash.replace(/^#\/?/, '').toLowerCase();
   if (hashRoute === 'dashboard') return 'dashboard';
   if (hashRoute === 'ecosystem') return 'ecosystem';
+  if (hashRoute === 'presentation') return 'dashboard';
   return 'sim';
 };
+
+const isPresentationHash = (): boolean => typeof window !== 'undefined'
+  && window.location.hash.replace(/^#\/?/, '').toLowerCase() === 'presentation';
 
 const syncProductTabRoute = (tab: TabId) => {
   if (typeof window === 'undefined') return;
@@ -1060,6 +1067,10 @@ export default function App() {
     applyActiveDistributionToParams(cloneParams(initialModelParams), initialDistributionRef.current.activeWeights),
   );
   const [activeTab, setActiveTab] = useState<TabId>(resolveInitialProductTab);
+  const [presentationRoute, setPresentationRoute] = useState(isPresentationHash);
+  const [ecosystemReturnTo, setEcosystemReturnTo] = useState<'presentation' | 'dashboard'>(() =>
+    typeof window !== 'undefined' && window.location.hash.replace(/^#\/?/, '').toLowerCase() === 'ecosystem' ? 'presentation' : 'dashboard',
+  );
   const [simResult, setSimResult] = useState<SimulationResults | null>(null);
   const [lastStableCentral, setLastStableCentral] = useState<SimulationResults | null>(null);
   const [simOverrides, setSimOverrides] = useState<SimulationOverrides | null>(null);
@@ -3849,12 +3860,40 @@ export default function App() {
 
   const handleTabChange = useCallback((tab: TabId) => {
     const nextTab = resolveProductTab(tab);
+    setPresentationRoute(false);
+    if (nextTab === 'ecosystem') setEcosystemReturnTo('dashboard');
     setActiveTab(nextTab);
     syncProductTabRoute(nextTab);
   }, []);
 
+  const openPresentation = useCallback(() => {
+    setPresentationRoute(true);
+    setActiveTab('dashboard');
+    if (typeof window !== 'undefined') {
+      window.history.pushState({ midasTab: 'presentation' }, '', `${window.location.pathname}${window.location.search}#/presentation`);
+    }
+  }, []);
+
+  const openEcosystem = useCallback((returnTo: 'presentation' | 'dashboard') => {
+    setEcosystemReturnTo(returnTo);
+    setPresentationRoute(false);
+    setActiveTab('ecosystem');
+    syncProductTabRoute('ecosystem');
+  }, []);
+
+  const returnFromEcosystem = useCallback(() => {
+    if (ecosystemReturnTo === 'presentation') {
+      openPresentation();
+      return;
+    }
+    handleTabChange('dashboard');
+  }, [ecosystemReturnTo, handleTabChange, openPresentation]);
+
   useEffect(() => {
-    const handleRouteChange = () => setActiveTab(resolveInitialProductTab());
+    const handleRouteChange = () => {
+      setPresentationRoute(isPresentationHash());
+      setActiveTab(resolveInitialProductTab());
+    };
     window.addEventListener('hashchange', handleRouteChange);
     window.addEventListener('popstate', handleRouteChange);
     return () => {
@@ -5173,7 +5212,30 @@ export default function App() {
     stateLabel,
     simulationResultDiagnostics.isFinalForCurrentInput,
   ]);
-  const content = productActiveTab === 'sim' ? (
+  const presentationModel = useMemo(() => {
+    if (shouldBlockForAuthGate) {
+      return buildMidasPresentationModel({
+        status: 'empty', horizonYears: null, completionRate: null, qualitySurvivalRate: null,
+        severeCutYearsMean: null, qualityTone: null, severeCutsTone: null, scenarios: [],
+      });
+    }
+    const quality = dashboardModel.quality.find((metric) => metric.id === 'qualitySurvivalRate');
+    const severeCuts = dashboardModel.quality.find((metric) => metric.id === 'severeCutYearsMean');
+    const completion = dashboardModel.primaryMetrics.find((metric) => metric.id === 'success');
+    return buildMidasPresentationModel({
+      status: dashboardModel.status,
+      horizonYears: dashboardModel.horizonYears,
+      completionRate: completion?.value,
+      qualitySurvivalRate: quality?.value,
+      severeCutYearsMean: severeCuts?.value,
+      qualityTone: quality?.status ?? null,
+      severeCutsTone: severeCuts?.status ?? null,
+      scenarios: dashboardModel.scenarios.map(({ id, success }) => ({ id, success })),
+    });
+  }, [dashboardModel, shouldBlockForAuthGate]);
+  const content = presentationRoute ? (
+    <PresentationPage model={presentationModel} onOpenEcosystem={() => openEcosystem('presentation')} />
+  ) : productActiveTab === 'sim' ? (
     <SimulationPage
       resultCentral={simResult}
       params={simParams}
@@ -5275,10 +5337,10 @@ export default function App() {
           onOpenSimulation={() => handleTabChange('sim')}
           onOpenSensitivity={() => handleTabChange('sens')}
           onOpenSettings={() => handleTabChange('settings')}
-          onOpenEcosystem={() => handleTabChange('ecosystem')}
+          onOpenEcosystem={() => openEcosystem('dashboard')}
         />
       ) : productActiveTab === 'ecosystem' ? (
-        <EcosystemPageLazy onBack={() => handleTabChange('dashboard')} />
+        <EcosystemPageLazy onBack={returnFromEcosystem} />
       ) : productActiveTab === 'assist' ? (
         <AssistedSimulationPageLazy />
       ) : productActiveTab === 'lab' ? (
@@ -5327,7 +5389,7 @@ export default function App() {
     </SectionSuspense>
   );
 
-  if (shouldBlockForAuthGate) {
+  if (shouldBlockForAuthGate && !presentationRoute) {
     return (
       <MidasErrorBoundary>
         <div style={{ ...css.app, minHeight: '100vh', padding: 24, display: 'grid', placeItems: 'center' }}>
@@ -5432,7 +5494,7 @@ export default function App() {
   return (
     <MidasErrorBoundary>
       <div style={{ ...css.app, position: 'relative', overflow: 'hidden' }}>
-        {localReadOnlyCloudFallbackEnabled && (
+        {localReadOnlyCloudFallbackEnabled && !presentationRoute && productActiveTab !== 'ecosystem' && (
           <div
             style={{
               position: 'sticky',
@@ -5450,7 +5512,7 @@ export default function App() {
             {' · configuración cloud no disponible · sin escrituras productivas · QA visual: los montos pueden no coincidir con Aurum productivo'}
           </div>
         )}
-        {simulationActive && (
+        {simulationActive && !presentationRoute && productActiveTab !== 'ecosystem' && (
           <>
             <style>{`
               @keyframes midasAmbientPulse {
@@ -5473,7 +5535,7 @@ export default function App() {
             />
           </>
         )}
-        <Header
+        {!presentationRoute && productActiveTab !== 'ecosystem' ? <Header
           statusColor={headerStatusColor}
           statusDotBackground={headerDataTrustVisual.dotBackground}
           statusDotBorder={headerDataTrustVisual.dotBorder}
@@ -5481,18 +5543,18 @@ export default function App() {
           confidenceLabel={headerConfidenceLabel}
           confidenceSubtitle={headerDataTrustVerdict.subtitle}
           onStatusClick={focusDataTrust}
-        />
+        /> : null}
         <main
           style={{
-            padding: '12px 16px 90px',
-            paddingBottom: productActiveTab === 'ecosystem' ? 28 : 'calc(90px + env(safe-area-inset-bottom, 0px))',
-            marginTop: 48,
-            maxWidth: productActiveTab === 'dashboard' ? 1180 : 960,
+            padding: presentationRoute ? 0 : productActiveTab === 'ecosystem' ? 0 : '12px 16px 90px',
+            paddingBottom: presentationRoute || productActiveTab === 'ecosystem' ? 0 : 'calc(90px + env(safe-area-inset-bottom, 0px))',
+            marginTop: presentationRoute || productActiveTab === 'ecosystem' ? 0 : 48,
+            maxWidth: presentationRoute || productActiveTab === 'ecosystem' ? 'none' : productActiveTab === 'dashboard' ? 1180 : 960,
             marginLeft: 'auto',
             marginRight: 'auto',
           }}
         >
-          {runtimeErrors.length > 0 && (
+          {!presentationRoute && productActiveTab !== 'ecosystem' && runtimeErrors.length > 0 && (
             <div
               style={{
                 background: 'rgba(255, 92, 92, 0.12)',
@@ -5514,7 +5576,7 @@ export default function App() {
           {content}
         </main>
 
-        {productActiveTab !== 'ecosystem' ? <BottomNav active={productActiveTab} onChange={handleTabChange} /> : null}
+        {!presentationRoute && productActiveTab !== 'ecosystem' ? <BottomNav active={productActiveTab} onChange={handleTabChange} /> : null}
       </div>
     </MidasErrorBoundary>
   );
