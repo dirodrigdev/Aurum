@@ -34,32 +34,45 @@ const makeClosure = (
   monthKey: string,
   records: WealthRecord[],
   fxRateOverrides: Partial<typeof rates> = {},
-): WealthMonthlyClosure => ({
-  id: monthKey,
-  monthKey,
-  closedAt: `${monthKey}-31T23:59:00.000Z`,
-  summary: {
-    netByCurrency: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
-    assetsByCurrency: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
-    debtsByCurrency: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
-    netConsolidatedClp: 0,
-    byBlock: {
-      bank: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
-      investment: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
-      real_estate: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
-      debt: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
-    },
-  },
-  fxRates: { ...rates, ...fxRateOverrides },
-  fxMetadata: {
+  fxMetadataOverrides: Partial<NonNullable<WealthMonthlyClosure['fxMetadata']>> = {},
+  fxMissing?: WealthMonthlyClosure['fxMissing'],
+): WealthMonthlyClosure => {
+  const fxRates = { ...rates, ...fxRateOverrides };
+  const baseFxMetadata: NonNullable<WealthMonthlyClosure['fxMetadata']> = {
     economicMonthKey: monthKey,
     economicDate: `${monthKey}-28`,
-    usedFxRates: { ...rates, ...fxRateOverrides },
+    usedFxRates: fxRates,
     rateOrigin: { usd: 'automatic-final', eur: 'automatic-final', uf: 'automatic-final' },
     source: { usd: 'test-source', eur: 'test-source', uf: 'test-source' },
-  },
-  records,
-});
+  };
+  return {
+    id: monthKey,
+    monthKey,
+    closedAt: `${monthKey}-31T23:59:00.000Z`,
+    summary: {
+      netByCurrency: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
+      assetsByCurrency: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
+      debtsByCurrency: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
+      netConsolidatedClp: 0,
+      byBlock: {
+        bank: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
+        investment: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
+        real_estate: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
+        debt: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
+      },
+    },
+    fxRates,
+    fxMetadata: {
+      ...baseFxMetadata,
+      ...fxMetadataOverrides,
+      usedFxRates: { ...fxRates, ...fxMetadataOverrides.usedFxRates },
+      rateOrigin: { ...baseFxMetadata.rateOrigin, ...fxMetadataOverrides.rateOrigin },
+      source: { ...baseFxMetadata.source, ...fxMetadataOverrides.source },
+    },
+    fxMissing,
+    records,
+  };
+};
 
 const closedZeroFlows: FinancialPerformanceConfirmation = {
   schemaVersion: 1,
@@ -73,11 +86,31 @@ const run = (
   initialRecords: WealthRecord[],
   finalRecords: WealthRecord[],
   confirmation: FinancialPerformanceConfirmation | null,
-  options?: { initialRates?: Partial<typeof rates>; finalRates?: Partial<typeof rates>; includeRiskCapital?: boolean },
+  options?: {
+    initialRates?: Partial<typeof rates>;
+    finalRates?: Partial<typeof rates>;
+    initialFxMetadata?: Partial<NonNullable<WealthMonthlyClosure['fxMetadata']>>;
+    finalFxMetadata?: Partial<NonNullable<WealthMonthlyClosure['fxMetadata']>>;
+    initialFxMissing?: WealthMonthlyClosure['fxMissing'];
+    finalFxMissing?: WealthMonthlyClosure['fxMissing'];
+    includeRiskCapital?: boolean;
+  },
 ) => reconcileFinancialPerformance({
   closures: [
-    makeClosure(PERFORMANCE_INITIAL_MONTH, initialRecords, options?.initialRates),
-    makeClosure(PERFORMANCE_FINAL_MONTH, finalRecords, options?.finalRates),
+    makeClosure(
+      PERFORMANCE_INITIAL_MONTH,
+      initialRecords,
+      options?.initialRates,
+      options?.initialFxMetadata,
+      options?.initialFxMissing,
+    ),
+    makeClosure(
+      PERFORMANCE_FINAL_MONTH,
+      finalRecords,
+      options?.finalRates,
+      options?.finalFxMetadata,
+      options?.finalFxMissing,
+    ),
   ],
   confirmation,
   includeRiskCapital: options?.includeRiskCapital ?? false,
@@ -193,13 +226,235 @@ describe('reconcileFinancialPerformance', () => {
     expect(result.unexplainedResidual).toBe(20);
   });
 
+  it.each(['automatic', 'automatic-final'] as const)(
+    'accepts a valid %s USD rate without changing automatic provenance behavior',
+    (origin) => {
+      const result = run(
+        [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
+        [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
+        {
+          ...closedZeroFlows,
+          positionMovementCompleteness: 'no_unrecorded_movements',
+        },
+        {
+          initialFxMetadata: { rateOrigin: { usd: origin } },
+          finalRates: { usdClp: 1100 },
+        },
+      );
+
+      expect(result.fxAttributable).toBe(10_000);
+      expect(result.unexplainedResidual).toBeCloseTo(0);
+    },
+  );
+
+  it('accepts an explicit reconciled manual USD override with a reason', () => {
+    const result = run(
+      [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
+      [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
+      {
+        ...closedZeroFlows,
+        positionMovementCompleteness: 'no_unrecorded_movements',
+      },
+      {
+        initialFxMetadata: {
+          rateOrigin: { usd: 'manual' },
+          source: { usd: 'manual_user_input' },
+          manualOverrideReason: 'Corrección valor',
+          reconciliation: { status: 'reconciled', checkedAt: '2026-08-01T22:15:35.035Z' },
+        },
+        finalRates: { usdClp: 1100 },
+      },
+    );
+
+    expect(result.fxAttributable).toBe(10_000);
+    expect(result.unexplainedResidual).toBeCloseTo(0);
+  });
+
+  it('rejects a manual USD rate without a correction reason', () => {
+    const result = run(
+      [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
+      [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
+      { ...closedZeroFlows, positionMovementCompleteness: 'no_unrecorded_movements' },
+      {
+        initialFxMetadata: {
+          rateOrigin: { usd: 'manual' },
+          source: { usd: 'manual_user_input' },
+          reconciliation: { status: 'reconciled', checkedAt: '2026-08-01T22:15:35.035Z' },
+        },
+        finalRates: { usdClp: 1100 },
+      },
+    );
+
+    expect(result.fxAttributable).toBeNull();
+    expect(result.unexplainedResidual).toBe(10_000);
+  });
+
+  it('rejects a manual USD rate marked as missing on the closure', () => {
+    const result = run(
+      [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
+      [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
+      { ...closedZeroFlows, positionMovementCompleteness: 'no_unrecorded_movements' },
+      {
+        initialFxMetadata: {
+          rateOrigin: { usd: 'manual' },
+          source: { usd: 'manual_user_input' },
+          manualOverrideReason: 'Corrección valor',
+          reconciliation: { status: 'reconciled', checkedAt: '2026-08-01T22:15:35.035Z' },
+        },
+        initialFxMissing: ['usdClp'],
+        finalRates: { usdClp: 1100 },
+      },
+    );
+
+    expect(result.fxAttributable).toBeNull();
+    expect(result.unexplainedResidual).toBe(10_000);
+  });
+
+  it('rejects fallback USD provenance', () => {
+    const result = run(
+      [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
+      [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
+      { ...closedZeroFlows, positionMovementCompleteness: 'no_unrecorded_movements' },
+      {
+        initialFxMetadata: {
+          rateOrigin: { usd: 'fallback' },
+          source: { usd: 'operational_fx_fallback' },
+        },
+        finalRates: { usdClp: 1100 },
+      },
+    );
+
+    expect(result.fxAttributable).toBeNull();
+    expect(result.unexplainedResidual).toBe(10_000);
+  });
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    'rejects a manual USD closure rate that is not finite and positive (%s)',
+    (rate) => {
+      const result = run(
+        [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
+        [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
+        { ...closedZeroFlows, positionMovementCompleteness: 'no_unrecorded_movements' },
+        {
+          initialRates: { usdClp: rate },
+          initialFxMetadata: {
+            rateOrigin: { usd: 'manual' },
+            source: { usd: 'manual_user_input' },
+            manualOverrideReason: 'Corrección valor',
+            reconciliation: { status: 'reconciled', checkedAt: '2026-08-01T22:15:35.035Z' },
+          },
+          finalRates: { usdClp: 1100 },
+        },
+      );
+
+      expect(result.quality).toBe('INSUFICIENTE');
+      expect(result.initialValue).toBeNull();
+      expect(result.fxAttributable).toBeNull();
+    },
+  );
+
+  it('rejects a manual rate with an economic month that does not match the closure', () => {
+    const result = run(
+      [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
+      [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
+      { ...closedZeroFlows, positionMovementCompleteness: 'no_unrecorded_movements' },
+      {
+        initialFxMetadata: {
+          economicMonthKey: '2026-06',
+          rateOrigin: { usd: 'manual' },
+          source: { usd: 'manual_user_input' },
+          manualOverrideReason: 'Corrección valor',
+          reconciliation: { status: 'reconciled', checkedAt: '2026-08-01T22:15:35.035Z' },
+        },
+        finalRates: { usdClp: 1100 },
+      },
+    );
+
+    expect(result.fxAttributable).toBeNull();
+    expect(result.unexplainedResidual).toBe(10_000);
+  });
+
+  it('rejects manual rates without exact input provenance or matching saved values', () => {
+    const confirmation = { ...closedZeroFlows, positionMovementCompleteness: 'no_unrecorded_movements' } as const;
+    const initial = [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })];
+    const final = [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })];
+    const commonMetadata = {
+      rateOrigin: { usd: 'manual' as const },
+      manualOverrideReason: 'Corrección valor',
+      reconciliation: { status: 'reconciled' as const, checkedAt: '2026-08-01T22:15:35.035Z' },
+    };
+    const unknownSource = run(initial, final, confirmation, {
+      initialFxMetadata: { ...commonMetadata, source: { usd: 'unknown' } },
+      finalRates: { usdClp: 1100 },
+    });
+    const mismatchedSavedRate = run(initial, final, confirmation, {
+      initialFxMetadata: { ...commonMetadata, source: { usd: 'manual_user_input' }, usedFxRates: { usdClp: 999 } },
+      finalRates: { usdClp: 1100 },
+    });
+
+    expect(unknownSource.fxAttributable).toBeNull();
+    expect(mismatchedSavedRate.fxAttributable).toBeNull();
+  });
+
+  it('rejects a manual USD rate without saved closure reconciliation', () => {
+    const result = run(
+      [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
+      [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
+      { ...closedZeroFlows, positionMovementCompleteness: 'no_unrecorded_movements' },
+      {
+        initialFxMetadata: {
+          rateOrigin: { usd: 'manual' },
+          source: { usd: 'manual_user_input' },
+          manualOverrideReason: 'Corrección valor',
+          reconciliation: undefined,
+        },
+        finalRates: { usdClp: 1100 },
+      },
+    );
+
+    expect(result.fxAttributable).toBeNull();
+    expect(result.unexplainedResidual).toBe(10_000);
+  });
+
+  it('rejects manual provenance that is not attached to a saved closure', () => {
+    const start = makeClosure(
+      PERFORMANCE_INITIAL_MONTH,
+      [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
+      {},
+      {
+        rateOrigin: { usd: 'manual' },
+        source: { usd: 'manual_user_input' },
+        manualOverrideReason: 'Corrección valor',
+        reconciliation: { status: 'reconciled', checkedAt: '2026-08-01T22:15:35.035Z' },
+      },
+    );
+    start.closedAt = '';
+    const end = makeClosure(
+      PERFORMANCE_FINAL_MONTH,
+      [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
+      { usdClp: 1100 },
+    );
+    const result = reconcileFinancialPerformance({
+      closures: [start, end],
+      confirmation: { ...closedZeroFlows, positionMovementCompleteness: 'no_unrecorded_movements' },
+      includeRiskCapital: false,
+    });
+
+    expect(result.fxAttributable).toBeNull();
+    expect(result.unexplainedResidual).toBe(10_000);
+  });
+
   it('leaves FX in the residual if either close lacks reliable rate provenance', () => {
     const confirmation: FinancialPerformanceConfirmation = {
       ...closedZeroFlows,
       positionMovementCompleteness: 'no_unrecorded_movements',
     };
-    const start = makeClosure(PERFORMANCE_INITIAL_MONTH, [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })]);
-    start.fxMetadata!.rateOrigin!.usd = 'manual';
+    const start = makeClosure(
+      PERFORMANCE_INITIAL_MONTH,
+      [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
+      {},
+      { rateOrigin: { usd: 'fallback' }, source: { usd: 'operational_fx_fallback' } },
+    );
     const end = makeClosure(PERFORMANCE_FINAL_MONTH, [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })], { usdClp: 1100 });
     const result = reconcileFinancialPerformance({ closures: [start, end], confirmation, includeRiskCapital: false });
 

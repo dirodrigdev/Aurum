@@ -117,14 +117,40 @@ const hasReliableRateProvenance = (
   currency: Exclude<WealthCurrency, 'CLP'>,
 ): boolean => {
   const key = rateOriginKey[currency];
+  const field = currencyRateField[currency];
   const metadata = closure.fxMetadata;
   const origin = metadata?.rateOrigin?.[key];
   const source = String(metadata?.source?.[key] || '').trim();
+  if (!metadata || metadata.economicMonthKey !== closure.monthKey || !source) return false;
+
+  // Keep the existing acceptance rule for automatic rates unchanged.
+  if (origin === 'automatic' || origin === 'automatic-final') return true;
+  if (origin !== 'manual') return false;
+
+  const rate = closure.fxRates?.[field];
+  const recordedRate = metadata.usedFxRates?.[field];
+  const reconciliation = metadata.reconciliation;
+  const manualReason = String(metadata.manualOverrideReason || '').trim();
   return Boolean(
-    metadata &&
-      metadata.economicMonthKey === closure.monthKey &&
-      source &&
-      (origin === 'automatic' || origin === 'automatic-final'),
+    source === 'manual_user_input' &&
+      typeof closure.id === 'string' &&
+      closure.id.trim() &&
+      typeof closure.closedAt === 'string' &&
+      closure.closedAt.trim() &&
+      typeof metadata.economicDate === 'string' &&
+      metadata.economicDate.startsWith(`${closure.monthKey}-`) &&
+      typeof rate === 'number' &&
+      Number.isFinite(rate) &&
+      rate > 0 &&
+      !closure.fxMissing?.includes(field) &&
+      typeof recordedRate === 'number' &&
+      Number.isFinite(recordedRate) &&
+      recordedRate > 0 &&
+      Math.abs(rate - recordedRate) <= 1e-9 &&
+      manualReason &&
+      reconciliation?.status === 'reconciled' &&
+      typeof reconciliation.checkedAt === 'string' &&
+      reconciliation.checkedAt.trim(),
   );
 };
 
