@@ -8,6 +8,7 @@ import { ClosingAurum } from './pages/ClosingAurum';
 import { AnalysisAurum } from './pages/AnalysisAurum';
 import { DashboardAurum } from './pages/DashboardAurum';
 import { EcosystemAurum } from './pages/EcosystemAurum';
+import { PresentationAurum } from './pages/PresentationAurum';
 import { WEALTH_DELTA_TOAST_TRIGGER_EVENT } from './hooks/useWealthDelta';
 import {
   auth,
@@ -45,6 +46,7 @@ import { hydrateWealthFromCloudShared } from './services/wealthHydration';
 
 const INCOMPLETE_CLOSURE_PROMPT_DAY_KEY = 'aurum.incomplete-closure.prompt.day.v1';
 const PRESENTATION_ROUTE_EVENT = 'aurum:presentation-route';
+const isPresentationPath = () => ['presentation', 'ecosystem'].includes(window.location.hash.replace(/^#\/?/, '').split('?')[0]);
 const CLOSING_FOCUS_MONTH_KEY = 'aurum.closing.focus.month.v1';
 
 type FxIndicatorSnapshot = {
@@ -208,12 +210,12 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [incompletePrompt, setIncompletePrompt] = useState<IncompletePrompt | null>(null);
   const [fxIndicatorPrompt, setFxIndicatorPrompt] = useState<FxIndicatorPrompt | null>(null);
   const [isPresentationRoute, setIsPresentationRoute] = useState(
-    () => window.location.hash.replace(/^#\/?/, '') === 'ecosystem',
+    isPresentationPath,
   );
 
   useEffect(() => {
     const syncPresentationRoute = () => {
-      setIsPresentationRoute(window.location.hash.replace(/^#\/?/, '') === 'ecosystem');
+      setIsPresentationRoute(isPresentationPath());
     };
     const syncPresentationEvent = (event: Event) => {
       setIsPresentationRoute(Boolean((event as CustomEvent<{ active?: boolean }>).detail?.active));
@@ -581,6 +583,7 @@ const App: React.FC = () => {
           <Route element={<Layout />}>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<DashboardAurum />} />
+            <Route path="/presentation" element={<PresentationAurum />} />
             <Route path="/ecosystem" element={<EcosystemAurum />} />
             <Route path="/patrimonio" element={<Patrimonio />} />
             <Route path="/closing" element={<ClosingAurum />} />

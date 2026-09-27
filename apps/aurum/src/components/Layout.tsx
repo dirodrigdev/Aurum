@@ -12,7 +12,7 @@ export const Layout: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const wealthDelta = useWealthDelta();
-  const isEcosystem = location.pathname === '/ecosystem';
+  const isPresentationSurface = location.pathname === '/presentation' || location.pathname === '/ecosystem';
 
   const navItems = useMemo(
     () => [
@@ -24,6 +24,8 @@ export const Layout: React.FC = () => {
     ],
     [],
   );
+
+  if (isPresentationSurface) return <Outlet />;
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900">
@@ -37,7 +39,7 @@ export const Layout: React.FC = () => {
         </div>
       </header>
 
-      <main className={cn('mx-auto w-full flex-1 pb-20 md:pb-0', isEcosystem ? 'max-w-5xl' : 'max-w-xl')}>
+      <main className={cn('mx-auto w-full max-w-xl flex-1 pb-20 md:pb-0')}>
         {location.pathname.startsWith('/settings') ? (
           <FxSyncStatusBanner onGoSettings={() => navigate('/settings')} />
         ) : null}
@@ -95,7 +97,7 @@ export const Layout: React.FC = () => {
           })}
         </div>
       </nav>
-      {!isEcosystem ? <WealthDeltaToast visible={wealthDelta.visible} delta={wealthDelta.delta} reason={wealthDelta.reason} /> : null}
+      <WealthDeltaToast visible={wealthDelta.visible} delta={wealthDelta.delta} reason={wealthDelta.reason} />
     </div>
   );
 };

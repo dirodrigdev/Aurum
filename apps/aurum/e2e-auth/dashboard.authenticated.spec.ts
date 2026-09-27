@@ -85,7 +85,7 @@ test('local emulator session loads Dashboard without external traffic', async ({
   });
   const networkGuard = await installLocalNetworkGuard(page);
 
-  const response = await page.goto('/');
+  const response = await page.goto('/#/dashboard');
   expect(response?.ok()).toBe(true);
   await expect(page.getByText('Aurum', { exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Dashboard', exact: true })).toBeVisible();
@@ -426,7 +426,7 @@ test('monthly-close backup verification uses a month-neutral success label respo
   expect(consoleErrors, `console errors: ${consoleErrors.join(' | ')}`).toEqual([]);
 });
 
-test('Ecosystem is reachable from Aurum Dashboard and works on mobile', async ({ page }, testInfo) => {
+test('Ecosystem presents the product map without private navigation and works responsively', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
@@ -445,10 +445,16 @@ test('Ecosystem is reachable from Aurum Dashboard and works on mobile', async ({
   const ecosystem = page.getByTestId('aurum-ecosystem');
   await expect(ecosystem).toBeVisible();
   await expect(page.getByText('Cierre mensual incompleto', { exact: true })).toHaveCount(0);
-  await expect(ecosystem).toContainText('GastApp observa. Aurum integra. MIDAS proyecta.');
-  await expect(ecosystem).toContainText('Acceso protegido');
-  await expect(ecosystem).toContainText('Pruebas automáticas');
-  await expect(ecosystem).toContainText('Firebase Auth · Firestore · GitHub · Vercel · Playwright');
+  await expect(ecosystem).toContainText('GastApp');
+  await expect(ecosystem).toContainText('Aurum');
+  await expect(ecosystem).toContainText('MIDAS');
+  await expect(ecosystem).toContainText('La información mensual de GastApp alimenta análisis en Aurum.');
+  await expect(ecosystem).toContainText('La base patrimonial de Aurum sirve de partida para MIDAS.');
+  await expect(ecosystem).toContainText('Las decisiones futuras pueden modificar los hábitos presentes.');
+  await expect(ecosystem).toContainText('Es una relación entre decisiones y comportamiento, no un envío automático de datos de vuelta.');
+  await expect(ecosystem.getByRole('link', { name: 'Volver a GastApp' })).toHaveAttribute('href', 'https://gastapp-chi.vercel.app/#/presentation');
+  await expect(ecosystem.getByRole('link', { name: /Dashboard|Ajustes|Patrimonio|Cierre/ })).toHaveCount(0);
+  await expect(ecosystem).not.toContainText(/Firebase Auth|Firestore|GitHub|Vercel|Playwright/);
   await page.evaluate(() => window.scrollTo(0, 0));
   const ecosystemHtml = await ecosystem.evaluate((element) => element.outerHTML);
   const pageText = await page.locator('body').innerText();
