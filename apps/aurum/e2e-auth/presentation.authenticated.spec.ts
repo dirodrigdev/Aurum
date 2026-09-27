@@ -23,7 +23,8 @@ for (const viewport of [
       overflow: document.documentElement.scrollWidth > window.innerWidth + 1,
     }));
     expect(`${visible.text} ${visible.attributes}`).not.toMatch(/\$|Fondo diversificado ficticio|Saldo bancos CLP|Capital de riesgo CLP|e2e-closure|Patrimonio neto actual/i);
-    expect(visible.links).toEqual([]);
+    expect(visible.links).toEqual(['https://midas-neon.vercel.app/#/presentation']);
+    await expect(root.getByRole('link', { name: 'Continuar con MIDAS →' })).toHaveAttribute('href', 'https://midas-neon.vercel.app/#/presentation');
     expect(visible.overflow).toBe(false);
     await page.screenshot({ path: testInfo.outputPath(`presentation-${viewport.name}.png`), fullPage: true });
 

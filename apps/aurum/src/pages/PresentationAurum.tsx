@@ -67,7 +67,7 @@ const AurumPresentationView: React.FC<{ model: AurumPresentationViewModel }> = (
         </section>
         <section className="flex flex-col gap-4 border-t border-[#233d59]/20 pt-8 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="text-xl font-semibold">De la base patrimonial a sus posibles futuros</h2><p className="mt-1 text-sm text-slate-600">MIDAS evalúa si el plan puede sostenerse.</p></div>
-          <span aria-disabled="true" className="inline-flex min-h-11 items-center justify-center rounded-full bg-slate-200 px-5 text-sm font-semibold text-slate-600">MIDAS · en preparación</span>
+          <a href="https://midas-neon.vercel.app/#/presentation" className="inline-flex min-h-11 items-center justify-center rounded-full bg-[#17304d] px-5 text-sm font-semibold text-white transition hover:bg-[#234567] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#c5964e]">Continuar con MIDAS →</a>
         </section>
       </main>
     </div>
