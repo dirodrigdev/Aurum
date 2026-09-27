@@ -30,15 +30,16 @@ const AurumPresentationView: React.FC<{ model: AurumPresentationViewModel }> = (
         </section>
         <section className="grid gap-5 border-y border-[#233d59]/15 py-6 sm:grid-cols-3 sm:gap-8" aria-label="Señales principales">
           <div className="flex items-baseline justify-between gap-4 border-b border-[#233d59]/15 pb-4 sm:block sm:border-0 sm:pb-0">
-            <h2 className="text-sm font-semibold text-slate-600">Mayor componente</h2>
+            <h2 className="text-sm font-semibold text-slate-600 sm:min-h-11">Mayor componente</h2>
             <p className="text-right text-xl font-semibold text-[#15385d] sm:mt-3 sm:text-left sm:text-lg md:text-xl lg:text-2xl">{top ? `${blockLabels[top.block]} · ${formatPct(top.pct)}` : 'No disponible'}</p>
           </div>
-          <div className="flex items-baseline justify-between gap-4 border-b border-[#233d59]/15 pb-4 sm:block sm:border-0 sm:pb-0">
-            <div><h2 className="text-sm font-semibold text-slate-600">Rendimiento histórico</h2><p className="mt-1 text-xs text-slate-500">36 meses · UF</p></div>
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 border-b border-[#233d59]/15 pb-4 sm:block sm:border-0 sm:pb-0">
+            <div className="sm:min-h-11"><h2 className="text-sm font-semibold text-slate-600">Rendimiento histórico</h2><p className="mt-1 text-xs text-slate-500">36 meses · UF</p></div>
             <p className="text-right text-xl font-semibold text-[#15385d] sm:mt-3 sm:text-left sm:text-2xl">{model.return36mUfPct === null ? 'No disponible' : `${formatPct(model.return36mUfPct)} anualizado`}</p>
+            <p className="mt-2 w-full text-xs text-slate-500">El rendimiento histórico es una referencia ajustada por inflación. {model.return36mUfPct === null && model.returnValidMonths > 0 ? `${model.returnValidMonths} de 36 meses válidos.` : ''}</p>
           </div>
           <div className="flex items-baseline justify-between gap-4 sm:block">
-            <h2 className="text-sm font-semibold text-slate-600">Actualizado en 7 días</h2>
+            <h2 className="text-sm font-semibold text-slate-600 sm:min-h-11">Actualizado en 7 días</h2>
             <p className="text-right text-lg font-semibold text-[#42576c] sm:mt-3 sm:text-left sm:text-xl">{formatPct(model.fresh7dPct)}</p>
           </div>
         </section>
@@ -57,7 +58,6 @@ const AurumPresentationView: React.FC<{ model: AurumPresentationViewModel }> = (
             </div>
           </div> : <p className="mt-6 text-slate-600" data-testid="aurum-asset-unavailable">Aún no hay un desglose confirmado para mostrar.</p>}
           <p className="mt-6 text-sm text-slate-600">El reparto muestra activos. Las deudas se descuentan al calcular el patrimonio neto.</p>
-          <p className="mt-2 text-xs text-slate-500">El rendimiento histórico es una referencia ajustada por inflación. {model.return36mUfPct === null && model.returnValidMonths > 0 ? `${model.returnValidMonths} de 36 meses válidos.` : ''}</p>
         </section>
         <section className="border-t border-[#233d59]/15 py-9" aria-labelledby="aurum-conclusions-title">
           <h2 id="aurum-conclusions-title" className="text-2xl font-semibold">Qué indica esta lectura</h2>
