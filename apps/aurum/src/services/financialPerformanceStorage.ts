@@ -8,16 +8,23 @@ import {
 } from 'firebase/firestore';
 import { db, ensureAuthPersistence, getCurrentUid } from './firebase';
 import {
+  PERFORMANCE_INITIAL_MONTH,
   PERFORMANCE_FINAL_MONTH,
+  financialPerformancePeriodKey,
   isFinancialPerformanceConfirmationValid,
   isFinancialPerformanceFlowValid,
   type FinancialPerformanceConfirmation,
   type FinancialPerformanceFlow,
+  type FinancialPerformancePeriod,
 } from './financialPerformance';
 
 const PERFORMANCE_COLLECTION = 'aurum_financial_performance';
 const MONTHS_SUBCOLLECTION = 'months';
 const REVISIONS_SUBCOLLECTION = 'revisions';
+const LEGACY_PERIOD: FinancialPerformancePeriod = {
+  startMonth: PERFORMANCE_INITIAL_MONTH,
+  endMonth: PERFORMANCE_FINAL_MONTH,
+};
 
 const requireUid = async (): Promise<string> => {
   await ensureAuthPersistence();
@@ -28,6 +35,27 @@ const requireUid = async (): Promise<string> => {
 
 const monthDocument = (uid: string, monthKey: string) =>
   doc(db, PERFORMANCE_COLLECTION, uid, MONTHS_SUBCOLLECTION, monthKey);
+
+const resolvePeriod = (period: FinancialPerformancePeriod = LEGACY_PERIOD) => {
+  const monthKey = financialPerformancePeriodKey(period);
+  if (!monthKey) throw new Error('financial_performance_invalid_period');
+  return { period, monthKey };
+};
+
+const periodMetadataMatches = (
+  raw: Record<string, unknown>,
+  period: FinancialPerformancePeriod,
+): boolean => {
+  const hasStartMonth = Object.prototype.hasOwnProperty.call(raw, 'startMonth');
+  const hasEndMonth = Object.prototype.hasOwnProperty.call(raw, 'endMonth');
+  if (!hasStartMonth && !hasEndMonth) {
+    // The existing July→August documents predate explicit period metadata.
+    return period.endMonth === PERFORMANCE_FINAL_MONTH &&
+      period.startMonth === PERFORMANCE_INITIAL_MONTH;
+  }
+  return hasStartMonth && hasEndMonth &&
+    raw.startMonth === period.startMonth && raw.endMonth === period.endMonth;
+};
 
 const normalizeTimestamp = (value: unknown): string | undefined => {
   if (value && typeof value === 'object' && 'toDate' in value) {
@@ -55,10 +83,12 @@ const normalizeConfirmation = (
   revision: number,
   revisionId: string,
   uid: string,
+  period: FinancialPerformancePeriod,
 ): FinancialPerformanceConfirmation | null => {
   if (
     raw.schemaVersion !== 1 ||
-    raw.monthKey !== PERFORMANCE_FINAL_MONTH ||
+    raw.monthKey !== period.endMonth ||
+    !periodMetadataMatches(raw, period) ||
     raw.revision !== revision ||
     raw.revisionId !== revisionId ||
     raw.createdByUid !== uid ||
@@ -73,7 +103,7 @@ const normalizeConfirmation = (
   if (flows.some((flow) => flow === null)) return null;
   const confirmation: FinancialPerformanceConfirmation = {
     schemaVersion: 1,
-    monthKey: PERFORMANCE_FINAL_MONTH,
+    monthKey: period.endMonth,
     flowCompleteness: raw.flowCompleteness,
     positionMovementCompleteness: raw.positionMovementCompleteness,
     flows: flows as FinancialPerformanceFlow[],
@@ -83,10 +113,13 @@ const normalizeConfirmation = (
   return isFinancialPerformanceConfirmationValid(confirmation) ? confirmation : null;
 };
 
-/** Reads only the latest revision of the July→August 2026 confirmation. */
-export const loadFinancialPerformanceConfirmation = async (): Promise<FinancialPerformanceConfirmation | null> => {
+/** Reads the latest revision for the period; omission keeps the temporary July→August adapter. */
+export const loadFinancialPerformanceConfirmation = async (
+  requestedPeriod: FinancialPerformancePeriod = LEGACY_PERIOD,
+): Promise<FinancialPerformanceConfirmation | null> => {
+  const { period, monthKey } = resolvePeriod(requestedPeriod);
   const uid = await requireUid();
-  const monthRef = monthDocument(uid, PERFORMANCE_FINAL_MONTH);
+  const monthRef = monthDocument(uid, monthKey);
   const monthSnapshot = await getDoc(monthRef);
   if (!monthSnapshot.exists()) return null;
   const monthData = monthSnapshot.data();
@@ -94,7 +127,8 @@ export const loadFinancialPerformanceConfirmation = async (): Promise<FinancialP
   const revisionId = String(revision);
   if (
     monthData?.schemaVersion !== 1 ||
-    monthData.monthKey !== PERFORMANCE_FINAL_MONTH ||
+    monthData.monthKey !== monthKey ||
+    !periodMetadataMatches(monthData, period) ||
     !Number.isInteger(revision) ||
     revision < 1 ||
     monthData.currentRevisionId !== revisionId
@@ -102,7 +136,7 @@ export const loadFinancialPerformanceConfirmation = async (): Promise<FinancialP
   const revisionRef = doc(collection(monthRef, REVISIONS_SUBCOLLECTION), revisionId);
   const revisionSnapshot = await getDoc(revisionRef);
   if (!revisionSnapshot.exists()) throw new Error('financial_performance_missing_revision');
-  const confirmation = normalizeConfirmation(revisionSnapshot.data(), revision, revisionId, uid);
+  const confirmation = normalizeConfirmation(revisionSnapshot.data(), revision, revisionId, uid, period);
   const headUpdatedAt = normalizeTimestamp(monthData.updatedAt);
   if (!confirmation || confirmation.updatedAt !== headUpdatedAt) {
     throw new Error('financial_performance_invalid_revision');
@@ -113,12 +147,14 @@ export const loadFinancialPerformanceConfirmation = async (): Promise<FinancialP
 /** Appends an immutable revision and advances the month document's current pointer atomically. */
 export const appendFinancialPerformanceConfirmation = async (
   input: FinancialPerformanceConfirmation,
+  requestedPeriod: FinancialPerformancePeriod = LEGACY_PERIOD,
 ): Promise<FinancialPerformanceConfirmation> => {
-  if (!isFinancialPerformanceConfirmationValid(input)) {
+  const { period, monthKey } = resolvePeriod(requestedPeriod);
+  if (!isFinancialPerformanceConfirmationValid(input, period)) {
     throw new Error('financial_performance_invalid_month_or_schema');
   }
   const uid = await requireUid();
-  const monthRef = monthDocument(uid, PERFORMANCE_FINAL_MONTH);
+  const monthRef = monthDocument(uid, monthKey);
   const revision = await runTransaction(db, async (transaction) => {
     const monthSnapshot = await transaction.get(monthRef);
     const monthData = monthSnapshot.data();
@@ -126,7 +162,8 @@ export const appendFinancialPerformanceConfirmation = async (
     if (
       monthSnapshot.exists() &&
       (monthData?.schemaVersion !== 1 ||
-        monthData.monthKey !== PERFORMANCE_FINAL_MONTH ||
+        monthData.monthKey !== monthKey ||
+        !periodMetadataMatches(monthData, period) ||
         !Number.isInteger(currentRevision) ||
         currentRevision < 1 ||
         monthData.currentRevisionId !== String(currentRevision))
@@ -147,7 +184,9 @@ export const appendFinancialPerformanceConfirmation = async (
     }));
     transaction.set(revisionRef, {
       schemaVersion: 1,
-      monthKey: PERFORMANCE_FINAL_MONTH,
+      monthKey,
+      startMonth: period.startMonth,
+      endMonth: period.endMonth,
       revision: nextRevision,
       revisionId,
       flowCompleteness: input.flowCompleteness,
@@ -158,7 +197,9 @@ export const appendFinancialPerformanceConfirmation = async (
     });
     transaction.set(monthRef, {
       schemaVersion: 1,
-      monthKey: PERFORMANCE_FINAL_MONTH,
+      monthKey,
+      startMonth: period.startMonth,
+      endMonth: period.endMonth,
       currentRevision: nextRevision,
       currentRevisionId: revisionId,
       updatedAt: serverTimestamp(),
