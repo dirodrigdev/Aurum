@@ -9,9 +9,60 @@ import {
   type WealthRecord,
 } from './wealthStorage';
 
+/**
+ * Legacy defaults used only by callers that have not yet moved to the explicit
+ * period API. Keep these exports until the UI and storage are generalized.
+ */
 export const PERFORMANCE_INITIAL_MONTH = '2026-07';
 export const PERFORMANCE_FINAL_MONTH = '2026-08';
 export const MAX_FINANCIAL_PERFORMANCE_FLOWS = 100;
+
+export interface FinancialPerformancePeriod {
+  startMonth: string;
+  endMonth: string;
+}
+
+interface ParsedMonth {
+  year: number;
+  month: number;
+  ordinal: number;
+}
+
+const parseMonthKey = (monthKey: string): ParsedMonth | null => {
+  const match = monthKey.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (year < 1 || year > 9999 || month < 1 || month > 12) return null;
+  return { year, month, ordinal: year * 12 + month - 1 };
+};
+
+const monthKeyFromOrdinal = (ordinal: number): string | null => {
+  const year = Math.floor(ordinal / 12);
+  const month = ordinal % 12 + 1;
+  if (year < 1 || year > 9999) return null;
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}`;
+};
+
+const periodEndingAt = (endMonth: string): FinancialPerformancePeriod | null => {
+  const parsedEnd = parseMonthKey(endMonth);
+  if (!parsedEnd) return null;
+  const startMonth = monthKeyFromOrdinal(parsedEnd.ordinal - 1);
+  return startMonth ? { startMonth, endMonth } : null;
+};
+
+export const isFinancialPerformancePeriodValid = (period: unknown): period is FinancialPerformancePeriod => {
+  if (!period || typeof period !== 'object') return false;
+  const candidate = period as Partial<FinancialPerformancePeriod>;
+  if (typeof candidate.startMonth !== 'string' || typeof candidate.endMonth !== 'string') return false;
+  const start = parseMonthKey(candidate.startMonth);
+  const end = parseMonthKey(candidate.endMonth);
+  return Boolean(start && end && end.ordinal === start.ordinal + 1);
+};
+
+/** The end month is a unique key for a valid consecutive monthly interval. */
+export const financialPerformancePeriodKey = (period: FinancialPerformancePeriod): string | null =>
+  isFinancialPerformancePeriodValid(period) ? period.endMonth : null;
 
 export type PerformanceQuality = 'EXACTO' | 'RECONSTRUIDO' | 'INDICATIVO' | 'INSUFICIENTE';
 export type FlowCompleteness = 'complete' | 'incomplete';
@@ -29,7 +80,7 @@ export interface FinancialPerformanceFlow {
 
 export interface FinancialPerformanceConfirmation {
   schemaVersion: 1;
-  monthKey: typeof PERFORMANCE_FINAL_MONTH;
+  monthKey: string;
   flowCompleteness: FlowCompleteness;
   positionMovementCompleteness: PositionMovementCompleteness;
   flows: FinancialPerformanceFlow[];
@@ -41,7 +92,8 @@ export type PerformanceReturnMethod = 'simple' | 'simple_adjusted' | 'modified_d
 export type AttributionCoverageStatus = 'no_exposure' | 'not_evaluated' | 'evaluated';
 
 export interface FinancialPerformanceResult {
-  monthKey: typeof PERFORMANCE_FINAL_MONTH;
+  period: FinancialPerformancePeriod;
+  monthKey: string;
   initialValue: number | null;
   finalValue: number | null;
   observedChange: number | null;
@@ -52,6 +104,8 @@ export interface FinancialPerformanceResult {
   returnPct: number | null;
   returnMethod: PerformanceReturnMethod;
   investmentAttributable: number | null;
+  usdFxAttributable: number | null;
+  eurFxAttributable: number | null;
   fxAttributable: number | null;
   ufAttributable: number | null;
   unexplainedResidual: number | null;
@@ -93,13 +147,12 @@ const amountSign = (flow: FinancialPerformanceFlow) =>
   flow.direction === 'aporte' ? Number(flow.amountClp) : -Number(flow.amountClp);
 
 const monthEndDate = (monthKey: string): string | null => {
-  const match = monthKey.match(/^(\d{4})-(\d{2})$/);
-  if (!match) return null;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  if (month < 1 || month > 12) return null;
-  const day = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  return `${match[1]}-${match[2]}-${String(day).padStart(2, '0')}`;
+  const parsed = parseMonthKey(monthKey);
+  if (!parsed) return null;
+  const { year, month } = parsed;
+  const isLeapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysByMonth = [31, isLeapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return `${monthKey}-${String(daysByMonth[month - 1]).padStart(2, '0')}`;
 };
 
 const utcDayNumber = (date: string): number => {
@@ -181,11 +234,19 @@ const readClosurePositions = (
   return { closure, positions, totalClp };
 };
 
+/**
+ * With a period, validates both the flow shape and its economic date range.
+ * Without one, validates only the shape/date so existing storage normalization
+ * can run before the owning confirmation supplies its period.
+ */
 export const isFinancialPerformanceFlowValid = (
   flow: unknown,
-  startDate = monthEndDate(PERFORMANCE_INITIAL_MONTH) || '',
-  endDate = monthEndDate(PERFORMANCE_FINAL_MONTH) || '',
+  period?: FinancialPerformancePeriod,
 ): flow is FinancialPerformanceFlow => {
+  if (period && !isFinancialPerformancePeriodValid(period)) return false;
+  const startDate = period ? monthEndDate(period.startMonth) : null;
+  const endDate = period ? monthEndDate(period.endMonth) : null;
+  if (period && (!startDate || !endDate)) return false;
   if (!flow || typeof flow !== 'object') return false;
   const candidate = flow as Partial<FinancialPerformanceFlow>;
   if (typeof candidate.effectiveDate !== 'string') return false;
@@ -197,8 +258,8 @@ export const isFinancialPerformanceFlowValid = (
     typeof candidate.id === 'string' &&
       candidate.id.trim() &&
       (candidate.direction === 'aporte' || candidate.direction === 'retiro') &&
-      parsedDay >= utcDayNumber(startDate) &&
-      parsedDay <= utcDayNumber(endDate) &&
+      (!startDate || parsedDay >= utcDayNumber(startDate)) &&
+      (!endDate || parsedDay <= utcDayNumber(endDate)) &&
       typeof candidate.amountClp === 'number' &&
       Number.isFinite(candidate.amountClp) &&
       candidate.amountClp > 0 &&
@@ -209,10 +270,14 @@ export const isFinancialPerformanceFlowValid = (
 
 export const isFinancialPerformanceConfirmationValid = (
   confirmation: FinancialPerformanceConfirmation,
+  expectedPeriod?: FinancialPerformancePeriod,
 ): boolean => {
+  const period = expectedPeriod || periodEndingAt(String(confirmation?.monthKey || ''));
   if (
     confirmation?.schemaVersion !== 1 ||
-    confirmation.monthKey !== PERFORMANCE_FINAL_MONTH ||
+    !period ||
+    !isFinancialPerformancePeriodValid(period) ||
+    confirmation.monthKey !== period.endMonth ||
     (confirmation.flowCompleteness !== 'complete' && confirmation.flowCompleteness !== 'incomplete') ||
     (confirmation.positionMovementCompleteness !== 'no_unrecorded_movements' &&
     confirmation.positionMovementCompleteness !== 'unconfirmed') ||
@@ -221,7 +286,7 @@ export const isFinancialPerformanceConfirmationValid = (
   ) return false;
   const ids = new Set<string>();
   for (const flow of confirmation.flows) {
-    if (!isFinancialPerformanceFlowValid(flow)) return false;
+    if (!isFinancialPerformanceFlowValid(flow, period)) return false;
     if (ids.has(flow.id)) return false;
     ids.add(flow.id);
   }
@@ -265,8 +330,9 @@ const calculateReturn = (
     : { returnPct: null, method: null };
 };
 
-const emptyResult = (reason: string): FinancialPerformanceResult => ({
-  monthKey: PERFORMANCE_FINAL_MONTH,
+const emptyResult = (period: FinancialPerformancePeriod, reason: string): FinancialPerformanceResult => ({
+  period,
+  monthKey: period.endMonth,
   initialValue: null,
   finalValue: null,
   observedChange: null,
@@ -277,6 +343,8 @@ const emptyResult = (reason: string): FinancialPerformanceResult => ({
   returnPct: null,
   returnMethod: null,
   investmentAttributable: null,
+  usdFxAttributable: null,
+  eurFxAttributable: null,
   fxAttributable: null,
   ufAttributable: null,
   unexplainedResidual: null,
@@ -289,28 +357,61 @@ const emptyResult = (reason: string): FinancialPerformanceResult => ({
   flowValidationError: null,
 });
 
-export const reconcileFinancialPerformance = (input: {
+export interface FinancialPerformancePeriodInput {
+  period: FinancialPerformancePeriod;
+  initialClosure: WealthMonthlyClosure | null;
+  finalClosure: WealthMonthlyClosure | null;
+  confirmation: FinancialPerformanceConfirmation | null;
+  includeRiskCapital: boolean;
+}
+
+interface LegacyFinancialPerformanceInput {
   closures: WealthMonthlyClosure[];
   confirmation: FinancialPerformanceConfirmation | null;
   includeRiskCapital: boolean;
-}): FinancialPerformanceResult => {
-  const startClosure = selectClosure(input.closures, PERFORMANCE_INITIAL_MONTH);
-  const endClosure = selectClosure(input.closures, PERFORMANCE_FINAL_MONTH);
+}
+
+export const reconcileFinancialPerformanceForPeriod = (
+  input: FinancialPerformancePeriodInput,
+): FinancialPerformanceResult => {
+  const period = input.period;
+  if (!isFinancialPerformancePeriodValid(period)) {
+    return emptyResult(period, 'El intervalo debe contener dos meses consecutivos válidos.');
+  }
+  const startClosure = input.initialClosure;
+  const endClosure = input.finalClosure;
+  if (
+    !startClosure ||
+    !endClosure ||
+    startClosure.monthKey !== period.startMonth ||
+    endClosure.monthKey !== period.endMonth ||
+    startClosure.analysisProvisionalReason ||
+    endClosure.analysisProvisionalReason
+  ) {
+    return emptyResult(period, `Faltan cierres detallados comparables para ${period.startMonth} y ${period.endMonth}.`);
+  }
   const start = readClosurePositions(startClosure, input.includeRiskCapital);
   const end = readClosurePositions(endClosure, input.includeRiskCapital);
-  if (!start || !end) return emptyResult('Faltan cierres detallados comparables para julio y agosto de 2026.');
+  if (!start || !end) {
+    return emptyResult(period, `Faltan cierres detallados comparables para ${period.startMonth} y ${period.endMonth}.`);
+  }
 
-  const startDate = monthEndDate(PERFORMANCE_INITIAL_MONTH);
-  const endDate = monthEndDate(PERFORMANCE_FINAL_MONTH);
-  if (!startDate || !endDate) return emptyResult('No pude determinar los límites económicos del período.');
+  const startDate = monthEndDate(period.startMonth);
+  const endDate = monthEndDate(period.endMonth);
+  if (!startDate || !endDate) return emptyResult(period, 'No pude determinar los límites económicos del período.');
 
   const flows = Array.isArray(input.confirmation?.flows) ? input.confirmation.flows : [];
-  const invalidFlow = Boolean(input.confirmation && !isFinancialPerformanceConfirmationValid(input.confirmation));
+  const invalidFlow = Boolean(
+    input.confirmation && !isFinancialPerformanceConfirmationValid(input.confirmation, period),
+  );
   const flowListComplete =
     Boolean(input.confirmation) &&
     input.confirmation?.flowCompleteness === 'complete' &&
     !invalidFlow;
-  const confirmedFlowsNetClp = flows.reduce((sum, flow) => sum + (isFinancialPerformanceFlowValid(flow, startDate, endDate) ? amountSign(flow) : 0), 0);
+  const confirmedFlowsNetClp = flows.reduce(
+    (sum, flow) => sum + (isFinancialPerformanceFlowValid(flow, period) ? amountSign(flow) : 0),
+    0,
+  );
   const observedChange = end.totalClp - start.totalClp;
   const portfolioResult = flowListComplete ? observedChange - confirmedFlowsNetClp : null;
   const returnData = flowListComplete
@@ -318,10 +419,14 @@ export const reconcileFinancialPerformance = (input: {
     : { returnPct: null, method: null };
 
   let investmentAttributable: number | null = null;
+  let usdFxAttributable: number | null = null;
+  let eurFxAttributable: number | null = null;
   let fxAttributable: number | null = null;
   let ufAttributable: number | null = null;
   let fxCoveredClp = 0;
   let fxTotalClp = 0;
+  let usdTotalClp = 0;
+  let eurTotalClp = 0;
   let ufCoveredClp = 0;
   let ufTotalClp = 0;
   const allKeys = new Set([...start.positions.keys(), ...end.positions.keys()]);
@@ -331,7 +436,14 @@ export const reconcileFinancialPerformance = (input: {
     const currency = initial?.currency || final?.currency;
     if (!currency) continue;
     const averageExposure = (Math.abs(initial?.clpValue || 0) + Math.abs(final?.clpValue || 0)) / 2;
-    if (currency === 'USD' || currency === 'EUR') fxTotalClp += averageExposure;
+    if (currency === 'USD') {
+      fxTotalClp += averageExposure;
+      usdTotalClp += averageExposure;
+    }
+    if (currency === 'EUR') {
+      fxTotalClp += averageExposure;
+      eurTotalClp += averageExposure;
+    }
     if (currency === 'UF') ufTotalClp += averageExposure;
   }
 
@@ -343,9 +455,13 @@ export const reconcileFinancialPerformance = (input: {
   if (canAttributePositions) {
     let investmentTotal = 0;
     let fxTotal = 0;
+    let usdFxTotal = 0;
+    let eurFxTotal = 0;
     let ufTotal = 0;
     let hasInvestmentCoverage = false;
     let hasFxCoverage = false;
+    let hasUsdFxCoverage = false;
+    let hasEurFxCoverage = false;
     let hasUfCoverage = false;
     for (const key of allKeys) {
       const initial = start.positions.get(key);
@@ -365,7 +481,15 @@ export const reconcileFinancialPerformance = (input: {
           !Number.isFinite(endRate)
         ) continue;
         investmentTotal += (final.nativeValue - initial.nativeValue) * startRate;
-        fxTotal += final.nativeValue * (endRate - startRate);
+        const fxContribution = final.nativeValue * (endRate - startRate);
+        fxTotal += fxContribution;
+        if (currency === 'USD') {
+          usdFxTotal += fxContribution;
+          hasUsdFxCoverage = true;
+        } else {
+          eurFxTotal += fxContribution;
+          hasEurFxCoverage = true;
+        }
         fxCoveredClp += averageExposure;
         hasInvestmentCoverage = true;
         hasFxCoverage = true;
@@ -393,10 +517,14 @@ export const reconcileFinancialPerformance = (input: {
 
     investmentAttributable = hasInvestmentCoverage ? investmentTotal : null;
     fxAttributable = hasFxCoverage ? fxTotal : (fxTotalClp === 0 ? 0 : null);
+    usdFxAttributable = hasUsdFxCoverage ? usdFxTotal : (usdTotalClp === 0 ? 0 : null);
+    eurFxAttributable = hasEurFxCoverage ? eurFxTotal : (eurTotalClp === 0 ? 0 : null);
     ufAttributable = hasUfCoverage ? ufTotal : (ufTotalClp === 0 ? 0 : null);
   }
 
   if (fxTotalClp === 0) fxAttributable = 0;
+  if (usdTotalClp === 0) usdFxAttributable = 0;
+  if (eurTotalClp === 0) eurFxAttributable = 0;
   if (ufTotalClp === 0) ufAttributable = 0;
   const fxCoverageStatus: AttributionCoverageStatus = fxTotalClp === 0
     ? 'no_exposure'
@@ -425,11 +553,12 @@ export const reconcileFinancialPerformance = (input: {
   const qualityReason = invalidFlow
     ? 'La confirmación contiene datos inválidos o fuera del intervalo; no se publica retorno.'
     : flowListComplete
-      ? 'Cierres detallados comparables y lista de flujos externos confirmada como completa.'
-      : 'Los cierres son comparables, pero la lista de flujos externos no está confirmada como completa.';
+      ? `Cierres detallados comparables (${period.startMonth} → ${period.endMonth}) y lista de flujos externos confirmada como completa.`
+      : `Los cierres ${period.startMonth} → ${period.endMonth} son comparables, pero la lista de flujos externos no está confirmada como completa.`;
 
   return {
-    monthKey: PERFORMANCE_FINAL_MONTH,
+    period: { ...period },
+    monthKey: period.endMonth,
     initialValue: start.totalClp,
     finalValue: end.totalClp,
     observedChange,
@@ -440,6 +569,8 @@ export const reconcileFinancialPerformance = (input: {
     returnPct: returnData.returnPct,
     returnMethod: returnData.method,
     investmentAttributable,
+    usdFxAttributable,
+    eurFxAttributable,
     fxAttributable,
     ufAttributable,
     unexplainedResidual,
@@ -452,5 +583,30 @@ export const reconcileFinancialPerformance = (input: {
     flowValidationError: invalidFlow ? 'Revisa la fecha, el monto y los datos de cada flujo.' : null,
   };
 };
+
+/**
+ * Compatibility adapter for existing LabTab callers. New calculations should
+ * pass their interval and both closures to reconcileFinancialPerformanceForPeriod.
+ */
+export function reconcileFinancialPerformance(input: FinancialPerformancePeriodInput): FinancialPerformanceResult;
+/** @deprecated Use reconcileFinancialPerformanceForPeriod with an explicit period. */
+export function reconcileFinancialPerformance(input: LegacyFinancialPerformanceInput): FinancialPerformanceResult;
+export function reconcileFinancialPerformance(
+  input: FinancialPerformancePeriodInput | LegacyFinancialPerformanceInput,
+): FinancialPerformanceResult {
+  if ('period' in input) return reconcileFinancialPerformanceForPeriod(input);
+
+  const period: FinancialPerformancePeriod = {
+    startMonth: PERFORMANCE_INITIAL_MONTH,
+    endMonth: PERFORMANCE_FINAL_MONTH,
+  };
+  return reconcileFinancialPerformanceForPeriod({
+    period,
+    initialClosure: selectClosure(input.closures, period.startMonth),
+    finalClosure: selectClosure(input.closures, period.endMonth),
+    confirmation: input.confirmation,
+    includeRiskCapital: input.includeRiskCapital,
+  });
+}
 
 export const financialPerformanceFlowSign = amountSign;

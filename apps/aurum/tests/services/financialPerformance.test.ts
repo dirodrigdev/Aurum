@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  financialPerformancePeriodKey,
+  isFinancialPerformancePeriodValid,
   PERFORMANCE_FINAL_MONTH,
   PERFORMANCE_INITIAL_MONTH,
   reconcileFinancialPerformance,
+  reconcileFinancialPerformanceForPeriod,
+  type FinancialPerformancePeriod,
   type FinancialPerformanceConfirmation,
 } from '../../src/services/financialPerformance';
 import {
@@ -13,6 +17,10 @@ import {
 } from '../../src/services/wealthStorage';
 
 const rates = { usdClp: 1000, eurClp: 1100, ufClp: 40000 };
+const legacyPeriod: FinancialPerformancePeriod = {
+  startMonth: PERFORMANCE_INITIAL_MONTH,
+  endMonth: PERFORMANCE_FINAL_MONTH,
+};
 
 const makeRecord = (input: {
   label: string;
@@ -95,28 +103,199 @@ const run = (
     finalFxMissing?: WealthMonthlyClosure['fxMissing'];
     includeRiskCapital?: boolean;
   },
-) => reconcileFinancialPerformance({
-  closures: [
-    makeClosure(
-      PERFORMANCE_INITIAL_MONTH,
-      initialRecords,
-      options?.initialRates,
-      options?.initialFxMetadata,
-      options?.initialFxMissing,
-    ),
-    makeClosure(
-      PERFORMANCE_FINAL_MONTH,
-      finalRecords,
-      options?.finalRates,
-      options?.finalFxMetadata,
-      options?.finalFxMissing,
-    ),
-  ],
+  period: FinancialPerformancePeriod = legacyPeriod,
+) => reconcileFinancialPerformanceForPeriod({
+  period,
+  initialClosure: makeClosure(
+    period.startMonth,
+    initialRecords,
+    options?.initialRates,
+    options?.initialFxMetadata,
+    options?.initialFxMissing,
+  ),
+  finalClosure: makeClosure(
+    period.endMonth,
+    finalRecords,
+    options?.finalRates,
+    options?.finalFxMetadata,
+    options?.finalFxMissing,
+  ),
   confirmation,
   includeRiskCapital: options?.includeRiskCapital ?? false,
 });
 
 describe('reconcileFinancialPerformance', () => {
+  it('defines a canonical key for consecutive monthly periods and rejects invalid intervals', () => {
+    const juneToJuly = { startMonth: '2026-06', endMonth: '2026-07' };
+    expect(isFinancialPerformancePeriodValid(juneToJuly)).toBe(true);
+    expect(financialPerformancePeriodKey(juneToJuly)).toBe('2026-07');
+    expect(isFinancialPerformancePeriodValid({ startMonth: '2026-06', endMonth: '2026-08' })).toBe(false);
+    expect(isFinancialPerformancePeriodValid({ startMonth: '2026-13', endMonth: '2027-01' })).toBe(false);
+  });
+
+  it('keeps the legacy call compatible while the explicit period API is adopted', () => {
+    const records = [makeRecord({ label: 'Fondo', amount: 100 })];
+    const legacyResult = reconcileFinancialPerformance({
+      closures: [
+        makeClosure(PERFORMANCE_INITIAL_MONTH, records),
+        makeClosure(PERFORMANCE_FINAL_MONTH, [makeRecord({ label: 'Fondo', amount: 105 })]),
+      ],
+      confirmation: closedZeroFlows,
+      includeRiskCapital: false,
+    });
+    const explicitResult = run(records, [makeRecord({ label: 'Fondo', amount: 105 })], closedZeroFlows);
+
+    expect(legacyResult.period).toEqual(legacyPeriod);
+    expect(legacyResult.observedChange).toBe(explicitResult.observedChange);
+    expect(legacyResult.returnPct).toBe(explicitResult.returnPct);
+  });
+
+  it('rejects closures that do not match the requested consecutive interval', () => {
+    const period = { startMonth: '2026-06', endMonth: '2026-07' };
+    const result = reconcileFinancialPerformanceForPeriod({
+      period,
+      initialClosure: makeClosure('2026-06', [makeRecord({ label: 'Fondo', amount: 100 })]),
+      finalClosure: makeClosure('2026-08', [makeRecord({ label: 'Fondo', amount: 105 })]),
+      confirmation: null,
+      includeRiskCapital: false,
+    });
+    expect(result.period).toEqual(period);
+    expect(result.quality).toBe('INSUFICIENTE');
+    expect(result.initialValue).toBeNull();
+  });
+
+  it.each(['initial', 'final'] as const)('marks a missing %s closure insufficient for the explicit period', (missing) => {
+    const period = { startMonth: '2026-06', endMonth: '2026-07' };
+    const result = reconcileFinancialPerformanceForPeriod({
+      period,
+      initialClosure: missing === 'initial' ? null : makeClosure('2026-06', [makeRecord({ label: 'Fondo', amount: 100 })]),
+      finalClosure: missing === 'final' ? null : makeClosure('2026-07', [makeRecord({ label: 'Fondo', amount: 105 })]),
+      confirmation: null,
+      includeRiskCapital: false,
+    });
+    expect(result.quality).toBe('INSUFICIENTE');
+    expect(result.returnPct).toBeNull();
+  });
+
+  it('validates confirmation month and flow dates against the requested period', () => {
+    const period = { startMonth: '2026-06', endMonth: '2026-07' };
+    const initial = [makeRecord({ label: 'Fondo', amount: 100 })];
+    const final = [makeRecord({ label: 'Fondo', amount: 110 })];
+    const wrongMonth = run(initial, final, { ...closedZeroFlows, monthKey: '2026-08' }, {}, period);
+    const outOfPeriod = run(initial, final, {
+      ...closedZeroFlows,
+      monthKey: '2026-07',
+      flows: [{ id: 'f1', direction: 'aporte', effectiveDate: '2026-06-29', amountClp: 1 }],
+    }, {}, period);
+
+    expect(wrongMonth.quality).toBe('INDICATIVO');
+    expect(wrongMonth.returnPct).toBeNull();
+    expect(outOfPeriod.flowValidationError).not.toBeNull();
+    expect(outOfPeriod.returnPct).toBeNull();
+  });
+
+  it('keeps the audited July-to-August regression values unchanged', () => {
+    const initialBalance = 1_541_389_739;
+    const finalBalance = 1_581_053_582;
+    const investmentResult = 39_742_596;
+    const fxResult = -78_753;
+    const startRate = 930;
+    const endRate = 929;
+    const finalUsd = 78_753;
+    const initialUsd = finalUsd - investmentResult / startRate;
+    const localClp = initialBalance - initialUsd * startRate;
+    const initialRecords = [
+      makeRecord({ label: 'Fondo USD', amount: initialUsd, currency: 'USD' }),
+      makeRecord({ label: 'Fondo CLP', amount: localClp }),
+    ];
+    const finalRecords = [
+      makeRecord({ label: 'Fondo USD', amount: finalUsd, currency: 'USD' }),
+      makeRecord({ label: 'Fondo CLP', amount: localClp }),
+    ];
+    const confirmation: FinancialPerformanceConfirmation = {
+      ...closedZeroFlows,
+      positionMovementCompleteness: 'no_unrecorded_movements',
+    };
+    const result = run(initialRecords, finalRecords, confirmation, {
+      initialRates: { usdClp: startRate },
+      finalRates: { usdClp: endRate },
+    });
+
+    expect(result.initialValue).toBeCloseTo(initialBalance, 5);
+    expect(result.finalValue).toBeCloseTo(finalBalance, 5);
+    expect(result.observedChange).toBeCloseTo(39_663_843, 5);
+    expect(result.investmentAttributable).toBeCloseTo(investmentResult, 5);
+    expect(result.usdFxAttributable).toBeCloseTo(fxResult, 5);
+    expect(result.eurFxAttributable).toBe(0);
+    expect(result.fxAttributable).toBeCloseTo(fxResult, 5);
+    expect(result.ufAttributable).toBe(0);
+    expect(result.unexplainedResidual).toBeCloseTo(0, 5);
+    expect(result.returnPct).toBeCloseTo(39_663_843 / initialBalance, 10);
+    expect(result.quality).toBe('RECONSTRUIDO');
+  });
+
+  it('calculates June-to-July components conditionally but keeps the unconfirmed interval indicative', () => {
+    const period = { startMonth: '2026-06', endMonth: '2026-07' };
+    const initialBalance = 1_540_741_434.24;
+    const finalBalance = 1_541_389_739;
+    const investmentResult = -94_255.64;
+    const fxResult = 742_560.4;
+    const startRate = 900;
+    const endRate = 930;
+    const finalUsd = fxResult / (endRate - startRate);
+    const initialUsd = finalUsd - investmentResult / startRate;
+    const localClp = initialBalance - initialUsd * startRate;
+    const initialRecords = [
+      makeRecord({ label: 'Fondo USD', amount: initialUsd, currency: 'USD' }),
+      makeRecord({ label: 'Fondo CLP', amount: localClp }),
+    ];
+    const finalRecords = [
+      makeRecord({ label: 'Fondo USD', amount: finalUsd, currency: 'USD' }),
+      makeRecord({ label: 'Fondo CLP', amount: localClp }),
+    ];
+    const initialClosure = makeClosure('2026-06', initialRecords, { usdClp: startRate });
+    const finalClosure = makeClosure('2026-07', finalRecords, { usdClp: endRate }, {
+      economicDate: '2026-07-31',
+      rateOrigin: { usd: 'manual' },
+      source: { usd: 'manual_user_input' },
+      manualOverrideReason: 'Corrección valor',
+      reconciliation: { status: 'reconciled', checkedAt: '2026-08-01T22:15:35.035Z' },
+    });
+    const indicative = reconcileFinancialPerformanceForPeriod({
+      period,
+      initialClosure,
+      finalClosure,
+      confirmation: null,
+      includeRiskCapital: false,
+    });
+    const conditional = reconcileFinancialPerformanceForPeriod({
+      period,
+      initialClosure,
+      finalClosure,
+      confirmation: {
+        ...closedZeroFlows,
+        monthKey: '2026-07',
+        positionMovementCompleteness: 'no_unrecorded_movements',
+      },
+      includeRiskCapital: false,
+    });
+
+    expect(indicative.initialValue).toBeCloseTo(initialBalance, 5);
+    expect(indicative.finalValue).toBeCloseTo(finalBalance, 5);
+    expect(indicative.observedChange).toBeCloseTo(648_304.76, 5);
+    expect(indicative.quality).toBe('INDICATIVO');
+    expect(indicative.returnPct).toBeNull();
+    expect(indicative.investmentAttributable).toBeNull();
+    expect(indicative.fxAttributable).toBeNull();
+
+    expect(conditional.investmentAttributable).toBeCloseTo(investmentResult, 5);
+    expect(conditional.usdFxAttributable).toBeCloseTo(fxResult, 5);
+    expect(conditional.eurFxAttributable).toBe(0);
+    expect(conditional.fxAttributable).toBeCloseTo(fxResult, 5);
+    expect(conditional.ufAttributable).toBe(0);
+    expect(conditional.unexplainedResidual).toBeCloseTo(0, 5);
+  });
+
   it('uses a simple return only after an explicit complete zero-flow confirmation', () => {
     const result = run([makeRecord({ label: 'Fondo', amount: 100 })], [makeRecord({ label: 'Fondo', amount: 105 })], closedZeroFlows);
     expect(result.returnPct).toBeCloseTo(0.05);
@@ -188,6 +367,24 @@ describe('reconcileFinancialPerformance', () => {
     expect(result.investmentAttributable).toBe(120000);
     expect(result.ufAttributable).toBe(82400);
     expect(result.fxAttributable).toBe(0);
+    expect(result.unexplainedResidual).toBeCloseTo(0);
+  });
+
+  it('reports EUR translation separately while preserving the combined FX total', () => {
+    const confirmation: FinancialPerformanceConfirmation = {
+      ...closedZeroFlows,
+      positionMovementCompleteness: 'no_unrecorded_movements',
+    };
+    const result = run(
+      [makeRecord({ label: 'Fondo EUR', amount: 100, currency: 'EUR' })],
+      [makeRecord({ label: 'Fondo EUR', amount: 110, currency: 'EUR' })],
+      confirmation,
+      { initialRates: { eurClp: 1100 }, finalRates: { eurClp: 1200 } },
+    );
+    expect(result.usdFxAttributable).toBe(0);
+    expect(result.eurFxAttributable).toBe(11_000);
+    expect(result.fxAttributable).toBe(11_000);
+    expect(result.investmentAttributable).toBe(11_000);
     expect(result.unexplainedResidual).toBeCloseTo(0);
   });
 
