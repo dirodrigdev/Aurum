@@ -723,8 +723,8 @@ export const DashboardAurum: React.FC = () => {
             onClick={() => navigate('/closing')}
           />
           <DashboardNavCard
-            title="Lab de retornos"
-            subtitle="Atribución y sensibilidad"
+            title="Rendimiento"
+            subtitle="Tus inversiones y sus causas"
             icon={Sparkles}
             onClick={() => navigate('/analysis', { state: { analysisTab: 'lab' } })}
           />

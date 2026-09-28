@@ -208,7 +208,7 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
   const analysisSectionToggle = page.getByRole('button', { name: 'Mostrar secciones de Análisis', exact: true });
   await expect(analysisSectionToggle).toBeVisible();
   await analysisSectionToggle.click();
-  await expect(page.getByRole('button', { name: 'Lab de retornos', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Rendimiento', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Libertad Financiera', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Validación GastApp', exact: true }).click();
   const audit = page.getByTestId('gastapp-canonical-v2-audit');
@@ -245,51 +245,107 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
 
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.getByRole('button', { name: 'Mostrar secciones de Análisis', exact: true }).click();
-  const returnsLabTab = page.getByRole('button', { name: 'Lab de retornos', exact: true });
+  const returnsLabTab = page.getByRole('button', { name: 'Rendimiento', exact: true });
   await returnsLabTab.click();
-  await expect(page.getByRole('button', { name: 'Mostrar secciones de Análisis', exact: true })).toContainText('Lab de retornos');
-  await expect(page.getByText('Resultado del período', { exact: true }).first()).toBeVisible();
-  await expect(page.getByText('Performance financiera V1', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Mostrar secciones de Análisis', exact: true })).toContainText('Rendimiento');
+  await expect(page.getByRole('heading', { name: 'Cómo rindieron mis inversiones y por qué' })).toBeVisible();
+  await expect(page.getByText('Cambio observado de las inversiones', { exact: true })).toBeVisible();
   await expect(page.getByText('INDICATIVO', { exact: true })).toBeVisible();
+  await page.getByText('Completar validación del período', { exact: true }).click();
   await expect(page.getByText('No hubo flujos este mes', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'No hubo flujos este mes', exact: true }).click();
   await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
-  await expect(page.getByText('Simple', { exact: true })).toBeVisible();
+  await expect(page.getByText(/Método simple · resultado de cartera/)).toBeVisible();
   await expect(page.getByText('Lista completa · 0 movimientos', { exact: true })).toBeVisible();
+  const publishedPerformanceValue = page.getByTestId('financial-performance-published-value');
+  const simpleReturnValue = await publishedPerformanceValue.innerText();
 
   await page.getByRole('button', { name: 'Agregar aporte', exact: true }).click();
   await page.getByLabel('Fecha efectiva').fill('2026-08-16');
   await page.getByLabel('Monto CLP').fill('10000000');
-  await expect(page.getByText('INDICATIVO', { exact: true })).toBeVisible();
+  await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
+  await expect(publishedPerformanceValue).toHaveText(simpleReturnValue);
+  await expect(page.getByText('cambios sin guardar', { exact: false })).toBeVisible();
   await page.getByRole('button', { name: 'Guardar confirmación', exact: true }).click();
   await expect(page.getByText(/^Guardado como revisión 2\./)).toBeVisible();
+  await expect(page.getByText('INDICATIVO', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Lista completa', exact: true }).click();
   await page.getByRole('button', { name: 'Guardar confirmación', exact: true }).click();
   await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
-  await expect(page.getByText('Modified Dietz · reconstruido', { exact: true })).toBeVisible();
+  await expect(page.getByText(/Modified Dietz · resultado de cartera/)).toBeVisible();
   await expect(page.getByText('Lista completa · 1 movimiento', { exact: true })).toBeVisible();
+  const modifiedDietzReturnValue = await publishedPerformanceValue.innerText();
 
   await page.getByRole('button', { name: 'Mostrar secciones de Análisis', exact: true }).click();
   await page.getByRole('button', { name: 'Retornos', exact: true }).click();
   await page.getByRole('button', { name: 'Mostrar secciones de Análisis', exact: true }).click();
-  await page.getByRole('button', { name: 'Lab de retornos', exact: true }).click();
+  await page.getByRole('button', { name: 'Rendimiento', exact: true }).click();
+  await page.getByText('Revisar validación del período', { exact: true }).click();
   await expect(page.getByText(/^Guardado como revisión 3\./)).toBeVisible();
   await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
-  await expect(page.getByText('Modified Dietz · reconstruido', { exact: true })).toBeVisible();
+  await expect(page.getByText(/Modified Dietz · resultado de cartera/)).toBeVisible();
+  await expect(publishedPerformanceValue).toHaveText(modifiedDietzReturnValue);
+  const persistedAttributionTestIds = [
+    'financial-performance-instruments-result',
+    'financial-performance-fx-result',
+    'financial-performance-uf-result',
+    'financial-performance-residual-result',
+  ];
+  const modifiedDietzAttributions = await Promise.all(
+    persistedAttributionTestIds.map((testId) => page.getByTestId(testId).innerText()),
+  );
+  await page.getByText('Revisar validación del período', { exact: true }).click();
+  await page.reload();
+  const dismissReloadedClosure = page.getByRole('button', { name: 'Omitir', exact: true });
+  if (await dismissReloadedClosure.isVisible().catch(() => false)) await dismissReloadedClosure.click();
+  await page.getByRole('button', { name: 'Mostrar secciones de Análisis', exact: true }).click();
+  await page.getByRole('button', { name: 'Rendimiento', exact: true }).click();
+  await expect(page.getByText('Cargando confirmación…', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
+  await page.getByText('Revisar validación del período', { exact: true }).click();
+  await expect(page.getByText(/^Guardado como revisión 3\./)).toBeVisible();
+  await expect(page.getByTestId('financial-performance-published-value')).toHaveText(modifiedDietzReturnValue);
+  await Promise.all(persistedAttributionTestIds.map((testId, index) =>
+    expect(page.getByTestId(testId)).toHaveText(modifiedDietzAttributions[index]),
+  ));
+  await page.getByRole('button', { name: 'Últimos 12 meses', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Aún no hay rentabilidad financiera validada para este período' })).toBeVisible();
+  await expect(page.getByText('Cambio observado por mes', { exact: true })).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: testInfo.outputPath('aurum-rendimiento-12m-desktop.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Desde inicio', exact: true }).click();
+  await page.screenshot({ path: testInfo.outputPath('aurum-rendimiento-inicio-desktop.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Julio → agosto 2026', exact: true }).click();
+  await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
 
   const labDesktopOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(labDesktopOverflow).toBeLessThanOrEqual(1);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: testInfo.outputPath('aurum-rendimiento-desktop-viewport.png') });
   await page.screenshot({ path: testInfo.outputPath('aurum-returns-lab-desktop.png'), fullPage: true });
 
   await page.setViewportSize({ width: 768, height: 1024 });
   const labTabletOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(labTabletOverflow).toBeLessThanOrEqual(1);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: testInfo.outputPath('aurum-rendimiento-tablet-viewport.png') });
   await page.screenshot({ path: testInfo.outputPath('aurum-returns-lab-tablet.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Últimos 12 meses', exact: true }).click();
+  await page.screenshot({ path: testInfo.outputPath('aurum-rendimiento-12m-tablet.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Julio → agosto 2026', exact: true }).click();
 
   await page.setViewportSize({ width: 390, height: 844 });
   const labMobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(labMobileOverflow).toBeLessThanOrEqual(1);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: testInfo.outputPath('aurum-rendimiento-mobile-viewport.png') });
   await page.screenshot({ path: testInfo.outputPath('aurum-returns-lab-mobile.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Últimos 12 meses', exact: true }).click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-rendimiento-12m-mobile.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Desde inicio', exact: true }).click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-rendimiento-inicio-mobile.png'), fullPage: true });
 
   await networkGuard.assertClean(testInfo);
   expect(pageErrors, `page errors: ${pageErrors.join(' | ')}`).toEqual([]);

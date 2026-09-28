@@ -119,7 +119,7 @@ const formatAnalysisUpdatedAt = (iso: string) => {
 
 const analysisTabLabel = (tab: AnalysisTab) => {
   if (tab === 'gastapp-validation') return 'Validación GastApp';
-  if (tab === 'lab') return 'Lab de retornos';
+  if (tab === 'lab') return 'Rendimiento';
   return 'Retornos';
 };
 
@@ -614,7 +614,7 @@ export const AnalysisAurum: React.FC = () => {
                 setIsSectionMenuOpen(false);
               }}
             >
-              Lab de retornos
+              Rendimiento
             </Button>
           </div>
         ) : null}
@@ -643,11 +643,11 @@ export const AnalysisAurum: React.FC = () => {
       <Card className="border-slate-200 bg-slate-50 p-3">
         <div className="flex items-center gap-2 text-xs text-slate-600">
           <BarChart3 size={14} />
-          Datos en solo lectura: los cálculos de Análisis no modifican cierres ni registros persistidos.
+          Los cálculos no modifican cierres patrimoniales. Las confirmaciones de Rendimiento se guardan por separado.
         </div>
       </Card>
 
-      <GastappReportDownloads />
+      {tab !== 'lab' && <GastappReportDownloads />}
     </div>
   );
 };

@@ -252,7 +252,7 @@ describe('AnalysisAurum returns toolbar', () => {
     expect(sectionToggle?.getAttribute('aria-expanded')).toBe('true');
     expect(container.textContent).toContain('Retornos');
     expect(container.textContent).toContain('Validación GastApp');
-    expect(container.textContent).toContain('Lab de retornos');
+    expect(container.textContent).toContain('Rendimiento');
     expect(container.textContent).not.toContain('Libertad Financiera');
   });
 

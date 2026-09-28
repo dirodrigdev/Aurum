@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Trash2, Zap } from 'lucide-react';
+import { ChevronDown, Plus, Trash2, Zap } from 'lucide-react';
 import { Card, cn } from '../Components';
 import { type WealthLabWindow, buildWealthLabModel, selectWealthLabPeriod } from '../../services/wealthLab';
 import {
@@ -20,10 +20,12 @@ import type { WealthMonthlyClosure } from '../../services/wealthStorage';
 import { formatMonthLabel as monthLabel } from '../../utils/wealthFormat';
 import { formatFreedomCompactClp } from './shared';
 
-const LAB_WINDOW_OPTIONS: Array<{ key: WealthLabWindow; label: string }> = [
+type RendimientoPeriod = 'performance_2026_08' | 'last_12m' | 'since_start';
+
+const LAB_WINDOW_OPTIONS: Array<{ key: RendimientoPeriod; label: string }> = [
+  { key: 'performance_2026_08', label: 'Julio → agosto 2026' },
+  { key: 'last_12m', label: 'Últimos 12 meses' },
   { key: 'since_start', label: 'Desde inicio' },
-  { key: 'last_12m', label: 'Últ. 12M' },
-  { key: 'last_month', label: 'Últ. mes' },
 ];
 
 type LabTabProps = {
@@ -119,16 +121,9 @@ const FinancialPerformanceSlice: React.FC<{
           (flow.reference || '') !== (persisted.reference || ''),
       );
     });
-  const previewConfirmation = useMemo<FinancialPerformanceConfirmation>(() => ({
-    schemaVersion: 1,
-    monthKey: PERFORMANCE_FINAL_MONTH,
-    flowCompleteness: draft.flowCompleteness,
-    positionMovementCompleteness: draft.positionMovementCompleteness,
-    flows: draft.flows.map((flow) => ({ ...flow, amountClp: Number(flow.amountClp) })),
-  }), [draft]);
   const result = useMemo(
-    () => reconcileFinancialPerformance({ closures, confirmation: previewConfirmation, includeRiskCapital }),
-    [closures, previewConfirmation, includeRiskCapital],
+    () => reconcileFinancialPerformance({ closures, confirmation, includeRiskCapital }),
+    [closures, confirmation, includeRiskCapital],
   );
 
   const persistDraft = async (nextDraft: ConfirmationDraft) => {
@@ -216,115 +211,149 @@ const FinancialPerformanceSlice: React.FC<{
     void persistDraft(noFlowsDraft);
   };
 
-  const flowCompletenessLabel = draft.flowCompleteness === 'complete'
-    ? `Lista completa · ${formatFlowCount(draft)}`
-    : 'Lista incompleta / no sé';
-  const flowNetValue = result.flowListComplete || draft.flows.length > 0
+  const flowCompletenessLabel = confirmation?.flowCompleteness === 'complete'
+    ? `Lista completa · ${formatFlowCount(persistedDraft)}`
+    : 'Lista pendiente';
+  const flowNetValue = result.flowListComplete || Boolean(confirmation?.flows.length)
     ? formatFreedomCompactClp(result.confirmedFlowsNetClp)
     : 'No confirmado';
   const flowEquationValue = result.flowListComplete
     ? formatFreedomCompactClp(result.confirmedFlowsNetClp)
-    : draft.flows.length > 0
+    : confirmation?.flows.length
       ? `parcial ${formatFreedomCompactClp(result.confirmedFlowsNetClp)}`
       : 'sin confirmar';
-  const moneyValue = (value: number | null) => value === null ? 'No atribuible' : formatFreedomCompactClp(value);
+  const moneyValue = (value: number | null) => value === null ? '—' : formatFreedomCompactClp(value);
   const coverageValue = (status: 'no_exposure' | 'not_evaluated' | 'evaluated', value: number | null) =>
     status === 'no_exposure'
       ? 'No aplica · sin exposición'
       : status === 'not_evaluated'
         ? 'Pendiente de atribución'
         : `${(value ?? 0).toFixed(0)}%`;
+  const canPublishReturn =
+    storageReady && !isLoading &&
+    (result.quality === 'RECONSTRUIDO' || result.quality === 'EXACTO') && result.returnPct !== null;
+  const methodLabel = result.returnMethod === 'simple'
+    ? 'Método simple'
+    : result.returnMethod === 'simple_adjusted'
+      ? 'Método simple ajustado'
+      : result.returnMethod === 'modified_dietz'
+        ? 'Modified Dietz'
+        : 'Método pendiente';
 
   return (
-    <Card className="mt-3 border-slate-200 bg-gradient-to-br from-[#0b1728] via-[#10203a] to-[#12284a] p-4 text-slate-100">
+    <Card className="overflow-hidden border-slate-200 bg-gradient-to-br from-[#0b1728] via-[#10203a] to-[#12284a] p-4 text-slate-100 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-300">Performance financiera V1</div>
-          <h3 className="mt-1 text-base font-semibold text-white">Julio → agosto 2026</h3>
-          <p className="mt-1 max-w-2xl text-xs text-slate-300/80">
-            Cierres de inversión comparables. La variación de saldo no se presenta como rentabilidad mientras falte confirmar la lista de flujos.
+          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-200">Tus inversiones</div>
+          <h3 className="mt-1 text-lg font-semibold text-white">Qué cambió entre julio y agosto</h3>
+          <p className="mt-1 max-w-2xl text-sm text-slate-300">
+            Comparamos las posiciones de inversión de ambos cierres. El capital de riesgo {includeRiskCapital ? 'está incluido' : 'queda fuera'}.
           </p>
         </div>
         <span className={cn(
-          'rounded-full border px-2.5 py-1 text-[10px] font-semibold',
-          result.quality === 'RECONSTRUIDO'
+          'rounded-full border px-3 py-1 text-xs font-semibold',
+          storageError
+            ? 'border-rose-300/40 bg-rose-300/10 text-rose-200'
+            : result.quality === 'RECONSTRUIDO'
             ? 'border-emerald-300/40 bg-emerald-300/10 text-emerald-200'
             : result.quality === 'INSUFICIENTE'
               ? 'border-rose-300/40 bg-rose-300/10 text-rose-200'
               : 'border-amber-300/40 bg-amber-300/10 text-amber-200',
         )}>
-          {result.quality}
+          {isLoading ? 'Cargando' : storageError ? 'No verificable' : result.quality}
         </span>
       </div>
+      {storageError && (
+        <p role="alert" className="mt-3 rounded-lg border border-rose-300/30 bg-rose-300/10 p-3 text-xs text-rose-100">
+          No pudimos verificar la confirmación guardada. La rentabilidad no se publica hasta recuperar el acceso.
+        </p>
+      )}
 
-      <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-          <div className="text-[10px] uppercase tracking-wide text-slate-400">Variación observada · no rentabilidad</div>
-          <div className="mt-1 text-lg font-semibold text-white">{moneyValue(result.observedChange)}</div>
-          <div className="text-[11px] text-slate-300">{formatPerformancePct(result.observedChangePct)} cambio de saldo</div>
+      <div className="mt-5 grid gap-5 border-b border-white/10 pb-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] lg:items-end">
+        <div>
+          <div className="text-xs font-medium text-slate-300">
+            {canPublishReturn ? 'Rentabilidad financiera' : 'Cambio observado de las inversiones'}
+          </div>
+          <div data-testid="financial-performance-published-value" className="mt-1 break-words text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+            {isLoading ? 'Cargando…' : canPublishReturn ? formatPerformancePct(result.returnPct) : moneyValue(result.observedChange)}
+          </div>
+          <div className="mt-2 text-xs text-slate-300">
+            {canPublishReturn
+              ? `${methodLabel} · resultado de cartera ${moneyValue(result.portfolioResult)}`
+              : storageError
+                ? 'Es un cambio de saldo. La validación guardada no se pudo comprobar.'
+                : 'Es un cambio de saldo. La rentabilidad sigue pendiente de validación.'}
+          </div>
         </div>
-        <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-          <div className="text-[10px] uppercase tracking-wide text-slate-400">Aportes / retiros</div>
-          <div className="mt-1 text-lg font-semibold text-white">{flowNetValue}</div>
-          <div className="text-[11px] text-slate-300">{flowCompletenessLabel}</div>
-        </div>
-        <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-          <div className="text-[10px] uppercase tracking-wide text-slate-400">Resultado de cartera</div>
-          <div className="mt-1 text-lg font-semibold text-white">{moneyValue(result.portfolioResult)}</div>
-          <div className="text-[11px] text-slate-300">Sólo con lista de flujos completa</div>
-        </div>
-        <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-          <div className="text-[10px] uppercase tracking-wide text-slate-400">Rentabilidad financiera</div>
-          <div className="mt-1 text-lg font-semibold text-white">{formatPerformancePct(result.returnPct)}</div>
-          <div className="text-[11px] text-slate-300">
-            {result.returnMethod === 'simple'
-              ? 'Simple'
-              : result.returnMethod === 'simple_adjusted'
-                ? 'Simple ajustado'
-                : result.returnMethod === 'modified_dietz'
-                  ? 'Modified Dietz · reconstruido'
-                  : 'No disponible'}
+        <div className="grid gap-2 sm:grid-cols-3">
+          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+            <div className="text-xs text-slate-300">Cierre de julio</div>
+            <div className="mt-1 break-words text-sm font-semibold text-white">{moneyValue(result.initialValue)}</div>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+            <div className="text-xs text-slate-300">Cierre de agosto</div>
+            <div className="mt-1 break-words text-sm font-semibold text-white">{moneyValue(result.finalValue)}</div>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+            <div className="text-xs text-slate-300">Aportes y retiros</div>
+            <div className="mt-1 break-words text-sm font-semibold text-white">{flowNetValue}</div>
+            <div className="mt-1 text-[11px] text-slate-300">{flowCompletenessLabel}</div>
           </div>
         </div>
       </div>
 
-      <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-          <div className="text-[10px] uppercase tracking-wide text-slate-400">Resultado de inversiones atribuible</div>
-          <div className="mt-1 text-sm font-semibold text-white">{moneyValue(result.investmentAttributable)}</div>
-        </div>
-        <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-          <div className="text-[10px] uppercase tracking-wide text-slate-400">Efecto FX · USD / EUR</div>
-          <div className="mt-1 text-sm font-semibold text-white">{moneyValue(result.fxAttributable)}</div>
-          <div className="text-[11px] text-slate-300">Cobertura: {coverageValue(result.fxCoverageStatus, result.fxCoveragePct)}</div>
-        </div>
-        <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-          <div className="text-[10px] uppercase tracking-wide text-slate-400">Indexación UF</div>
-          <div className="mt-1 text-sm font-semibold text-white">{moneyValue(result.ufAttributable)}</div>
-          <div className="text-[11px] text-slate-300">Cobertura: {coverageValue(result.ufCoverageStatus, result.ufCoveragePct)}</div>
-        </div>
-        <div className="rounded-xl border border-amber-200/20 bg-amber-200/5 p-3">
-          <div className="text-[10px] uppercase tracking-wide text-amber-100/70">No explicado / no atribuido</div>
-          <div className="mt-1 text-sm font-semibold text-amber-100">{moneyValue(result.unexplainedResidual)}</div>
+      <div className="mt-5">
+        <h4 className="text-sm font-semibold text-white">Por qué cambió</h4>
+        <p className="mt-1 text-xs text-slate-300">
+          {result.investmentAttributable === null
+            ? 'La explicación por causa aparecerá cuando estén validados los movimientos del período.'
+            : 'Separamos instrumentos, monedas, UF y la parte que aún no podemos explicar.'}
+        </p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+            <div className="text-xs text-slate-300">Instrumentos</div>
+            <div data-testid="financial-performance-instruments-result" className="mt-1 break-words text-base font-semibold text-white">{moneyValue(result.investmentAttributable)}</div>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+            <div className="text-xs text-slate-300">Monedas · USD y EUR</div>
+            <div data-testid="financial-performance-fx-result" className="mt-1 break-words text-base font-semibold text-white">{moneyValue(result.fxAttributable)}</div>
+            <div className="mt-1 text-[11px] text-slate-300">{coverageValue(result.fxCoverageStatus, result.fxCoveragePct)}</div>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+            <div className="text-xs text-slate-300">Indexación UF</div>
+            <div data-testid="financial-performance-uf-result" className="mt-1 break-words text-base font-semibold text-white">{moneyValue(result.ufAttributable)}</div>
+            <div className="mt-1 text-[11px] text-slate-300">{coverageValue(result.ufCoverageStatus, result.ufCoveragePct)}</div>
+          </div>
+          <div className="rounded-xl border border-amber-200/20 bg-amber-200/5 p-3">
+            <div className="text-xs text-amber-100/80">{result.flowListComplete ? 'Aún sin explicar' : 'Por conciliar'}</div>
+            <div data-testid="financial-performance-residual-result" className="mt-1 break-words text-base font-semibold text-amber-100">
+              {result.flowListComplete ? moneyValue(result.unexplainedResidual) : 'Pendiente'}
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3 text-[11px] text-slate-300">
-        <div className="font-semibold text-slate-100">Reconciliación</div>
-        <div className="mt-1 break-words">
-          ΔV {moneyValue(result.observedChange)} = flujos {flowEquationValue} + inversión {moneyValue(result.investmentAttributable)} + FX {moneyValue(result.fxAttributable)} + UF {moneyValue(result.ufAttributable)} + no explicado {moneyValue(result.unexplainedResidual)}
+      <details className="mt-5 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-slate-300">
+        <summary className="cursor-pointer font-semibold text-white">Ver cómo se concilia el cálculo</summary>
+        <div className="mt-2 break-words">
+          Cambio {moneyValue(result.observedChange)} = flujos {flowEquationValue} + instrumentos {moneyValue(result.investmentAttributable)} + monedas {moneyValue(result.fxAttributable)} + UF {moneyValue(result.ufAttributable)} + sin explicar {moneyValue(result.unexplainedResidual)}
         </div>
-        <div className="mt-1 text-slate-400">{result.qualityReason}</div>
-      </div>
+        <div className="mt-1 text-slate-300">{result.qualityReason}</div>
+      </details>
 
-      <div className="mt-4 border-t border-white/10 pt-4">
+      <details className="mt-5 border-t border-white/10 pt-4">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-white [&::-webkit-details-marker]:hidden">
+          <span>{result.flowListComplete ? 'Revisar validación del período' : 'Completar validación del período'}</span>
+          <ChevronDown size={16} aria-hidden="true" />
+        </summary>
+      <div className="mt-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <div className="text-sm font-semibold text-white">Confirmación manual de flujos</div>
+            <div className="text-sm font-semibold text-white">Movimientos y cobertura</div>
             <div className="text-[11px] text-slate-300/80">
               Cierre inicial {PERFORMANCE_INITIAL_MONTH} · cierre final {PERFORMANCE_FINAL_MONTH}
               {confirmation?.revision ? ` · revisión ${confirmation.revision}` : ''}
-              {isDraftDirty ? ' · vista previa sin guardar' : ''}
+              {isDraftDirty ? ' · cambios sin guardar' : ''}
             </div>
           </div>
           {isLoading && <span className="text-[11px] text-slate-300">Cargando confirmación…</span>}
@@ -494,6 +523,7 @@ const FinancialPerformanceSlice: React.FC<{
           </p>
         )}
       </div>
+      </details>
     </Card>
   );
 };
@@ -511,8 +541,8 @@ const LabCompositionBar: React.FC<{
 
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
-      <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Composición del período</div>
-      <div className="mt-1 text-[11px] text-slate-300/80">Resultado del período = Resultado sin FX + Efecto FX</div>
+      <div className="text-xs font-medium text-slate-300">Serie FX heredada del Lab</div>
+      <div className="mt-1 text-xs text-slate-300/80">Indicador combinado = indicador sin FX + componente FX</div>
       <div className="relative mt-3 h-8 rounded-full bg-white/5">
         <div className="absolute inset-y-1/2 left-1/2 w-px -translate-y-1/2 bg-white/15" />
         <div
@@ -542,17 +572,17 @@ const LabCompositionBar: React.FC<{
       </div>
       <div className="mt-3 grid gap-2 text-[11px] text-slate-300 sm:grid-cols-3">
         <div>
-          <div className="text-slate-400">Resultado sin FX</div>
+          <div className="text-slate-400">Indicador sin FX</div>
           <div className="font-medium text-emerald-300">{formatFreedomCompactClp(resultadoSinFxClp)}</div>
         </div>
         <div>
-          <div className="text-slate-400">Efecto FX</div>
+          <div className="text-slate-400">Componente FX heredado</div>
           <div className={cn('font-medium', efectoFxClp >= 0 ? 'text-sky-300' : 'text-rose-300')}>
             {formatFreedomCompactClp(efectoFxClp)}
           </div>
         </div>
         <div>
-          <div className="text-slate-400">Resultado del período</div>
+          <div className="text-slate-400">Indicador combinado</div>
           <div className={cn('font-medium', totalClp >= 0 ? 'text-white' : 'text-rose-300')}>
             {formatFreedomCompactClp(totalClp)}
           </div>
@@ -563,104 +593,152 @@ const LabCompositionBar: React.FC<{
 };
 
 export const LabTab: React.FC<LabTabProps> = ({ model, closures, includeRiskCapitalInTotals, onToggleRiskMode }) => {
-  const [selectedWindow, setSelectedWindow] = useState<WealthLabWindow>('since_start');
-  const selectedPeriod = useMemo(() => selectWealthLabPeriod(model, selectedWindow), [model, selectedWindow]);
-  const totalValue = selectedPeriod.headlineMetrics?.real.totalClp ?? null;
-  const sinFxValue = selectedPeriod.headlineMetrics?.resultadoSinFx.totalClp ?? null;
-  const fxValue = selectedPeriod.headlineMetrics?.aporteFx.totalClp ?? null;
+  const [selectedWindow, setSelectedWindow] = useState<RendimientoPeriod>('performance_2026_08');
+  const selectedPeriod = useMemo(() => {
+    const window: WealthLabWindow = selectedWindow === 'performance_2026_08' ? 'last_month' : selectedWindow;
+    const periodModel = selectedWindow === 'performance_2026_08'
+      ? { ...model, points: model.points.filter((point) => point.monthKey <= PERFORMANCE_FINAL_MONTH) }
+      : model;
+    return selectWealthLabPeriod(periodModel, window);
+  }, [model, selectedWindow]);
+  const hasHistoricalPeriod =
+    selectedWindow !== 'performance_2026_08' || selectedPeriod.currentPeriodLabel === PERFORMANCE_FINAL_MONTH;
+  const labValue = hasHistoricalPeriod ? selectedPeriod.headlineMetrics?.real.totalClp ?? null : null;
+  const sinFxValue = hasHistoricalPeriod ? selectedPeriod.headlineMetrics?.resultadoSinFx.totalClp ?? null : null;
+  const fxValue = hasHistoricalPeriod ? selectedPeriod.headlineMetrics?.aporteFx.totalClp ?? null : null;
   const comparableMonths = selectedPeriod.headlineMetrics?.real.months ?? 0;
+  const trendPoints = hasHistoricalPeriod
+    ? selectedPeriod.points.filter((point) => point.varPatrimonioClp !== null)
+    : [];
+  const observedPatrimonyChange = trendPoints.length
+    ? trendPoints.reduce((sum, point) => sum + Number(point.varPatrimonioClp), 0)
+    : null;
+  const trendScale = Math.max(1, ...trendPoints.map((point) => Math.abs(point.varPatrimonioClp || 0)));
   const coverageNote =
-    selectedPeriod.realMonths === 0
-      ? 'Aún no hay cierres confirmados para este corte.'
+    !hasHistoricalPeriod || selectedPeriod.realMonths === 0
+      ? 'No hay cierres comparables para este período.'
       : selectedPeriod.fxComparableMonths === 0
-        ? 'Este corte todavía no tiene base CLP/USD suficiente para separar el efecto cambiario.'
+        ? 'Este período no tiene base CLP/USD suficiente para separar el efecto cambiario patrimonial.'
         : selectedPeriod.fxComparableMonths < selectedPeriod.realMonths
-          ? `Usa ${selectedPeriod.fxComparableMonths} de ${selectedPeriod.realMonths} meses con base FX suficiente.`
-          : 'Separación simple entre movimiento sin FX y efecto cambiario.';
+          ? `El desglose cambiario cubre ${selectedPeriod.fxComparableMonths} de ${selectedPeriod.realMonths} meses.`
+          : 'El desglose patrimonial usa los meses con base CLP/USD comparable.';
 
   return (
     <>
-    <Card className="overflow-hidden border-slate-200 bg-gradient-to-br from-[#0b1728] via-[#10203a] to-[#12284a] p-4 text-slate-100">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">Lab</div>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <div className="text-sm text-slate-300">
-              {selectedPeriod.currentPeriodLabel
-                ? `Lectura FX de ${monthLabel(selectedPeriod.currentPeriodLabel)}`
-                : 'Lectura simple del período seleccionado'}
+      <Card className="border-slate-200 bg-white p-4 sm:p-6">
+        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700">Rendimiento</div>
+        <h2 className="mt-1 text-xl font-semibold text-slate-900 sm:text-2xl">Cómo rindieron mis inversiones y por qué</h2>
+        <p className="mt-2 max-w-3xl text-sm text-slate-600">
+          Primero, el cambio de tus inversiones y sus causas. Después, el contexto del patrimonio para el mismo período.
+        </p>
+        <div className="mt-5 text-xs font-semibold text-slate-500">Período</div>
+        <div className="mt-2 flex flex-wrap gap-2" role="group" aria-label="Período de rendimiento">
+          {LAB_WINDOW_OPTIONS.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              aria-pressed={selectedWindow === option.key}
+              onClick={() => setSelectedWindow(option.key)}
+              className={cn(
+                'min-h-10 rounded-full border px-4 py-2 text-xs font-semibold',
+                selectedWindow === option.key
+                  ? 'border-slate-900 bg-slate-900 text-white'
+                  : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100',
+              )}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3 text-xs text-slate-600">
+          <span>Perímetro: inversiones {includeRiskCapitalInTotals ? 'con CapRiesgo' : 'sin CapRiesgo'}</span>
+          <button
+            type="button"
+            onClick={onToggleRiskMode}
+            aria-pressed={includeRiskCapitalInTotals}
+            className="inline-flex min-h-9 items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            <Zap size={14} aria-hidden="true" />
+            {includeRiskCapitalInTotals ? 'Excluir CapRiesgo' : 'Incluir CapRiesgo'}
+          </button>
+        </div>
+      </Card>
+
+      {selectedWindow === 'performance_2026_08' ? (
+        <FinancialPerformanceSlice closures={closures} includeRiskCapital={includeRiskCapitalInTotals} />
+      ) : (
+        <Card className="border-slate-200 bg-white p-4 sm:p-6">
+          <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">Rentabilidad pendiente</div>
+          <h3 className="mt-1 text-lg font-semibold text-slate-900">Aún no hay rentabilidad financiera validada para este período</h3>
+          <p className="mt-2 max-w-3xl text-sm text-slate-600">
+            El historial permite ver cambios del patrimonio, pero no confirma todos los aportes y retiros de las inversiones.
+            La ventana financiera disponible hoy es julio → agosto 2026.
+          </p>
+        </Card>
+      )}
+
+      <Card className="border-slate-200 bg-white p-4 sm:p-6">
+        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Contexto histórico</div>
+        <h3 className="mt-1 text-lg font-semibold text-slate-900">Cómo se movió el patrimonio</h3>
+        <p className="mt-1 max-w-3xl text-sm text-slate-600">
+          Esta serie incluye otros bloques del patrimonio. Muestra cambios observados y no equivale a la rentabilidad de las inversiones.
+        </p>
+        <div className="mt-4 flex flex-wrap items-end justify-between gap-2 border-b border-slate-100 pb-4">
+          <div>
+            <div className="text-xs text-slate-500">Cambio patrimonial observado</div>
+            <div className={cn('mt-1 text-2xl font-semibold', (observedPatrimonyChange || 0) >= 0 ? 'text-slate-900' : 'text-rose-700')}>
+              {observedPatrimonyChange !== null ? formatFreedomCompactClp(observedPatrimonyChange) : '—'}
             </div>
-            {includeRiskCapitalInTotals && (
-              <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-                +CapRiesgo
-              </span>
-            )}
+          </div>
+          <div className="text-xs text-slate-500">
+            {selectedWindow === 'performance_2026_08' ? 'Julio → agosto 2026' : selectedPeriod.label}
+            {selectedPeriod.realMonths > 0 && ` · ${selectedPeriod.realMonths} ${selectedPeriod.realMonths === 1 ? 'mes' : 'meses'} con cierre comparable`}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onToggleRiskMode}
-          className={cn(
-            'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition',
-            includeRiskCapitalInTotals
-              ? 'border-amber-300 bg-amber-50 text-amber-600'
-              : 'border-white/20 bg-white/5 text-slate-300',
+        {trendPoints.length > 1 && (
+          <div className="mt-4">
+            <div className="text-xs font-medium text-slate-700">Cambio observado por mes</div>
+            <div className="mt-2 overflow-x-auto rounded-xl border border-slate-100 bg-slate-50 p-3">
+              <div
+                role="img"
+                aria-label={`Cambios patrimoniales observados de ${monthLabel(trendPoints[0].monthKey)} a ${monthLabel(trendPoints[trendPoints.length - 1].monthKey)}`}
+                className="relative flex min-w-full items-center gap-1"
+              >
+                <div className="pointer-events-none absolute inset-x-0 top-1/2 h-px bg-slate-300" />
+                {trendPoints.map((point) => {
+                  const value = point.varPatrimonioClp || 0;
+                  const height = Math.max(3, Math.round(Math.abs(value) / trendScale * 40));
+                  return (
+                    <div key={point.monthKey} className="relative h-24 min-w-[14px] flex-1" title={`${monthLabel(point.monthKey)} · ${formatFreedomCompactClp(value)}`}>
+                      <div
+                        className={cn('absolute left-0 w-full rounded-sm', value >= 0 ? 'bg-emerald-500' : 'bg-rose-400')}
+                        style={{ height, ...(value >= 0 ? { bottom: '50%' } : { top: '50%' }) }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-1 flex justify-between text-[11px] text-slate-500">
+                <span>{monthLabel(trendPoints[0].monthKey)}</span>
+                <span>{monthLabel(trendPoints[trendPoints.length - 1].monthKey)}</span>
+              </div>
+            </div>
+          </div>
+        )}
+        <details className="mt-4 border-t border-slate-100 pt-4 text-xs text-slate-600">
+          <summary className="cursor-pointer font-semibold text-slate-700">Explorar la serie FX histórica del Lab</summary>
+          <p className="mt-2">
+            Esta serie experimental no concilia necesariamente con el cambio patrimonial observado y no mide rentabilidad de inversiones.
+            {comparableMonths > 0 && ` Cubre ${comparableMonths} meses con base FX comparable.`}
+          </p>
+          {labValue !== null && sinFxValue !== null && fxValue !== null && (
+            <div className="mt-3 rounded-xl bg-[#10203a] p-1 text-slate-100">
+              <LabCompositionBar totalClp={labValue} resultadoSinFxClp={sinFxValue} efectoFxClp={fxValue} />
+            </div>
           )}
-          title={includeRiskCapitalInTotals ? 'Vista con capital de riesgo' : 'Vista de patrimonio puro'}
-          aria-label={includeRiskCapitalInTotals ? 'Activar vista sin capital de riesgo' : 'Activar vista con capital de riesgo'}
-        >
-          <Zap size={16} />
-        </button>
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        {LAB_WINDOW_OPTIONS.map((option) => (
-          <button
-            key={option.key}
-            type="button"
-            onClick={() => setSelectedWindow(option.key)}
-            className={cn(
-              'rounded-full border px-3 py-1 text-[11px] font-semibold transition',
-              selectedWindow === option.key
-                ? 'border-white/20 bg-white/12 text-white'
-                : 'border-white/10 bg-transparent text-slate-300',
-            )}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
-        <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Resultado del período</div>
-        <div className={cn('mt-1 text-3xl font-semibold', (totalValue || 0) >= 0 ? 'text-white' : 'text-rose-300')}>
-          {totalValue !== null ? formatFreedomCompactClp(totalValue) : '—'}
-        </div>
-        <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-slate-300/80">
-          <span>{selectedPeriod.label}</span>
-          {comparableMonths > 0 && <span>· {comparableMonths} meses comparables</span>}
-        </div>
-      </div>
-
-      {totalValue !== null && sinFxValue !== null && fxValue !== null ? (
-        <div className="mt-3">
-          <LabCompositionBar
-            totalClp={totalValue}
-            resultadoSinFxClp={sinFxValue}
-            efectoFxClp={fxValue}
-          />
-        </div>
-      ) : (
-        <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-[12px] text-slate-300/80">
-          {coverageNote}
-        </div>
-      )}
-
-      {coverageNote && totalValue !== null && sinFxValue !== null && fxValue !== null && (
-        <div className="mt-3 text-[12px] text-slate-300/80">{coverageNote}</div>
-      )}
-    </Card>
-    <FinancialPerformanceSlice closures={closures} includeRiskCapital={includeRiskCapitalInTotals} />
+          <p className="mt-2">{coverageNote}</p>
+        </details>
+      </Card>
     </>
   );
 };
