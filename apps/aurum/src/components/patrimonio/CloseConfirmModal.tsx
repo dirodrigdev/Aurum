@@ -471,6 +471,7 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
             Cancelar
           </Button>
           <Button
+            className="h-auto min-h-[2.5rem] whitespace-normal px-2 py-2 text-center leading-5"
             onClick={() => onAttemptClose(closeMonthDraft)}
             disabled={closeRunning || closeBlockingIssues.length > 0 || !closeFxReady || !fxGuidanceReady}
           >

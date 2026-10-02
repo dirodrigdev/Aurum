@@ -940,15 +940,20 @@ describe('monthly close undo checkpoint', () => {
 
   it('blocks formal close when cloud checkpoint cannot be persisted', async () => {
     const getUidMock = vi.mocked(getCurrentUid);
-    getUidMock.mockReturnValueOnce(null as unknown as string);
-    await expect(
-      closeMonthlyWithCheckpoint({
-        monthKey: '2026-04',
-        records: recordsForMonth('2026-04'),
-        fxRates,
-        closedAt: '2026-04-15T12:00:00.000Z',
-      }),
-    ).rejects.toThrow('No hay una sesión Firebase válida para guardar el checkpoint cloud del cierre');
+    const originalGetUid = getUidMock.getMockImplementation();
+    getUidMock.mockReturnValue(null as unknown as string);
+    try {
+      await expect(
+        closeMonthlyWithCheckpoint({
+          monthKey: '2026-04',
+          records: recordsForMonth('2026-04'),
+          fxRates,
+          closedAt: '2026-04-15T12:00:00.000Z',
+        }),
+      ).rejects.toThrow('No hay una sesión Firebase válida para guardar el checkpoint cloud del cierre');
+    } finally {
+      if (originalGetUid) getUidMock.mockImplementation(originalGetUid);
+    }
     expect(loadClosures().some((closure) => closure.monthKey === '2026-04')).toBe(false);
     expect(getMonthlyCloseCheckpoint('2026-04')).toBeNull();
 
@@ -1497,6 +1502,86 @@ describe('monthly close undo checkpoint', () => {
     expect(preview.ok).toBe(true);
     expect(preview.checkpointSource).toBe('cloud');
     expect(Number(preview.previous?.bankClp || 0)).not.toBe(1);
+  });
+
+  it('waits for the queued cloud write before confirming a close', async () => {
+    const records = recordsForMonth('2026-04', 12_000_000, 1_500_000);
+    saveWealthRecords(records, { skipCloudSync: true });
+    const originalGetDoc = vi.mocked(getDoc).getMockImplementation()!;
+    let holdFirstRootRead = true;
+    let releaseFirstRootRead!: () => void;
+    let signalFirstRootRead!: () => void;
+    const firstRootReadStarted = new Promise<void>((resolve) => { signalFirstRootRead = resolve; });
+    const heldRead = new Promise<void>((resolve) => { releaseFirstRootRead = resolve; });
+    vi.mocked(getDoc).mockImplementation(async (ref) => {
+      if ((ref as unknown as MockDoc).__path === 'aurum_wealth/test-user' && holdFirstRootRead) {
+        holdFirstRootRead = false;
+        signalFirstRootRead();
+        await heldRead;
+      }
+      return originalGetDoc(ref);
+    });
+
+    const backgroundSync = syncWealthNow();
+    await firstRootReadStarted;
+    const closing = closeMonthlyWithCheckpoint({
+      monthKey: '2026-04',
+      records,
+      fxRates,
+      closedAt: '2026-04-15T12:00:00.000Z',
+    });
+    try {
+      await vi.waitFor(() => {
+        expect(loadClosures().some((closure) => closure.monthKey === '2026-04')).toBe(true);
+      });
+      releaseFirstRootRead();
+      const closure = await closing;
+      expect(closure.monthKey).toBe('2026-04');
+      expect(await backgroundSync).toBe(true);
+      expect(cloudStore.get('aurum_wealth/test-user')?.closures.some((item: { monthKey: string }) => item.monthKey === '2026-04')).toBe(true);
+    } finally {
+      releaseFirstRootRead();
+      vi.mocked(getDoc).mockImplementation(originalGetDoc);
+    }
+  });
+
+  it('preserves the successful close checkpoint when an overwrite fails to persist [close audit]', async () => {
+    const monthKey = '2026-04';
+    const initial = await closeMonthlyWithCheckpoint({
+      monthKey,
+      records: recordsForMonth(monthKey, 12_000_000, 1_500_000),
+      fxRates,
+      closedAt: '2026-04-15T12:00:00.000Z',
+    });
+    await syncWealthNow();
+    const checkpointPath = `aurum_wealth/test-user/monthly_close_checkpoints/${monthKey}`;
+    const originalCheckpoint = structuredClone(cloudStore.get(checkpointPath));
+    const originalLocalCheckpoint = structuredClone(getMonthlyCloseCheckpoint(monthKey));
+    const setDocMock = vi.mocked(setDoc);
+    const originalSetDoc = setDocMock.getMockImplementation()!;
+    setDocMock.mockImplementation(async (ref, payload, options) => {
+      if ((ref as unknown as MockDoc).__path === 'aurum_wealth/test-user') {
+        throw Object.assign(new Error('audit: root wealth write denied'), { code: 'permission-denied' });
+      }
+      return originalSetDoc(ref, payload, options);
+    });
+    try {
+      await expect(closeMonthlyWithCheckpoint({
+        monthKey,
+        records: recordsForMonth(monthKey, 30_000_000, 4_000_000),
+        fxRates,
+        closedAt: '2026-04-16T12:00:00.000Z',
+      })).rejects.toThrow('El cierre no quedó guardado');
+      // A rejected overwrite must preserve BOTH the confirmed closure and its undo point.
+      expect(loadClosures().find((closure) => closure.monthKey === monthKey)?.id).toBe(initial.id);
+      expect(cloudStore.get('aurum_wealth/test-user')?.closures.find((closure: { monthKey: string }) => closure.monthKey === monthKey)?.id).toBe(initial.id);
+      expect.soft(cloudStore.get(checkpointPath)?.id, 'Cloud undo point must survive a failed overwrite').toBe(originalCheckpoint.id);
+      expect.soft(cloudStore.get(checkpointPath)?.hadPreviousClosure).toBe(originalCheckpoint.hadPreviousClosure);
+      expect.soft(getMonthlyCloseCheckpoint(monthKey)?.id, 'Local undo point must survive a failed overwrite').toBe(originalLocalCheckpoint?.id);
+    } finally {
+      setDocMock.mockImplementation(originalSetDoc);
+      await syncWealthNow();
+    }
   });
 
   it('marks preview as local-only when checkpoint is not in cloud', async () => {

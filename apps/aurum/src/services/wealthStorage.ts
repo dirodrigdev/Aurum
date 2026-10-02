@@ -3635,6 +3635,16 @@ const saveMonthlyCloseCheckpointToLocalCache = (checkpoint: WealthMonthlyCloseCh
   saveMonthlyCloseCheckpoints(next);
 };
 
+const restoreMonthlyCloseCheckpointInLocalCache = (
+  monthKey: string,
+  checkpoint: WealthMonthlyCloseCheckpoint | null,
+) => {
+  const normalizedMonthKey = normalizeMonthKey(monthKey);
+  if (!normalizedMonthKey) return;
+  const remaining = loadMonthlyCloseCheckpoints().filter((item) => item.monthKey !== normalizedMonthKey);
+  saveMonthlyCloseCheckpoints(checkpoint ? [checkpoint, ...remaining] : remaining);
+};
+
 const buildMonthlyCloseCheckpoint = (
   monthKey: string,
   options?: { overwrite?: boolean; stateOverride?: WealthCheckpointStateSnapshot },
@@ -5377,6 +5387,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       // Never let that older snapshot overwrite the newer local value.
       if (isWealthCloudWriteStale(localUpdatedAt, readWealthUpdatedAt())) {
         wealthCloudSyncRequestedWhileRunning = true;
+        setLastWealthSyncIssue('local_state_changed_during_cloud_sync');
         saveWealthSyncUiState({
           status: 'dirty',
           at: nowIso(),
@@ -5500,9 +5511,29 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
  */
 export const syncWealthNow = async (): Promise<boolean> => {
   // Reintento corto para tolerar ventanas donde auth.currentUser aún se rehidrata.
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  let authOrWriteRetries = 0;
+  let queuedFollowUps = 0;
+  while (authOrWriteRetries < 3) {
+    // Flush an idle debounced save now. When another save is in flight,
+    // syncWealthToCloudNow coalesces this request and schedules a follow-up;
+    // that follow-up must finish before callers verify the persisted state.
+    if (!wealthCloudSyncPromise && wealthCloudSyncTimer) {
+      clearTimeout(wealthCloudSyncTimer);
+      wealthCloudSyncTimer = null;
+    }
     const ok = await syncWealthToCloudNow();
+    if (wealthCloudSyncRequestedWhileRunning || wealthCloudSyncTimer || wealthCloudSyncPromise) {
+      if (wealthCloudSyncTimer) {
+        clearTimeout(wealthCloudSyncTimer);
+        wealthCloudSyncTimer = null;
+      }
+      queuedFollowUps += 1;
+      if (queuedFollowUps <= 3) continue;
+      setLastWealthSyncIssue('cloud_sync_kept_changing_during_close');
+      return false;
+    }
     if (ok) return true;
+    authOrWriteRetries += 1;
     await new Promise((resolve) => setTimeout(resolve, 350));
   }
   return false;
@@ -5970,6 +6001,8 @@ export const closeMonthlyWithCheckpoint = async (input: {
     throw new Error('Mes de cierre inválido. No se ejecutó el checkpoint ni el cierre.');
   }
   const preCloseLocalState = readLocalWealthStateSnapshot();
+  const previousLocalCheckpoint = getMonthlyCloseCheckpoint(normalizedMonthKey);
+  const previousCloudCheckpoint = await loadMonthlyCloseCheckpointFromCloud(normalizedMonthKey);
   const checkpointState = buildMonthlyCloseCheckpointState(
     normalizedMonthKey,
     input.records,
@@ -5998,7 +6031,10 @@ export const closeMonthlyWithCheckpoint = async (input: {
   try {
     const synced = await syncWealthNow();
     if (!synced) {
-      throw new Error('El cierre no quedó guardado. No se actualizó el historial.');
+      const syncIssue = getLastWealthSyncIssue();
+      throw new Error(
+        `El cierre no quedó guardado. No se actualizó el historial.${syncIssue ? ` Detalle: ${syncIssue}` : ''}`,
+      );
     }
     const wealthRef = await getWealthCloudRef();
     if (wealthRef) {
@@ -6019,7 +6055,9 @@ export const closeMonthlyWithCheckpoint = async (input: {
         );
       }
       if (cloudVerificationCompleted && !persisted) {
-        throw new Error('El cierre no quedó guardado. No se actualizó el historial.');
+        throw new Error(
+          `El cierre no quedó guardado. No se actualizó el historial. La nube no confirmó el mes ${normalizedMonthKey}.`,
+        );
       }
     }
   } catch (error) {
@@ -6027,6 +6065,42 @@ export const closeMonthlyWithCheckpoint = async (input: {
       applyWealthStateLocal(preCloseLocalState);
     } catch (restoreError) {
       console.error('[Aurum][monthly-close] failed to restore local state after failed persistence', restoreError);
+    }
+    let checkpointRollbackError: string | null = null;
+    const cloudCheckpointAfterFailure = await loadMonthlyCloseCheckpointFromCloudByStorageKey(normalizedMonthKey);
+    if (cloudCheckpointAfterFailure.checkpoint?.id === checkpointResult.checkpoint.id) {
+      if (previousCloudCheckpoint) {
+        const restoreResult = await saveMonthlyCloseCheckpointToCloud(previousCloudCheckpoint);
+        if (!restoreResult.ok) checkpointRollbackError = restoreResult.message;
+      } else {
+        const deleteResult = await deleteMonthlyCloseCheckpointFromCloudByStorageKey(
+          normalizedMonthKey,
+          cloudCheckpointAfterFailure.storage,
+        );
+        if (!deleteResult.ok) checkpointRollbackError = deleteResult.message || deleteResult.code || 'error desconocido';
+      }
+    } else if (
+      cloudCheckpointAfterFailure.code ||
+      cloudCheckpointAfterFailure.message
+    ) {
+      checkpointRollbackError = cloudCheckpointAfterFailure.message || cloudCheckpointAfterFailure.code || 'No pude verificar el checkpoint cloud.';
+    } else if (cloudCheckpointAfterFailure.checkpoint?.id !== previousCloudCheckpoint?.id) {
+      console.warn('[Aurum][monthly-close] kept a checkpoint changed by another close attempt', {
+        monthKey: normalizedMonthKey,
+        attemptedCheckpointId: checkpointResult.checkpoint.id,
+        actualCheckpointId: cloudCheckpointAfterFailure.checkpoint?.id || null,
+      });
+    }
+    if (getMonthlyCloseCheckpoint(normalizedMonthKey)?.id === checkpointResult.checkpoint.id) {
+      restoreMonthlyCloseCheckpointInLocalCache(normalizedMonthKey, previousLocalCheckpoint);
+    }
+    if (checkpointRollbackError) {
+      const originalMessage = error instanceof Error ? error.message : String(error || 'Error desconocido');
+      console.error('[Aurum][monthly-close] failed to restore the confirmed undo checkpoint', {
+        monthKey: normalizedMonthKey,
+        message: checkpointRollbackError,
+      });
+      throw new Error(`${originalMessage} No se pudo recuperar el checkpoint anterior: ${checkpointRollbackError}`);
     }
     throw error;
   }

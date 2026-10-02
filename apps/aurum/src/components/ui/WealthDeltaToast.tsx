@@ -36,7 +36,7 @@ export const WealthDeltaToast: React.FC<WealthDeltaToastProps> = ({ visible, del
   const deltaText = `${positive ? '+' : '-'}${formatCurrencyNoDecimals(Math.abs(delta), 'CLP')}`;
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-24 z-[130] flex justify-end px-4 sm:bottom-6">
+    <div className="pointer-events-none fixed inset-x-0 bottom-24 z-[80] flex justify-end px-4 sm:bottom-6">
       <div
         className={`w-full max-w-xs rounded-2xl border px-4 py-3 shadow-2xl transition-all duration-200 ease-out ${
           shown ? 'translate-y-0 opacity-100' : 'translate-y-2 opacity-0'
@@ -55,4 +55,3 @@ export const WealthDeltaToast: React.FC<WealthDeltaToastProps> = ({ visible, del
     </div>
   );
 };
-

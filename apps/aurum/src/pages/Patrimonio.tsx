@@ -6371,6 +6371,39 @@ export const Patrimonio: React.FC = () => {
       setCloseError(message);
       return { ok: false, errorMessage: message };
     }
+    if (targetMonthKey === monthKey) {
+      const liveRecordsForClose = buildCanonicalCloseTargetRecords(records, targetMonthKey);
+      const storedRecordsForClose = buildCanonicalCloseTargetRecords(loadWealthRecords(), targetMonthKey);
+      const liveAmounts = computeWealthHomeSectionAmounts(
+        resolveRiskCapitalRecordsForTotals(liveRecordsForClose, includeRiskCapitalInTotals).recordsForTotals,
+        fxForClose,
+      );
+      const storedAmounts = computeWealthHomeSectionAmounts(
+        resolveRiskCapitalRecordsForTotals(storedRecordsForClose, includeRiskCapitalInTotals).recordsForTotals,
+        fxForClose,
+      );
+      const hasMultipleDebtDetails = storedRecordsForClose.filter(
+        (record) =>
+          record.block === 'debt' &&
+          isNonMortgageDebtRecord(record) &&
+          !isAggregateNonMortgageDebtRecord(record) &&
+          !isMortgageMetaDebtLabel(record.label),
+      ).length > 1;
+      const previewDebtClp = Math.abs(Number(closePreview.nonMortgageDebt || 0));
+      const liveDebtClp = Math.abs(Number(liveAmounts.nonMortgageDebt || 0));
+      const storedDebtClp = Math.abs(Number(storedAmounts.nonMortgageDebt || 0));
+      const previewMatchesLiveRecords =
+        Math.abs(previewDebtClp - liveDebtClp) <= MONTHLY_CLOSE_DEBT_GUARD_TOLERANCE_CLP;
+      const storedDebtDiffersFromPreview =
+        Math.abs(previewDebtClp - storedDebtClp) > MONTHLY_CLOSE_DEBT_GUARD_TOLERANCE_CLP;
+
+      if (hasMultipleDebtDetails && previewMatchesLiveRecords && storedDebtDiffersFromPreview) {
+        const message = 'Los datos de deuda guardados cambiaron desde que se mostró el preview. No cerré el mes; revisa las deudas y vuelve a confirmar.';
+        setCloseInfo('');
+        setCloseError(message);
+        return { ok: false, errorMessage: message };
+      }
+    }
     await refreshGastappMonthlyContable();
     const gastappExpenseClose = resolveGastappMonthlyCloseCandidate(targetMonthKey, {
       previousSnapshot: selectedClosureForDraft?.gastappExpenseClose || null,
@@ -6407,6 +6440,11 @@ export const Patrimonio: React.FC = () => {
           !isAggregateNonMortgageDebtRecord(record) &&
           !isMortgageMetaDebtLabel(record.label),
       );
+
+      // Assigning the whole preview subtotal to one row while retaining the
+      // other debt rows silently increases total debt. Multiple rows require
+      // an exact source set or a safe block; do not invent a distribution.
+      if (withDetailDebt.length > 1) return null;
 
       if (withDetailDebt.length > 0) {
         let updated = false;
@@ -6466,7 +6504,14 @@ export const Patrimonio: React.FC = () => {
         previewDebtClp: targetAmounts.nonMortgageDebt,
       })
     ) {
-      targetRecords = alignCloseTargetDebtWithPreview(targetRecords, closePreview.nonMortgageDebt);
+      const alignedRecords = alignCloseTargetDebtWithPreview(targetRecords, closePreview.nonMortgageDebt);
+      if (!alignedRecords) {
+        const message = 'No se puede reconciliar el total de varias deudas con el preview. Revisa sus montos y vuelve a confirmar.';
+        setCloseInfo('');
+        setCloseError(message);
+        return { ok: false, errorMessage: message };
+      }
+      targetRecords = alignedRecords;
       targetAmounts = computeWealthHomeSectionAmounts(
         resolveRiskCapitalRecordsForTotals(targetRecords, includeRiskCapitalInTotals).recordsForTotals,
         fxForClose,
@@ -7067,23 +7112,17 @@ export const Patrimonio: React.FC = () => {
         sameCanonicalLabel(record.label, REAL_ESTATE_PROPERTY_VALUE_LABEL),
     );
 
-    const closureSummary = selectedClosureForDraft?.summary as (WealthMonthlyClosure['summary'] & {
-      riskCapitalClp?: number;
-    }) | null;
-    const fromSelectedClosure = selectedClosureForDraft ? resolveSectionAmountsFromClosure(selectedClosureForDraft) : null;
-    const riskClp =
-      selectedClosureForDraft && Number.isFinite(closureSummary?.riskCapitalClp)
-        ? Number(closureSummary.riskCapitalClp)
-        : liveRiskClp;
-    const hasRisk = selectedClosureForDraft ? Math.abs(riskClp) > 0 : riskRecords.length > 0;
-    const hasProperty = selectedClosureForDraft ? fromSelectedClosure?.realEstateNet !== 0 : liveHasProperty;
+    const riskClp = liveRiskClp;
+    const hasRisk = riskRecords.length > 0;
+    const hasProperty = liveHasProperty;
+    // A selected historical closure is only context for the overwrite. The
+    // preview must show the records that the next close will persist.
     const amounts =
-      fromSelectedClosure ||
-      (previewingCurrentWorkingMonth &&
+      previewingCurrentWorkingMonth &&
       Math.abs(fromLiveRecords.nonMortgageDebt) < 1 &&
       Math.abs(sectionAmounts.nonMortgageDebt) >= 1_000_000
         ? sectionAmounts
-        : fromLiveRecords);
+        : fromLiveRecords;
 
     return {
       banks: amounts.bank,
@@ -7107,7 +7146,6 @@ export const Patrimonio: React.FC = () => {
     closeValidationDraft.targetRecords,
     includeRiskCapitalInTotals,
     closeFxValues,
-    resolveSectionAmountsFromClosure,
     records,
   ]);
 
