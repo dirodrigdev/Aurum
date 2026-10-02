@@ -19,6 +19,175 @@ function emulatorDb() {
   return getFirestore(app);
 }
 
+type AuditRecord = {
+  id: string; block: string; label: string; currency: string; amount: number;
+  snapshotDate: string; note?: string;
+};
+
+const mortgagePrincipalLabel = 'Saldo deuda hipotecaria';
+const checkpointLabel = 'Checkpoint inicio mes';
+const liveRates = { usdClp: 950, eurClp: 1030, ufClp: 38000 };
+
+function nativeAmounts(records: AuditRecord[], monthKey: string) {
+  return records.filter((record) => record.snapshotDate.startsWith(`${monthKey}-`) && record.label !== checkpointLabel)
+    .map(({ block, label, currency, amount }) => ({ block, label, currency, amount }))
+    .sort((a, b) => `${a.block}:${a.label}:${a.currency}`.localeCompare(`${b.block}:${b.label}:${b.currency}`));
+}
+
+async function monthStartState(page: Page) {
+  return page.evaluate(() => {
+    const records = JSON.parse(window.localStorage.getItem('wealth_records_v1') || '[]');
+    const checkpoint = records.find((record: { snapshotDate: string; label: string }) =>
+      record.snapshotDate.startsWith('2026-08-') && record.label === 'Checkpoint inicio mes');
+    return {
+      records,
+      fx: JSON.parse(window.localStorage.getItem('wealth_fx_v1') || '{}'),
+      checkpoint: checkpoint ? JSON.parse(checkpoint.note) : null,
+    };
+  });
+}
+
+async function seedMortgageStart() {
+  const ref = emulatorDb().doc(`aurum_wealth/${uid}`);
+  const data = (await ref.get()).data()!;
+  const added = [
+    [mortgagePrincipalLabel, 3000],
+    ['Dividendo hipotecario mensual', 20],
+    ['Interés hipotecario mensual', 8],
+    ['Seguros hipotecarios mensuales', 2],
+    ['Amortización hipotecaria mensual', 10],
+  ].map(([label, amount], index) => ({
+    id: `audit-mortgage-${index}`, block: 'debt', label, amount, currency: 'UF',
+    source: 'e2e_fixture', snapshotDate: '2026-07-15', createdAt: '2026-07-15T12:00:00.000Z',
+  }));
+  await ref.update({ records: [...data.records, ...added, {
+    id: 'audit-manual-usd', block: 'bank', label: 'Saldo bancos USD', amount: 1250,
+    currency: 'USD', source: 'Manual', snapshotDate: '2026-07-15', createdAt: '2026-07-15T12:00:00.000Z',
+  }] });
+}
+
+for (const viewport of [
+  { name: 'desktop', width: 1280, height: 800, rejectFx: true },
+  { name: 'mobile', width: 390, height: 844, rejectFx: false },
+]) {
+  test(`next month start preserves history and applies mortgage once on ${viewport.name}`, async ({ page }, testInfo) => {
+    await seedMortgageStart();
+    await page.clock.setFixedTime(new Date('2026-08-01T12:00:00.000Z'));
+    await page.setViewportSize(viewport);
+    const { modal, networkGuard, pageErrors, consoleErrors } = await prepare(page);
+    await confirm(page, modal);
+    const closed = await cloudClosure('2026-07');
+    expect(closed.records.find((record: AuditRecord) => record.label === mortgagePrincipalLabel).amount).toBe(3000);
+    expect(closed.fxRates).toEqual(rates);
+    await page.getByRole('button', { name: 'Cerrar ventana', exact: true }).click();
+    const reminder = page.locator('div.fixed.inset-0').filter({ hasText: 'Mes cerrado correctamente' });
+    await expect(reminder).toBeVisible();
+    const carried = await monthStartState(page);
+    expect(nativeAmounts(carried.records, '2026-08')).toEqual(nativeAmounts(closed.records, '2026-07'));
+    expect(carried.checkpoint?.explicitMonthStarted).not.toBe(true);
+    await reminder.getByRole('button', { name: 'Recordarme después', exact: true }).click();
+    await page.reload();
+    await expect(page.getByText(/Resumen estratégico agosto de 2026/i)).toBeVisible();
+    await expect(reminder).toHaveCount(0);
+    const afterSnooze = await monthStartState(page);
+    expect(nativeAmounts(afterSnooze.records, '2026-08')).toEqual(nativeAmounts(carried.records, '2026-08'));
+    // Expire the persisted reminder without jumping Date during an active
+    // Firestore WebChannel connection (which treats that jump as a timeout).
+    await page.evaluate(() => {
+      const key = 'aurum.next-month-start-reminder.snooze.v1.2026-08';
+      const until = window.localStorage.getItem(key);
+      if (!until || Date.parse(until) <= Date.now()) throw new Error('Snooze must persist a future expiry.');
+      window.localStorage.setItem(key, '2026-07-31T12:00:00.000Z');
+    });
+    await page.getByRole('link', { name: 'Dashboard', exact: true }).click();
+    await page.getByRole('link', { name: 'Patrimonio', exact: true }).click();
+    const start = page.getByRole('button', { name: 'Iniciar agosto de 2026', exact: true });
+    await expect(start.first()).toBeVisible();
+    await start.first().click();
+    const confirmation = page.locator('div.fixed.inset-0').filter({ hasText: 'Vas a iniciar AGOSTO DE 2026' });
+    await expect(confirmation).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`month-start-confirm-${viewport.name}.png`) });
+    if (viewport.name === 'desktop') {
+      await page.setViewportSize({ width: 768, height: 1024 });
+      await page.screenshot({ path: testInfo.outputPath('month-start-confirm-tablet.png') });
+      await page.setViewportSize(viewport);
+    }
+    const beforeAccept = await monthStartState(page);
+    await confirmation.getByRole('button', { name: 'Cancelar', exact: true }).click();
+    expect(await monthStartState(page)).toEqual(beforeAccept);
+
+    if (viewport.rejectFx) {
+      // The emulator deliberately has no live FX HTTP request. Reject just the
+      // FX persistence boundary to exercise the real failure/retry path.
+      await page.evaluate(() => {
+        const original = Storage.prototype.setItem;
+        (window as Window & { restoreAuditFx?: () => void }).restoreAuditFx = () => { Storage.prototype.setItem = original; };
+        Storage.prototype.setItem = function (key: string, value: string) {
+          if (this === window.localStorage && key === 'wealth_fx_v1') throw new Error('Fallo ficticio al guardar TC/UF');
+          return original.call(this, key, value);
+        };
+      });
+      await start.first().click();
+      await confirmation.getByRole('button', { name: 'Iniciar agosto de 2026', exact: true }).click();
+      await expect(page.getByText('Fallo ficticio al guardar TC/UF', { exact: true })).toBeVisible();
+      const failed = await monthStartState(page);
+      expect(nativeAmounts(failed.records, '2026-08')).toEqual(nativeAmounts(beforeAccept.records, '2026-08'));
+      expect(failed.fx).toEqual(beforeAccept.fx);
+      expect(failed.checkpoint.failedStep).toBe('fx');
+      expect(failed.checkpoint.explicitMonthStarted).toBe(false);
+      await page.screenshot({ path: testInfo.outputPath('month-start-fx-failure-desktop.png') });
+      await page.evaluate(() => (window as Window & { restoreAuditFx?: () => void }).restoreAuditFx?.());
+      await page.getByRole('button', { name: 'Reintentar paso: TC/UF', exact: true }).click();
+      await expect.poll(async () => (await monthStartState(page)).checkpoint?.actions.fx).toBe('applied');
+      const retriedFx = await monthStartState(page);
+      expect(retriedFx.checkpoint.explicitMonthStarted).toBe(false);
+      expect(nativeAmounts(retriedFx.records, '2026-08')).toEqual(nativeAmounts(beforeAccept.records, '2026-08'));
+    }
+
+    await start.first().click();
+    const acceptStart = confirmation.getByRole('button', { name: 'Iniciar agosto de 2026', exact: true });
+    await expect(acceptStart).toBeEnabled();
+    await acceptStart.evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
+    await expect.poll(async () => (await monthStartState(page)).checkpoint?.explicitMonthStarted).toBe(true);
+    const started = await monthStartState(page);
+    expect(started.fx).toEqual(liveRates);
+    const expected = nativeAmounts(beforeAccept.records, '2026-08').map((record) => ({
+      ...record, amount: record.label === mortgagePrincipalLabel ? 2990 : record.amount,
+    }));
+    expect(nativeAmounts(started.records, '2026-08')).toEqual(expected);
+    expect(started.checkpoint.actions.fx).toBe('applied');
+    expect(started.checkpoint.actions.realEstate).toBe('applied');
+    await expect(start).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath(`month-start-success-${viewport.name}.png`) });
+    const ref = emulatorDb().doc(`aurum_wealth/${uid}`);
+    await expect.poll(async () => nativeAmounts((await ref.get()).get('records'), '2026-08')).toEqual(expected);
+    await expect.poll(async () => {
+      const checkpoint = (await ref.get()).get('records').find((record: AuditRecord) =>
+        record.snapshotDate.startsWith('2026-08-') && record.label === checkpointLabel);
+      return checkpoint ? JSON.parse(checkpoint.note).explicitMonthStarted : null;
+    }).toBe(true);
+    expect(await cloudClosure('2026-07')).toEqual(closed);
+    await page.reload();
+    await expect(page.getByText(/Resumen estratégico agosto de 2026/i)).toBeVisible();
+    await expect.poll(async () => (await monthStartState(page)).checkpoint?.explicitMonthStarted).toBe(true);
+    const reloaded = await monthStartState(page);
+    expect(nativeAmounts(reloaded.records, '2026-08')).toEqual(expected);
+    expect(reloaded.records.filter((record: AuditRecord) => record.snapshotDate.startsWith('2026-08-') && record.label === mortgagePrincipalLabel)).toHaveLength(1);
+    expect(reloaded.records.filter((record: AuditRecord) => record.snapshotDate.startsWith('2026-08-') && record.label === checkpointLabel)).toHaveLength(1);
+    await expect(start).toHaveCount(0);
+    await page.getByRole('link', { name: 'Dashboard', exact: true }).click();
+    await page.getByRole('link', { name: 'Patrimonio', exact: true }).click();
+    expect(nativeAmounts((await monthStartState(page)).records, '2026-08')).toEqual(expected);
+    expect(await cloudClosure('2026-07')).toEqual(closed);
+    expect((await ref.get()).get('fx')).toEqual(liveRates);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+    await attachEvidence(testInfo, { closed, carried, beforeAccept, started, reloaded, expected });
+    await networkGuard.assertClean(testInfo);
+    expect(pageErrors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+}
+
 test.beforeEach(async () => {
   const db = emulatorDb();
   const ref = db.doc(`aurum_wealth/${uid}`);
@@ -109,6 +278,13 @@ async function prepare(page: Page, monthKey = '2026-07') {
     return records.filter((record: { snapshotDate?: string }) => record.snapshotDate?.startsWith(`${targetMonth}-`)).length;
   }, monthKey), { message: `Synthetic records for ${monthKey} must hydrate before closing` }).toBeGreaterThan(0);
   await expect(page.getByRole('button', { name: 'Cerrar mes', exact: true })).toBeVisible();
+  // These optional instruments are created after cloud hydration. Read their
+  // final IDs before configuring this close fixture, not an intermediate list.
+  await expect.poll(() => page.evaluate(() => {
+    const instruments = JSON.parse(window.localStorage.getItem('wealth_investment_instruments_v1') || '[]');
+    return ['Capital de riesgo CLP', 'Capital de riesgo USD'].every((label) =>
+      instruments.some((instrument: { label: string }) => instrument.label === label));
+  }), { message: 'Default instruments must finish initializing before configuring the close fixture' }).toBe(true);
   await page.evaluate(() => {
     const config = JSON.parse(window.localStorage.getItem('aurum.closing.config.v1') || '{"rules":{}}');
     const instruments = JSON.parse(window.localStorage.getItem('wealth_investment_instruments_v1') || '[]');

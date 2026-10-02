@@ -31,6 +31,25 @@ const makeClosure = (monthKey: string, id: string, closedAt: string): WealthMont
 });
 
 describe('wealth storage closures merge', () => {
+  it('does not create a replacement version when synchronizing the identical frozen closure', () => {
+    const closure = makeClosure('2026-07', 'july', '2026-08-01T12:00:00.000Z');
+    const previous = makeClosure('2026-07', 'july-original', '2026-07-31T12:00:00.000Z');
+    closure.previousVersions = [previous];
+    const merged = mergeClosuresForSync([closure], [structuredClone(closure)]);
+    expect(merged).toEqual([closure]);
+    expect(mergeClosuresForSync(merged, [structuredClone(closure)])).toEqual([closure]);
+  });
+
+  it('preserves a different financial snapshot even when its id and timestamp match', () => {
+    const local = makeClosure('2026-07', 'july', '2026-08-01T12:00:00.000Z');
+    const remote = structuredClone(local);
+    remote.summary.netConsolidatedClp = 1000;
+    const merged = mergeClosuresForSync([local], [remote]);
+    expect(merged[0].summary.netConsolidatedClp).toBe(1000);
+    expect(merged[0].previousVersions).toHaveLength(1);
+    expect(merged[0].previousVersions?.[0].summary.netConsolidatedClp).toBe(0);
+  });
+
   it('detects a newer local revision before an in-flight cloud write', () => {
     expect(isWealthCloudWriteStale('2026-07-13T10:00:00.001Z', '2026-07-13T10:00:00.001Z')).toBe(false);
     expect(isWealthCloudWriteStale('2026-07-13T10:00:00.001Z', '2026-07-13T10:00:00.002Z')).toBe(true);

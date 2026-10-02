@@ -5819,7 +5819,11 @@ export const mergeClosuresForSync = (
     const mergedVersions = mergeClosureVersions(
       newer.previousVersions,
       older.previousVersions,
-      [toClosureVersion(older, newer.closedAt)],
+      // Hydration merges both copies of the same frozen close. An identical
+      // payload is not an edit and must not become its own previous version.
+      confirmedClosureMismatchFields(older, newer).length
+        ? [toClosureVersion(older, newer.closedAt)]
+        : [],
     );
     map.set(
       key,
