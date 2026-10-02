@@ -6371,38 +6371,39 @@ export const Patrimonio: React.FC = () => {
       setCloseError(message);
       return { ok: false, errorMessage: message };
     }
-    if (targetMonthKey === monthKey) {
-      const liveRecordsForClose = buildCanonicalCloseTargetRecords(records, targetMonthKey);
-      const storedRecordsForClose = buildCanonicalCloseTargetRecords(loadWealthRecords(), targetMonthKey);
-      const liveAmounts = computeWealthHomeSectionAmounts(
-        resolveRiskCapitalRecordsForTotals(liveRecordsForClose, includeRiskCapitalInTotals).recordsForTotals,
-        fxForClose,
-      );
-      const storedAmounts = computeWealthHomeSectionAmounts(
-        resolveRiskCapitalRecordsForTotals(storedRecordsForClose, includeRiskCapitalInTotals).recordsForTotals,
-        fxForClose,
-      );
-      const hasMultipleDebtDetails = storedRecordsForClose.filter(
-        (record) =>
-          record.block === 'debt' &&
-          isNonMortgageDebtRecord(record) &&
-          !isAggregateNonMortgageDebtRecord(record) &&
-          !isMortgageMetaDebtLabel(record.label),
-      ).length > 1;
-      const previewDebtClp = Math.abs(Number(closePreview.nonMortgageDebt || 0));
-      const liveDebtClp = Math.abs(Number(liveAmounts.nonMortgageDebt || 0));
-      const storedDebtClp = Math.abs(Number(storedAmounts.nonMortgageDebt || 0));
-      const previewMatchesLiveRecords =
-        Math.abs(previewDebtClp - liveDebtClp) <= MONTHLY_CLOSE_DEBT_GUARD_TOLERANCE_CLP;
-      const storedDebtDiffersFromPreview =
-        Math.abs(previewDebtClp - storedDebtClp) > MONTHLY_CLOSE_DEBT_GUARD_TOLERANCE_CLP;
+    // Compare the selected month itself, including historical overwrites. A
+    // stale local cache must never replace multiple debt details with a
+    // different subtotal just because the selected month is not operational.
+    const liveRecordsForClose = buildCanonicalCloseTargetRecords(records, targetMonthKey);
+    const storedRecordsForClose = buildCanonicalCloseTargetRecords(loadWealthRecords(), targetMonthKey);
+    const liveAmounts = computeWealthHomeSectionAmounts(
+      resolveRiskCapitalRecordsForTotals(liveRecordsForClose, includeRiskCapitalInTotals).recordsForTotals,
+      fxForClose,
+    );
+    const storedAmounts = computeWealthHomeSectionAmounts(
+      resolveRiskCapitalRecordsForTotals(storedRecordsForClose, includeRiskCapitalInTotals).recordsForTotals,
+      fxForClose,
+    );
+    const hasMultipleDebtDetails = storedRecordsForClose.filter(
+      (record) =>
+        record.block === 'debt' &&
+        isNonMortgageDebtRecord(record) &&
+        !isAggregateNonMortgageDebtRecord(record) &&
+        !isMortgageMetaDebtLabel(record.label),
+    ).length > 1;
+    const previewDebtClp = Math.abs(Number(closePreview.nonMortgageDebt || 0));
+    const liveDebtClp = Math.abs(Number(liveAmounts.nonMortgageDebt || 0));
+    const storedDebtClp = Math.abs(Number(storedAmounts.nonMortgageDebt || 0));
+    const previewMatchesLiveRecords =
+      Math.abs(previewDebtClp - liveDebtClp) <= MONTHLY_CLOSE_DEBT_GUARD_TOLERANCE_CLP;
+    const storedDebtDiffersFromPreview =
+      Math.abs(previewDebtClp - storedDebtClp) > MONTHLY_CLOSE_DEBT_GUARD_TOLERANCE_CLP;
 
-      if (hasMultipleDebtDetails && previewMatchesLiveRecords && storedDebtDiffersFromPreview) {
-        const message = 'Los datos de deuda guardados cambiaron desde que se mostró el preview. No cerré el mes; revisa las deudas y vuelve a confirmar.';
-        setCloseInfo('');
-        setCloseError(message);
-        return { ok: false, errorMessage: message };
-      }
+    if (hasMultipleDebtDetails && previewMatchesLiveRecords && storedDebtDiffersFromPreview) {
+      const message = 'Los datos de deuda guardados cambiaron desde que se mostró el preview. No cerré el mes; revisa las deudas y vuelve a confirmar.';
+      setCloseInfo('');
+      setCloseError(message);
+      return { ok: false, errorMessage: message };
     }
     await refreshGastappMonthlyContable();
     const gastappExpenseClose = resolveGastappMonthlyCloseCandidate(targetMonthKey, {

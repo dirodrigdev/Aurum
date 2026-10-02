@@ -59,11 +59,25 @@ test.afterEach(async ({ page }) => {
 async function prepare(page: Page, monthKey = '2026-07') {
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
+  const confirmationWarnings: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
-  page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()); });
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+    if (message.type() === 'warning' && (
+      message.text().includes('cloud confirmation did not match attempted closure') ||
+      message.text().includes('monthly-close-debt-guard')
+    )) {
+      confirmationWarnings.push(message.text());
+    }
+  });
   const networkGuard = await installLocalNetworkGuard(page);
   await page.addInitScript(() => {
     window.localStorage.setItem('aurum.banks.update.mode.v1', 'manual');
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    // The synthetic month can be complete or incomplete depending on the case;
+    // closure audit tests cover the close flow, not this separate reminder.
+    window.localStorage.setItem('aurum.incomplete-closure.prompt.day.v1', today);
     const rules = Object.fromEntries([
       'investments_value', 'banks_fintoc', 'tenencia', 'cards_used',
       'property_value', 'mortgage_balance', 'mortgage_amortization',
@@ -89,9 +103,11 @@ async function prepare(page: Page, monthKey = '2026-07') {
     });
   });
   await page.goto('/#/dashboard');
-  await expect(page.getByRole('button', { name: 'Omitir', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Omitir', exact: true }).click();
   await page.getByRole('link', { name: 'Patrimonio', exact: true }).click();
+  await expect.poll(() => page.evaluate((targetMonth) => {
+    const records = JSON.parse(window.localStorage.getItem('wealth_records_v1') || '[]');
+    return records.filter((record: { snapshotDate?: string }) => record.snapshotDate?.startsWith(`${targetMonth}-`)).length;
+  }, monthKey), { message: `Synthetic records for ${monthKey} must hydrate before closing` }).toBeGreaterThan(0);
   await expect(page.getByRole('button', { name: 'Cerrar mes', exact: true })).toBeVisible();
   await page.evaluate(() => {
     const config = JSON.parse(window.localStorage.getItem('aurum.closing.config.v1') || '{"rules":{}}');
@@ -114,7 +130,7 @@ async function prepare(page: Page, monthKey = '2026-07') {
     await manual.check();
     await modal.getByRole('checkbox', { name: /tasas utilizadas corresponden al cierre económico/i }).check();
   }
-  return { modal, networkGuard, pageErrors, consoleErrors };
+  return { modal, networkGuard, pageErrors, consoleErrors, confirmationWarnings };
 }
 
 async function previewAmounts(modal: Locator) {
@@ -134,7 +150,10 @@ async function confirm(page: Page, modal: Locator, overwrite = false) {
   await modal.getByRole('button', { name: /Confirmar cierre|Cerrar con arrastres|Sobrescribir/ }).click();
   if (overwrite) await page.getByRole('button', { name: 'Reemplazar cierre', exact: true }).click();
   try {
-    await expect(page.getByRole('button', { name: 'Cerrar ventana', exact: true })).toBeVisible();
+    const closeSummaryButton = page.getByRole('button', { name: 'Cerrar ventana', exact: true });
+    await expect(closeSummaryButton).toBeAttached();
+    await closeSummaryButton.scrollIntoViewIfNeeded();
+    await expect(closeSummaryButton).toBeVisible();
   } catch (error) {
     const monthKey = await modal.locator('input[type="month"]').inputValue().catch(() => 'unknown');
     const closeError = await modal.locator('.border-red-200.bg-red-50').last().innerText().catch(() => 'no visible close error');
@@ -208,7 +227,7 @@ test('blocks stale multi-debt data instead of inflating the close [close audit]'
     };
   });
   await ref.update({ records, closures });
-  const { modal, networkGuard } = await prepare(page);
+  const { modal, networkGuard, confirmationWarnings } = await prepare(page);
   const preview = await previewAmounts(modal);
   expect(preview.nonMortgageDebtClp).toBe(5_000_000);
   // Inject an explicitly stale local cache without changing the React preview.
@@ -219,6 +238,14 @@ test('blocks stale multi-debt data instead of inflating the close [close audit]'
       if (record.id === 'audit-debt-a' || record.id === 'audit-debt-b') record.amount = 1_000_000;
     }
     window.localStorage.setItem('wealth_records_v1', JSON.stringify(records));
+  });
+  const cachedDebtBeforeConfirmation = await page.evaluate(() => {
+    const records = JSON.parse(window.localStorage.getItem('wealth_records_v1') || '[]');
+    return records
+      .filter((record: { id?: string }) => record.id === 'audit-debt-a' || record.id === 'audit-debt-b')
+      .map((record: { id: string; label: string; amount: number; block: string }) => ({
+        id: record.id, label: record.label, amount: record.amount, block: record.block,
+      }));
   });
   await modal.getByRole('button', { name: /Confirmar cierre|Cerrar con arrastres|Sobrescribir/ }).click();
   const successButton = page.getByRole('button', { name: 'Cerrar ventana', exact: true });
@@ -238,6 +265,8 @@ test('blocks stale multi-debt data instead of inflating the close [close audit]'
     savedSummary: saved?.summary || null,
     savedDebtRecords: saved?.records?.filter((record: { block: string }) => record.block === 'debt') || [],
     cloudDebtRecordsAfterAttempt: afterDebtRecords,
+    cachedDebtBeforeConfirmation,
+    confirmationWarnings,
   });
   if (
     outcome.kind === 'error' &&
@@ -251,10 +280,13 @@ test('blocks stale multi-debt data instead of inflating the close [close audit]'
     await networkGuard.assertClean(testInfo);
     return;
   }
-  expect(outcome.kind, `Customer close failed: ${outcome.message}; sync issue: ${currentSyncIssue || 'none'}`).toBe('success');
+  expect(outcome.kind, `Customer close failed: ${outcome.message}; sync issue: ${currentSyncIssue || 'none'}; confirmation details: ${confirmationWarnings.join(' | ') || 'none'}`).toBe('success');
   expect(saved, 'Successful close must be present in cloud').not.toBeNull();
   await networkGuard.assertClean(testInfo);
-  expect(saved.summary.nonMortgageDebtClp, 'Saving must retain the confirmed debt total or block; never silently add debt').toBe(preview.nonMortgageDebtClp);
+  expect(
+    saved.summary.nonMortgageDebtClp,
+    `Saving must retain the confirmed debt total or block; never silently add debt. preview=${preview.nonMortgageDebtClp}; saved=${JSON.stringify(saved.records.filter((record: { block: string }) => record.block === 'debt'))}; cache=${JSON.stringify(cachedDebtBeforeConfirmation)}; warnings=${confirmationWarnings.join(' | ') || 'none'}`,
+  ).toBe(preview.nonMortgageDebtClp);
 });
 
 for (const viewport of [
@@ -272,6 +304,9 @@ for (const viewport of [
     await page.screenshot({ path: testInfo.outputPath(`close-preview-${viewport.name}.png`) });
     const action = modal.getByRole('button', { name: /Confirmar cierre|Cerrar con arrastres/ });
     await action.scrollIntoViewIfNeeded();
+    if (!(await action.isEnabled())) {
+      throw new Error(`Close confirmation is disabled on ${viewport.name}: ${await modal.innerText()}`);
+    }
     await expect(action).toBeEnabled();
     const actionTextFits = await action.evaluate((button) => button.scrollHeight <= button.clientHeight + 1);
     expect(actionTextFits, 'Close action label must not be clipped in the modal').toBe(true);

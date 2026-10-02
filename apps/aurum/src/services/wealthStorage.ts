@@ -5875,6 +5875,41 @@ const serializeClosure = (c: WealthMonthlyClosure) =>
     })),
   });
 
+const stableJson = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+};
+
+const serializeConfirmedClosure = (closure: WealthMonthlyClosure) => ({
+    id: closure.id,
+    monthKey: closure.monthKey,
+    closedAt: closure.closedAt,
+    fxRates: closure.fxRates || null,
+    fxMetadata: closure.fxMetadata || null,
+    fxMissing: closure.fxMissing || null,
+    gastappExpenseClose: closure.gastappExpenseClose || null,
+    records: (closure.records || []).map(serializeRecord).sort(),
+    summary: closure.summary,
+  });
+
+const confirmedClosureMismatchFields = (
+  expected: WealthMonthlyClosure,
+  persisted: WealthMonthlyClosure | null,
+) => {
+  if (!persisted) return ['missing'];
+  const expectedFields = serializeConfirmedClosure(expected);
+  const persistedFields = serializeConfirmedClosure(persisted);
+  return (Object.keys(expectedFields) as Array<keyof typeof expectedFields>).filter(
+    (field) => stableJson(expectedFields[field]) !== stableJson(persistedFields[field]),
+  );
+};
+
 const sameClosures = (a: WealthMonthlyClosure[], b: WealthMonthlyClosure[]) => {
   if (a.length !== b.length) return false;
   const sa = [...a]
@@ -6054,9 +6089,16 @@ export const closeMonthlyWithCheckpoint = async (input: {
           verificationError,
         );
       }
-      if (cloudVerificationCompleted && !persisted) {
+      const mismatchFields = cloudVerificationCompleted
+        ? confirmedClosureMismatchFields(closure, persisted)
+        : [];
+      if (mismatchFields.length) {
+        console.warn('[Aurum][monthly-close] cloud confirmation did not match attempted closure', {
+          monthKey: normalizedMonthKey,
+          mismatchFields,
+        });
         throw new Error(
-          `El cierre no quedó guardado. No se actualizó el historial. La nube no confirmó el mes ${normalizedMonthKey}.`,
+          `El cierre no quedó guardado. No se actualizó el historial. La nube no confirmó los valores del cierre concreto del mes ${normalizedMonthKey}.`,
         );
       }
     }
