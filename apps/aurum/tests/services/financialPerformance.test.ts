@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   financialPerformancePeriodKey,
   isFinancialPerformancePeriodValid,
+  listFinancialPerformancePeriods,
   PERFORMANCE_FINAL_MONTH,
   PERFORMANCE_INITIAL_MONTH,
   reconcileFinancialPerformance,
   reconcileFinancialPerformanceForPeriod,
+  selectFinancialPerformanceClosure,
   type FinancialPerformancePeriod,
   type FinancialPerformanceConfirmation,
 } from '../../src/services/financialPerformance';
@@ -81,6 +83,62 @@ const makeClosure = (
     records,
   };
 };
+
+describe('financial performance period discovery', () => {
+  const closedMonth = (monthKey: string, records: WealthRecord[] = [makeRecord({ label: 'Fondo', amount: 100 })], id = monthKey) => ({
+    ...makeClosure(monthKey, records),
+    id,
+    closedAt: `${monthKey}-28T23:59:00.000Z`,
+  });
+
+  it('returns only consecutive historical months with detailed positions and chooses the latest version', () => {
+    const olderFebruary = closedMonth('2024-02', [makeRecord({ label: 'Fondo anterior', amount: 90 })], 'feb-old');
+    olderFebruary.closedAt = '2024-02-25T23:59:00.000Z';
+    const latestFebruary = closedMonth('2024-02', [makeRecord({ label: 'Fondo actualizado', amount: 100 })], 'feb-new');
+    latestFebruary.closedAt = '2024-02-29T23:59:00.000Z';
+    const olderDetailedMay = closedMonth('2024-05', [makeRecord({ label: 'Fondo mayo', amount: 100 })], 'may-detailed');
+    olderDetailedMay.closedAt = '2024-05-27T23:59:00.000Z';
+    const latestSummaryMay = closedMonth('2024-05', [], 'may-summary');
+    latestSummaryMay.closedAt = '2024-05-29T23:59:00.000Z';
+    const provisionalJune = {
+      ...closedMonth('2024-06'),
+      analysisProvisionalReason: 'gastapp_official_aurum_pending' as const,
+    };
+
+    const closures = [
+      olderDetailedMay,
+      latestSummaryMay,
+      closedMonth('2024-01'),
+      olderFebruary,
+      latestFebruary,
+      closedMonth('2024-04'),
+      closedMonth('2024-03'),
+      closedMonth('2024-07', [makeRecord({ label: 'Fondo', amount: 100 })], ''),
+      provisionalJune,
+      closedMonth('2024-13'),
+    ];
+
+    expect(listFinancialPerformancePeriods(closures)).toEqual([
+      { startMonth: '2024-01', endMonth: '2024-02' },
+      { startMonth: '2024-02', endMonth: '2024-03' },
+      { startMonth: '2024-03', endMonth: '2024-04' },
+    ]);
+    expect(selectFinancialPerformanceClosure(closures, '2024-02')?.id).toBe('feb-new');
+    expect(selectFinancialPerformanceClosure(closures, '2024-05')).toBeNull();
+  });
+
+  it('includes a month represented only by CapRiesgo only when that perimeter is selected', () => {
+    const closures = [
+      closedMonth('2024-01', [makeRecord({ label: 'Fondo base', amount: 100 })]),
+      closedMonth('2024-02', [makeRecord({ label: RISK_CAPITAL_LABELS[0], amount: 25 })]),
+    ];
+
+    expect(listFinancialPerformancePeriods(closures, false)).toEqual([]);
+    expect(listFinancialPerformancePeriods(closures, true)).toEqual([
+      { startMonth: '2024-01', endMonth: '2024-02' },
+    ]);
+  });
+});
 
 const closedZeroFlows: FinancialPerformanceConfirmation = {
   schemaVersion: 1,
@@ -297,10 +355,26 @@ describe('reconcileFinancialPerformance', () => {
   });
 
   it('uses a simple return only after an explicit complete zero-flow confirmation', () => {
-    const result = run([makeRecord({ label: 'Fondo', amount: 100 })], [makeRecord({ label: 'Fondo', amount: 105 })], closedZeroFlows);
+    const confirmation = {
+      ...closedZeroFlows,
+      positionMovementCompleteness: 'no_unrecorded_movements' as const,
+    };
+    const result = run([makeRecord({ label: 'Fondo', amount: 100 })], [makeRecord({ label: 'Fondo', amount: 105 })], confirmation);
     expect(result.returnPct).toBeCloseTo(0.05);
     expect(result.returnMethod).toBe('simple');
     expect(result.quality).toBe('RECONSTRUIDO');
+  });
+
+  it('keeps quality indicative when flows are complete but position movements are unconfirmed', () => {
+    const result = run(
+      [makeRecord({ label: 'Fondo', amount: 100 })],
+      [makeRecord({ label: 'Fondo', amount: 105 })],
+      closedZeroFlows,
+    );
+    expect(result.returnPct).toBeCloseTo(0.05);
+    expect(result.returnMethod).toBe('simple');
+    expect(result.quality).toBe('INDICATIVO');
+    expect(result.qualityReason).toContain('falta confirmar los movimientos de posiciones');
   });
 
   it('uses the adjusted simple return for a contribution at the closing boundary', () => {
@@ -315,7 +389,11 @@ describe('reconcileFinancialPerformance', () => {
   });
 
   it('does not publish return for an unconfirmed suspected contribution', () => {
-    const confirmation: FinancialPerformanceConfirmation = { ...closedZeroFlows, flowCompleteness: 'incomplete' };
+    const confirmation: FinancialPerformanceConfirmation = {
+      ...closedZeroFlows,
+      flowCompleteness: 'incomplete',
+      positionMovementCompleteness: 'no_unrecorded_movements',
+    };
     const result = run([makeRecord({ label: 'Fondo', amount: 100 })], [makeRecord({ label: 'Fondo', amount: 115 })], confirmation);
     expect(result.returnPct).toBeNull();
     expect(result.portfolioResult).toBeNull();

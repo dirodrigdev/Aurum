@@ -1,5 +1,6 @@
 import {
   dedupeLatestByAsset,
+  currentMonthKey,
   isRiskCapitalInvestmentLabel,
   isSyntheticAggregateRecord,
   makeAssetKey,
@@ -63,6 +64,74 @@ export const isFinancialPerformancePeriodValid = (period: unknown): period is Fi
 /** The end month is a unique key for a valid consecutive monthly interval. */
 export const financialPerformancePeriodKey = (period: FinancialPerformancePeriod): string | null =>
   isFinancialPerformancePeriodValid(period) ? period.endMonth : null;
+
+const hasDetailedInvestmentPositions = (
+  closure: WealthMonthlyClosure,
+  includeRiskCapital: boolean,
+): boolean => Array.isArray(closure.records) && dedupeLatestByAsset(closure.records).some((record) => {
+  if (record.block !== 'investment' || isSyntheticAggregateRecord(record)) return false;
+  return includeRiskCapital || !isRiskCapitalInvestmentLabel(record.label);
+});
+
+const isEligibleHistoricalClosure = (
+  closure: WealthMonthlyClosure,
+  currentMonth: string,
+): boolean => Boolean(
+  closure.monthKey < currentMonth &&
+    !closure.analysisProvisionalReason &&
+    closure.id?.trim() &&
+    closure.closedAt?.trim() &&
+    parseMonthKey(closure.monthKey),
+);
+
+const latestClosedClosuresByMonth = (
+  closures: WealthMonthlyClosure[],
+): Map<string, WealthMonthlyClosure> => {
+  const currentMonth = currentMonthKey();
+  const byMonth = new Map<string, WealthMonthlyClosure>();
+  for (const closure of closures) {
+    if (!isEligibleHistoricalClosure(closure, currentMonth)) continue;
+    const previous = byMonth.get(closure.monthKey);
+    if (!previous || closure.closedAt.localeCompare(previous.closedAt) > 0) {
+      byMonth.set(closure.monthKey, closure);
+    }
+  }
+  return byMonth;
+};
+
+const latestDetailedClosuresByMonth = (
+  closures: WealthMonthlyClosure[],
+  includeRiskCapital: boolean,
+): Map<string, WealthMonthlyClosure> => new Map(
+  [...latestClosedClosuresByMonth(closures)].filter(([, closure]) =>
+    hasDetailedInvestmentPositions(closure, includeRiskCapital)),
+);
+
+/** Selects the same latest detailed closure used to build the period list. */
+export const selectFinancialPerformanceClosure = (
+  closures: WealthMonthlyClosure[],
+  monthKey: string,
+  includeRiskCapital = false,
+): WealthMonthlyClosure | null =>
+  latestDetailedClosuresByMonth(closures, includeRiskCapital).get(monthKey) || null;
+
+/** Lists consecutive closed months with detailed positions in the selected perimeter. */
+export const listFinancialPerformancePeriods = (
+  closures: WealthMonthlyClosure[],
+  includeRiskCapital = false,
+): FinancialPerformancePeriod[] => {
+  const byMonth = latestDetailedClosuresByMonth(closures, includeRiskCapital);
+  const months = [...byMonth.keys()].sort();
+  const periods: FinancialPerformancePeriod[] = [];
+  for (let index = 1; index < months.length; index += 1) {
+    const startMonth = months[index - 1];
+    const endMonth = months[index];
+    if (isFinancialPerformancePeriodValid({ startMonth, endMonth })) {
+      periods.push({ startMonth, endMonth });
+    }
+  }
+  return periods;
+};
 
 export type PerformanceQuality = 'EXACTO' | 'RECONSTRUIDO' | 'INDICATIVO' | 'INSUFICIENTE';
 export type FlowCompleteness = 'complete' | 'incomplete';
@@ -549,12 +618,19 @@ export const reconcileFinancialPerformanceForPeriod = (
     (fxAttributable ?? 0) -
     (ufAttributable ?? 0);
 
-  const quality: PerformanceQuality = flowListComplete ? 'RECONSTRUIDO' : 'INDICATIVO';
+  const positionMovementsComplete = Boolean(
+    flowListComplete &&
+      input.confirmation?.positionMovementCompleteness === 'no_unrecorded_movements',
+  );
+  const quality: PerformanceQuality =
+    flowListComplete && positionMovementsComplete ? 'RECONSTRUIDO' : 'INDICATIVO';
   const qualityReason = invalidFlow
     ? 'La confirmación contiene datos inválidos o fuera del intervalo; no se publica retorno.'
-    : flowListComplete
-      ? `Cierres detallados comparables (${period.startMonth} → ${period.endMonth}) y lista de flujos externos confirmada como completa.`
-      : `Los cierres ${period.startMonth} → ${period.endMonth} son comparables, pero la lista de flujos externos no está confirmada como completa.`;
+    : !flowListComplete
+      ? `Los cierres ${period.startMonth} → ${period.endMonth} son comparables, pero la lista de flujos externos no está confirmada como completa.`
+      : !positionMovementsComplete
+        ? `La lista de flujos externos está completa para ${period.startMonth} → ${period.endMonth}, pero falta confirmar los movimientos de posiciones no registrados.`
+        : `Cierres detallados comparables (${period.startMonth} → ${period.endMonth}), lista de flujos externos completa y movimientos de posiciones no registrados confirmados.`;
 
   return {
     period: { ...period },
