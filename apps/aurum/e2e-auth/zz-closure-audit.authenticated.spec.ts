@@ -91,7 +91,7 @@ test('preflight summary check remains readable across viewports', async ({ page 
   expect(consoleErrors).toEqual([]);
 });
 
-test('accepting a certified GastApp revision updates the whole Aurum chain without rewriting the close', async ({ page }, testInfo) => {
+test('a certified GastApp revision updates the whole Aurum chain automatically and only asks for read acknowledgement', async ({ page }, testInfo) => {
   await page.clock.setFixedTime(new Date('2026-07-31T12:00:00.000Z'));
   const { modal, networkGuard, pageErrors, consoleErrors } = await prepare(page);
   await confirm(page, modal);
@@ -144,14 +144,13 @@ test('accepting a certified GastApp revision updates the whole Aurum chain witho
     });
   }, { closures: root.closures, previous: previousSnapshot, template: originalClosure.gastappExpenseClose });
   await ref.update({ closures: seededClosures });
-  await page.evaluate((closures) => window.localStorage.setItem('wealth_closures_v1', JSON.stringify(closures)), seededClosures);
-  await page.reload();
-  await page.goto('/#/patrimonio');
-  await expect(page.getByRole('button', { name: 'Cerrar mes', exact: true })).toBeVisible();
-  await expect.poll(() => page.evaluate(() => {
-    const closures = JSON.parse(window.localStorage.getItem('wealth_closures_v1') || '[]');
-    return closures.find((closure: { monthKey: string }) => closure.monthKey === '2026-07')?.gastappExpenseClose?.contractHash || null;
-  })).toBe(previousSnapshot.contractHash);
+  await page.evaluate((closures) => {
+    window.localStorage.setItem('wealth_closures_v1', JSON.stringify(closures));
+    window.localStorage.removeItem('aurum.gastapp.revision.notice.ack.v1');
+  }, seededClosures);
+
+  // Mount Analysis before Patrimonio sees the new certified GastApp revision.
+  // This proves the already-open consumer receives the automatic cloud update.
   const analysisPage = await page.context().newPage();
   await analysisPage.clock.setFixedTime(new Date('2026-07-31T12:00:00.000Z'));
   analysisPage.on('pageerror', (error) => pageErrors.push(error.message));
@@ -162,45 +161,39 @@ test('accepting a certified GastApp revision updates the whole Aurum chain witho
   const julyRow = analysisPage.getByRole('row').filter({ has: analysisPage.getByText('Jul 2026', { exact: true }) });
   await expect(julyRow.locator('td').nth(4)).toHaveText('2.000,00 EUR');
   const beforeChain = await readAcceptedChain(analysisPage);
-  const revisionAlert = page.getByText('GastApp publicó cambios en cierres Aurum', { exact: true });
+
+  // Patrimonio now detects the certified revision and applies it without an
+  // approval button. The only user action left is acknowledging the notice.
+  await page.reload();
+  await page.goto('/#/patrimonio');
+  await expect(page.getByRole('button', { name: 'Cerrar mes', exact: true })).toBeVisible();
+  await expect.poll(async () => (await cloudClosure('2026-07')).gastappExpenseClose?.totalEur).toBe(2715);
+  const revisionAlert = page.getByText('GastApp actualizó cierres de Aurum', { exact: true });
   await expect(revisionAlert).toBeVisible();
-  await expect(page.locator('section[aria-live="polite"]').filter({ hasText: 'Gasto guardado:' })).toContainText('Gasto guardado: 2000,00 €');
-  const revisionCard = page.locator('section[aria-live="polite"]').filter({ hasText: 'Gasto guardado:' });
-  await revisionCard.getByRole('button', { name: 'Revisar impacto', exact: true }).click();
-  const comparePanel = page.getByText(/Revisión de GastApp/).last();
-  await expect(comparePanel).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Aceptar y actualizar cadena', exact: true })).toBeEnabled();
+  const revisionSection = page.locator('section[aria-live="polite"]').filter({ hasText: 'La corrección ya está aplicada.' });
+  await expect(revisionSection).toContainText('Antes: 2000,00 €');
+  await expect(revisionSection).toContainText('Ahora: 2715,00 €');
+  await expect(revisionSection).toContainText('Diferencia: 715,00 €');
+  await expect(page.getByRole('button', { name: 'Aceptar y actualizar cadena', exact: true })).toHaveCount(0);
+
+  await revisionSection.getByRole('button', { name: 'Ver detalle', exact: true }).click();
+  const detailDialog = page.getByRole('dialog', { name: 'Detalle de revisión GastApp Jul 2026' });
+  await expect(detailDialog).toBeVisible();
+  await expect(detailDialog).toContainText('La actualización ya fue aplicada');
   for (const viewport of [
     { name: 'desktop', width: 1280, height: 800 },
     { name: 'tablet', width: 768, height: 1024 },
     { name: 'mobile', width: 390, height: 844 },
   ]) {
     await page.setViewportSize(viewport);
-    const acceptButton = page.getByRole('button', { name: 'Aceptar y actualizar cadena', exact: true });
-    await acceptButton.evaluate((element) => element.scrollIntoView({ block: 'center', inline: 'nearest' }));
-    const buttonBox = await acceptButton.boundingBox();
-    expect(buttonBox).not.toBeNull();
-    expect(buttonBox!.y + buttonBox!.height).toBeLessThan(viewport.height - 80);
-    await page.screenshot({ path: testInfo.outputPath(`gastapp-revision-accept-${viewport.name}.png`) });
+    await expect(detailDialog).toBeVisible();
+    const dialogBox = await detailDialog.boundingBox();
+    expect(dialogBox).not.toBeNull();
+    expect(dialogBox!.y).toBeGreaterThanOrEqual(0);
+    expect(dialogBox!.y + dialogBox!.height).toBeLessThanOrEqual(viewport.height);
+    await page.screenshot({ path: testInfo.outputPath(`gastapp-revision-auto-${viewport.name}.png`) });
   }
-  const acceptButton = page.getByRole('button', { name: 'Aceptar y actualizar cadena', exact: true });
-  await page.evaluate((hash) => {
-    const closures = JSON.parse(window.localStorage.getItem('wealth_closures_v1') || '[]');
-    window.localStorage.setItem('wealth_closures_v1', JSON.stringify(closures.map((closure: { monthKey: string; gastappExpenseClose?: { contractHash: string } }) =>
-      closure.monthKey === '2026-07'
-        ? { ...closure, gastappExpenseClose: { ...(closure.gastappExpenseClose || {}), contractHash: hash } }
-        : closure)));
-  }, `sha256:${'c'.repeat(64)}`);
-  await acceptButton.click();
-  const staleComparisonMessage = page.getByRole('status').filter({ hasText: 'La revisión cambió o aún no está certificada' }).last();
-  await expect(staleComparisonMessage).toBeVisible();
-  await page.evaluate((snapshot) => {
-    const closures = JSON.parse(window.localStorage.getItem('wealth_closures_v1') || '[]');
-    window.localStorage.setItem('wealth_closures_v1', JSON.stringify(closures.map((closure: { monthKey: string }) =>
-      closure.monthKey === '2026-07' ? { ...closure, gastappExpenseClose: snapshot } : closure)));
-  }, previousSnapshot);
-  await acceptButton.click();
-  await expect(page.getByRole('status').filter({ hasText: 'aceptada' })).toBeVisible();
+
   const updated = await cloudClosure('2026-07');
   expect(updated.gastappExpenseClose.totalEur).toBe(2715);
   expect(updated.gastappExpenseClose.certificationRevision).toBe(1);
@@ -209,8 +202,14 @@ test('accepting a certified GastApp revision updates the whole Aurum chain witho
   expect(updated.fxRates).toEqual(originalClosure.fxRates);
   expect(updated.previousVersions.some((version: { gastappExpenseClose?: { contractHash: string; totalEur: number } }) =>
     version.gastappExpenseClose?.contractHash === previousSnapshot.contractHash && version.gastappExpenseClose.totalEur === 2000)).toBe(true);
-  // The already mounted Analysis page must receive the cloud-only snapshot
-  // change even though the close's financial identity, FX and totals did not change.
+
+  // “OK, leído” only acknowledges this exact revision; it must not mutate the close.
+  await detailDialog.getByRole('button', { name: 'OK, leído', exact: true }).click();
+  await expect(revisionAlert).toHaveCount(0);
+  expect(await cloudClosure('2026-07')).toEqual(updated);
+
+  // The mounted Analysis page receives the cloud-only snapshot change even
+  // though wealth records, the sealed summary and FX never changed.
   await expect(julyRow.locator('td').nth(4)).toHaveText('2.715,00 EUR');
   const afterChain = await readAcceptedChain(analysisPage);
   expect(afterChain.monthSpendEur).toBe(2715);
@@ -229,14 +228,12 @@ test('accepting a certified GastApp revision updates the whole Aurum chain witho
     await analysisPage.screenshot({ path: testInfo.outputPath(`gastapp-revised-analysis-${viewport.name}.png`) });
     expect(await analysisPage.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
   }
-  expect(await cloudClosure('2026-07')).toEqual(updated);
   await attachEvidence(testInfo, { beforeChain, afterChain, updated });
   await analysisGuard.assertClean(testInfo);
   await networkGuard.assertClean(testInfo);
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
 });
-
 test('accepted GastApp snapshots survive reload and match Dashboard and presentation', async ({ page }, testInfo) => {
   await page.clock.setFixedTime(new Date('2026-08-01T12:00:00.000Z'));
   const { modal, networkGuard, pageErrors, consoleErrors } = await prepare(page);
