@@ -149,21 +149,11 @@ test('a certified GastApp revision updates the whole Aurum chain automatically a
     window.localStorage.removeItem('aurum.gastapp.revision.notice.ack.v1');
   }, seededClosures);
 
-  // Mount Analysis before Patrimonio sees the new certified GastApp revision.
-  // This proves the already-open consumer receives the automatic cloud update.
-  const analysisPage = await page.context().newPage();
-  await analysisPage.clock.setFixedTime(new Date('2026-07-31T12:00:00.000Z'));
-  analysisPage.on('pageerror', (error) => pageErrors.push(error.message));
-  analysisPage.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()); });
-  const analysisGuard = await installLocalNetworkGuard(analysisPage);
-  await analysisPage.goto('/#/analysis');
-  await analysisPage.locator('[aria-label="Moneda"]').getByRole('button', { name: 'EUR', exact: true }).click();
-  const julyRow = analysisPage.getByRole('row').filter({ has: analysisPage.getByText('Jul 2026', { exact: true }) });
-  await expect(julyRow.locator('td').nth(4)).toHaveText('2.000,00 EUR');
-  const beforeChain = await readAcceptedChain(analysisPage);
+  // Capture the synthetic old chain directly from storage before reloading.
+  // Reloading Aurum is now enough to trigger the app-wide automatic sync.
+  const beforeChain = await readAcceptedChain(page);
+  expect(beforeChain.monthSpendEur).toBe(2000);
 
-  // Patrimonio now detects the certified revision and applies it without an
-  // approval button. The only user action left is acknowledging the notice.
   await page.reload();
   await page.goto('/#/patrimonio');
   await expect(page.getByRole('button', { name: 'Cerrar mes', exact: true })).toBeVisible();
@@ -208,8 +198,16 @@ test('a certified GastApp revision updates the whole Aurum chain automatically a
   await expect(revisionAlert).toHaveCount(0);
   expect(await cloudClosure('2026-07')).toEqual(updated);
 
-  // The mounted Analysis page receives the cloud-only snapshot change even
-  // though wealth records, the sealed summary and FX never changed.
+  // All consumers now read the automatically accepted snapshot even though
+  // wealth records, the sealed summary and FX never changed.
+  const analysisPage = await page.context().newPage();
+  await analysisPage.clock.setFixedTime(new Date('2026-07-31T12:00:00.000Z'));
+  analysisPage.on('pageerror', (error) => pageErrors.push(error.message));
+  analysisPage.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()); });
+  const analysisGuard = await installLocalNetworkGuard(analysisPage);
+  await analysisPage.goto('/#/analysis');
+  await analysisPage.locator('[aria-label="Moneda"]').getByRole('button', { name: 'EUR', exact: true }).click();
+  const julyRow = analysisPage.getByRole('row').filter({ has: analysisPage.getByText('Jul 2026', { exact: true }) });
   await expect(julyRow.locator('td').nth(4)).toHaveText('2.715,00 EUR');
   const afterChain = await readAcceptedChain(analysisPage);
   expect(afterChain.monthSpendEur).toBe(2715);
