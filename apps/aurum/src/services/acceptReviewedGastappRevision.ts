@@ -142,6 +142,7 @@ export const buildGastappRevisionNotices = (
 
     const previousVersion = [...(closure.previousVersions || [])]
       .filter((version) =>
+        version.id.includes(':gastapp:') &&
         Boolean(version.gastappExpenseClose) &&
         version.gastappExpenseClose!.contractHash !== currentSnapshot.contractHash,
       )
