@@ -145,7 +145,7 @@ describe('post-application GastApp revision notices', () => {
       summary: {} as never,
       gastappExpenseClose: current,
       previousVersions: [{
-        id: 'jul:prev',
+        id: 'jul:gastapp:1',
         monthKey: '2026-09',
         closedAt: '2026-09-30T23:00:00Z',
         replacedAt: '2026-10-02T12:00:00Z',
@@ -162,6 +162,27 @@ describe('post-application GastApp revision notices', () => {
     });
   });
 
+  it('ignores ordinary closure history that was not created by a GastApp revision', () => {
+    const previous = snapshot('a', 1, 2000);
+    const current = snapshot('b', 2, 2715);
+    const notices = buildGastappRevisionNotices([{
+      id: 'sep',
+      monthKey: '2026-09',
+      closedAt: '2026-09-30T23:00:00Z',
+      summary: {} as never,
+      gastappExpenseClose: current,
+      previousVersions: [{
+        id: 'sep:ordinary-reclose',
+        monthKey: '2026-09',
+        closedAt: '2026-09-30T23:00:00Z',
+        replacedAt: '2026-10-02T12:00:00Z',
+        summary: {} as never,
+        gastappExpenseClose: previous,
+      }],
+    }]);
+    expect(notices).toEqual([]);
+  });
+
   it('hides only the exact revision that the user already acknowledged', () => {
     const previous = snapshot('a', 1, 2000);
     const current = snapshot('b', 2, 2715);
@@ -172,7 +193,7 @@ describe('post-application GastApp revision notices', () => {
       summary: {} as never,
       gastappExpenseClose: current,
       previousVersions: [{
-        id: 'sep:prev', monthKey: '2026-09', closedAt: '2026-09-30T23:00:00Z',
+        id: 'sep:gastapp:1', monthKey: '2026-09', closedAt: '2026-09-30T23:00:00Z',
         replacedAt: '2026-10-02T12:00:00Z', summary: {} as never, gastappExpenseClose: previous,
       }],
     };
