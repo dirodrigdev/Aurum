@@ -187,6 +187,13 @@ export interface FinancialPerformanceResult {
   unexplainedResidual: number | null;
   fxCoveragePct: number | null;
   ufCoveragePct: number | null;
+  usdFxCoveragePct: number | null;
+  eurFxCoveragePct: number | null;
+  usdFxCoverageStatus: AttributionCoverageStatus;
+  eurFxCoverageStatus: AttributionCoverageStatus;
+  attributionComplete: boolean;
+  returnWithoutFxPct: number | null;
+  fxContributionPct: number | null;
   fxCoverageStatus: AttributionCoverageStatus;
   ufCoverageStatus: AttributionCoverageStatus;
   quality: PerformanceQuality;
@@ -427,6 +434,13 @@ const emptyResult = (period: FinancialPerformancePeriod, reason: string): Financ
   unexplainedResidual: null,
   fxCoveragePct: null,
   ufCoveragePct: null,
+  usdFxCoveragePct: null,
+  eurFxCoveragePct: null,
+  usdFxCoverageStatus: 'not_evaluated',
+  eurFxCoverageStatus: 'not_evaluated',
+  attributionComplete: false,
+  returnWithoutFxPct: null,
+  fxContributionPct: null,
   fxCoverageStatus: 'not_evaluated',
   ufCoverageStatus: 'not_evaluated',
   quality: 'INSUFICIENTE',
@@ -477,9 +491,11 @@ export const reconcileFinancialPerformanceForPeriod = (
   const endDate = monthEndDate(period.endMonth);
   if (!startDate || !endDate) return emptyResult(period, 'No pude determinar los límites económicos del período.');
 
-  const flows = Array.isArray(input.confirmation?.flows) ? input.confirmation.flows : [];
+  const perimeterMatches = !input.confirmation ||
+    (input.confirmation.perimeter ?? 'investment') === financialPerformancePerimeter(input.includeRiskCapital);
+  const flows = perimeterMatches && Array.isArray(input.confirmation?.flows) ? input.confirmation.flows : [];
   const invalidFlow = Boolean(
-    input.confirmation && !isFinancialPerformanceConfirmationValid(input.confirmation, period),
+    input.confirmation && (!perimeterMatches || !isFinancialPerformanceConfirmationValid(input.confirmation, period)),
   );
   const flowListComplete =
     Boolean(input.confirmation) &&
@@ -502,6 +518,9 @@ export const reconcileFinancialPerformanceForPeriod = (
   let ufAttributable: number | null = null;
   let fxCoveredClp = 0;
   let fxTotalClp = 0;
+  let usdCoveredClp = 0;
+  let eurCoveredClp = 0;
+  let attributedPositions = 0;
   let usdTotalClp = 0;
   let eurTotalClp = 0;
   let ufCoveredClp = 0;
@@ -563,11 +582,14 @@ export const reconcileFinancialPerformanceForPeriod = (
         if (currency === 'USD') {
           usdFxTotal += fxContribution;
           hasUsdFxCoverage = true;
+          usdCoveredClp += averageExposure;
         } else {
           eurFxTotal += fxContribution;
           hasEurFxCoverage = true;
+          eurCoveredClp += averageExposure;
         }
         fxCoveredClp += averageExposure;
+        attributedPositions += 1;
         hasInvestmentCoverage = true;
         hasFxCoverage = true;
       } else if (currency === 'UF') {
@@ -584,10 +606,12 @@ export const reconcileFinancialPerformanceForPeriod = (
         investmentTotal += (final.nativeValue - initial.nativeValue) * startRate;
         ufTotal += final.nativeValue * (endRate - startRate);
         ufCoveredClp += averageExposure;
+        attributedPositions += 1;
         hasInvestmentCoverage = true;
         hasUfCoverage = true;
       } else if (initial && final && initial.currency === 'CLP' && final.currency === 'CLP') {
         investmentTotal += final.nativeValue - initial.nativeValue;
+        attributedPositions += 1;
         hasInvestmentCoverage = true;
       }
     }
@@ -619,12 +643,27 @@ export const reconcileFinancialPerformanceForPeriod = (
   const ufCoveragePct = ufCoverageStatus === 'evaluated' && ufTotalClp > 0
     ? Math.min(100, (ufCoveredClp / ufTotalClp) * 100)
     : null;
+  const currencyCoverageStatus = (exposure: number): AttributionCoverageStatus =>
+    exposure === 0 ? 'no_exposure' : canAttributePositions ? 'evaluated' : 'not_evaluated';
+  const usdFxCoverageStatus = currencyCoverageStatus(usdTotalClp);
+  const eurFxCoverageStatus = currencyCoverageStatus(eurTotalClp);
+  const usdFxCoveragePct = usdFxCoverageStatus === 'evaluated' ? Math.min(100, usdCoveredClp / usdTotalClp * 100) : null;
+  const eurFxCoveragePct = eurFxCoverageStatus === 'evaluated' ? Math.min(100, eurCoveredClp / eurTotalClp * 100) : null;
   const unexplainedResidual =
     observedChange -
     confirmedFlowsNetClp -
     (investmentAttributable ?? 0) -
     (fxAttributable ?? 0) -
     (ufAttributable ?? 0);
+
+  // One cent of CLP is a numerical tolerance, never the rounded value shown by the UI.
+  // A zero residue alone is insufficient: unmatched positions can cancel each other.
+  const attributionComplete = canAttributePositions && attributedPositions === allKeys.size &&
+    Number.isFinite(unexplainedResidual) && Math.abs(unexplainedResidual) <= 0.01;
+  const returnWithoutFxPct = attributionComplete && start.totalClp > 0
+    ? ((investmentAttributable ?? 0) + (ufAttributable ?? 0)) / start.totalClp : null;
+  const fxContributionPct = attributionComplete && start.totalClp > 0
+    ? (fxAttributable ?? 0) / start.totalClp : null;
 
   const positionMovementsComplete = Boolean(
     flowListComplete &&
@@ -660,6 +699,13 @@ export const reconcileFinancialPerformanceForPeriod = (
     unexplainedResidual,
     fxCoveragePct,
     ufCoveragePct,
+    usdFxCoveragePct,
+    eurFxCoveragePct,
+    usdFxCoverageStatus,
+    eurFxCoverageStatus,
+    attributionComplete,
+    returnWithoutFxPct,
+    fxContributionPct,
     fxCoverageStatus,
     ufCoverageStatus,
     quality,

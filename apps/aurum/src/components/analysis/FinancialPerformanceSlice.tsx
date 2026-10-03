@@ -3,6 +3,7 @@ import { ChevronDown, Plus, Trash2 } from 'lucide-react';
 import { Card, cn } from '../Components';
 import {
   MAX_FINANCIAL_PERFORMANCE_FLOWS,
+  financialPerformancePerimeter,
   isFinancialPerformanceConfirmationValid,
   reconcileFinancialPerformanceForPeriod,
   selectFinancialPerformanceClosure,
@@ -73,7 +74,7 @@ export const FinancialPerformanceSlice: React.FC<{
   const [storageReady, setStorageReady] = useState(false);
   const [storageError, setStorageError] = useState('');
   const [draftError, setDraftError] = useState('');
-  const canConfirmSelectedPerimeter = !includeRiskCapital;
+  const perimeter = financialPerformancePerimeter(includeRiskCapital);
 
   useEffect(() => {
     activeContext.current = true;
@@ -82,20 +83,12 @@ export const FinancialPerformanceSlice: React.FC<{
 
   useEffect(() => {
     let active = true;
-    if (!canConfirmSelectedPerimeter) {
-      setConfirmation(null);
-      setDraft(emptyConfirmationDraft(period.endMonth));
-      setStorageReady(false);
-      setStorageError('');
-      setIsLoading(false);
-      return () => { active = false; };
-    }
     setIsLoading(true);
     setConfirmation(null);
     if (loadAttempt === 0) setDraft(emptyConfirmationDraft(period.endMonth));
     setStorageReady(false);
     setStorageError('');
-    void loadFinancialPerformanceConfirmation(period, uid ? { expectedUid: uid } : {})
+    void loadFinancialPerformanceConfirmation(period, uid ? { expectedUid: uid, perimeter } : { perimeter })
       .then((loaded) => {
         if (!active) return;
         setConfirmation(loaded);
@@ -116,7 +109,7 @@ export const FinancialPerformanceSlice: React.FC<{
     return () => {
       active = false;
     };
-  }, [canConfirmSelectedPerimeter, period.endMonth, period.startMonth, uid, loadAttempt]);
+  }, [period.endMonth, period.startMonth, uid, loadAttempt, perimeter]);
 
   const persistedDraft = useMemo(() => toConfirmationDraft(confirmation, period.endMonth), [confirmation, period.endMonth]);
   const isDraftDirty =
@@ -153,10 +146,10 @@ export const FinancialPerformanceSlice: React.FC<{
       period,
       initialClosure: selectFinancialPerformanceClosure(closures, period.startMonth, includeRiskCapital),
       finalClosure: selectFinancialPerformanceClosure(closures, period.endMonth, includeRiskCapital),
-      confirmation: canConfirmSelectedPerimeter ? confirmation : null,
+      confirmation,
       includeRiskCapital,
     }),
-    [closures, confirmation, includeRiskCapital, canConfirmSelectedPerimeter, period],
+    [closures, confirmation, includeRiskCapital, period],
   );
 
   const persistDraft = async (nextDraft: ConfirmationDraft) => {
@@ -164,6 +157,7 @@ export const FinancialPerformanceSlice: React.FC<{
     const confirmationInput: FinancialPerformanceConfirmation = {
       schemaVersion: 1,
       monthKey: period.endMonth,
+      perimeter,
       flowCompleteness: nextDraft.flowCompleteness,
       positionMovementCompleteness: nextDraft.positionMovementCompleteness,
       flows: nextDraft.flows.map((flow) => ({
@@ -173,7 +167,6 @@ export const FinancialPerformanceSlice: React.FC<{
         ...(flow.reference?.trim() ? { reference: flow.reference.trim() } : { reference: undefined }),
       })),
     };
-    if (!canConfirmSelectedPerimeter) return;
     if (!isFinancialPerformanceConfirmationValid(confirmationInput, period)) {
       setDraftError('Revisa que cada movimiento tenga tipo, fecha válida del período y monto CLP mayor que cero.');
       return;
@@ -182,7 +175,7 @@ export const FinancialPerformanceSlice: React.FC<{
     savingRef.current = true;
     setDraftError('');
     try {
-      const saved = await appendFinancialPerformanceConfirmation(confirmationInput, period, { expectedUid: uid });
+      const saved = await appendFinancialPerformanceConfirmation(confirmationInput, period, { expectedUid: uid, perimeter });
       if (!activeContext.current || getCurrentUid() !== uid) return;
       setConfirmation(saved);
       setDraft(toConfirmationDraft(saved, period.endMonth));
@@ -265,7 +258,7 @@ export const FinancialPerformanceSlice: React.FC<{
     : confirmation?.flows.length
       ? `parcial ${formatFreedomCompactClp(result.confirmedFlowsNetClp)}`
       : 'sin confirmar';
-  const moneyValue = (value: number | null) => value === null ? '—' : formatFreedomCompactClp(value);
+  const moneyValue = (value: number | null) => value === null ? 'Pendiente' : formatFreedomCompactClp(value);
   const coverageValue = (status: 'no_exposure' | 'not_evaluated' | 'evaluated', value: number | null) =>
     status === 'no_exposure'
       ? 'No aplica · sin exposición'
@@ -273,7 +266,7 @@ export const FinancialPerformanceSlice: React.FC<{
         ? 'Pendiente de atribución'
         : `${(value ?? 0).toFixed(0)}%`;
   const canPublishReturn =
-    canConfirmSelectedPerimeter && storageReady && !isLoading &&
+    storageReady && !isLoading &&
     (result.quality === 'RECONSTRUIDO' || result.quality === 'EXACTO') && result.returnPct !== null;
   const methodLabel = result.returnMethod === 'simple'
     ? 'Método simple'
@@ -284,8 +277,6 @@ export const FinancialPerformanceSlice: React.FC<{
         : 'Método pendiente';
   const causeAttributionNote = result.investmentAttributable !== null
     ? 'Separamos instrumentos, dólar, euro, UF y la parte que aún no podemos explicar.'
-    : includeRiskCapital
-      ? 'La atribución con CapRiesgo queda pendiente porque la confirmación guardada solo cubre el perímetro base.'
     : result.flowListComplete && Boolean(confirmation?.flows.length)
       ? 'La rentabilidad está calculada con los flujos confirmados; esta vista no distribuye el resultado entre instrumentos cuando hubo aportes o retiros.'
       : confirmation?.positionMovementCompleteness !== 'no_unrecorded_movements'
@@ -322,11 +313,6 @@ export const FinancialPerformanceSlice: React.FC<{
           {isLoading ? 'Cargando' : storageError ? 'No verificable' : result.quality}
         </span>
       </div>
-      {includeRiskCapital && (
-        <p className="mt-3 rounded-lg border border-amber-200/30 bg-amber-200/10 p-3 text-xs text-amber-100">
-          Las confirmaciones guardadas hoy corresponden al perímetro base, sin CapRiesgo. Para no reutilizarlas en otro perímetro, esta vista queda indicativa y no permite guardar una validación.
-        </p>
-      )}
       {storageError && (
         <div role="alert" className="mt-3 rounded-lg border border-rose-300/30 bg-rose-300/10 p-3 text-xs text-rose-100">
           No pudimos verificar la confirmación guardada. La rentabilidad no se publica hasta recuperar el acceso.
@@ -367,12 +353,12 @@ export const FinancialPerformanceSlice: React.FC<{
           <div className="rounded-xl border border-white/10 bg-white/5 p-3">
             <div className="text-xs text-slate-300">Efecto USD</div>
             <div data-testid="financial-performance-usd-result" className="mt-1 break-words text-base font-semibold text-white">{moneyValue(result.usdFxAttributable)}</div>
-            <div className="mt-1 text-[11px] text-slate-300">{coverageValue(result.fxCoverageStatus, result.fxCoveragePct)}</div>
+            <div className="mt-1 text-[11px] text-slate-300">{coverageValue(result.usdFxCoverageStatus, result.usdFxCoveragePct)}</div>
           </div>
           <div className="rounded-xl border border-white/10 bg-white/5 p-3">
             <div className="text-xs text-slate-300">Efecto EUR</div>
             <div data-testid="financial-performance-eur-result" className="mt-1 break-words text-base font-semibold text-white">{moneyValue(result.eurFxAttributable)}</div>
-            <div className="mt-1 text-[11px] text-slate-300">{coverageValue(result.fxCoverageStatus, result.fxCoveragePct)}</div>
+            <div className="mt-1 text-[11px] text-slate-300">{coverageValue(result.eurFxCoverageStatus, result.eurFxCoveragePct)}</div>
           </div>
           <div className="rounded-xl border border-white/10 bg-white/5 p-3">
             <div className="text-xs text-slate-300">Indexación UF</div>
@@ -403,13 +389,18 @@ export const FinancialPerformanceSlice: React.FC<{
         <div className="mt-2 text-xs text-slate-300">
           {canPublishReturn
             ? `${methodLabel} · resultado de cartera ${moneyValue(result.portfolioResult)}`
-            : includeRiskCapital
-              ? 'La confirmación guardada no aplica al perímetro con CapRiesgo.'
-              : storageError
+            : storageError
                 ? 'No pudimos comprobar la confirmación guardada.'
                 : 'Se muestra la variación de saldos, no una rentabilidad confirmada.'}
         </div>
       </div>
+
+      {canPublishReturn && result.returnWithoutFxPct !== null && (
+        <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
+          <div className="rounded-lg border border-white/10 p-3"><span>Rentabilidad sin efecto cambiario</span> <strong className="block mt-1 text-base text-white">{formatPerformancePct(result.returnWithoutFxPct)}</strong><span>Resultado de inversiones e indexación UF.</span></div>
+          <div className="rounded-lg border border-white/10 p-3"><span>Contribución del tipo de cambio</span> <strong className="block mt-1 text-base text-white">{formatPerformancePct(result.fxContributionPct)}</strong><span>Puntos porcentuales sobre el saldo inicial.</span></div>
+        </div>
+      )}
 
       <details className="mt-5 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-slate-300">
         <summary className="cursor-pointer font-semibold text-white">Ver cómo se concilia el cálculo</summary>
@@ -417,6 +408,7 @@ export const FinancialPerformanceSlice: React.FC<{
           Variación {moneyValue(result.observedChange)} = flujos {flowEquationValue} + instrumentos {moneyValue(result.investmentAttributable)} + USD {moneyValue(result.usdFxAttributable)} + EUR {moneyValue(result.eurFxAttributable)} + UF {moneyValue(result.ufAttributable)} + sin explicar {moneyValue(result.unexplainedResidual)}
         </div>
         <div className="mt-1 text-slate-300">{result.qualityReason}</div>
+        <div className="mt-1 text-slate-300">{result.attributionComplete ? 'Cambio completamente explicado · todas las posiciones conciliadas; tolerancia de $0,01 CLP.' : 'Desglose por causa pendiente o parcial; un residuo redondeado a cero no confirma la cobertura.'}</div>
       </details>
 
       <details className="mt-5 border-t border-white/10 pt-4">
@@ -424,7 +416,7 @@ export const FinancialPerformanceSlice: React.FC<{
           <span>{result.flowListComplete ? 'Revisar validación del período' : 'Completar validación del período'}</span>
           <ChevronDown size={16} aria-hidden="true" />
         </summary>
-      <fieldset disabled={isSaving || isLoading || !storageReady || !canConfirmSelectedPerimeter} className="mt-4 min-w-0">
+      <fieldset disabled={isSaving || isLoading || !storageReady} className="mt-4 min-w-0">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="text-sm font-semibold text-white">Movimientos y cobertura</div>
@@ -451,7 +443,7 @@ export const FinancialPerformanceSlice: React.FC<{
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"
-            disabled={!canConfirmSelectedPerimeter || !storageReady || isLoading || isSaving || !noFlowsWouldChange}
+            disabled={!storageReady || isLoading || isSaving || !noFlowsWouldChange}
             onClick={saveNoFlows}
             className="min-h-9 rounded-lg border border-emerald-300/30 bg-emerald-300/10 px-3 text-[11px] font-semibold text-emerald-100 disabled:opacity-40"
           >
@@ -459,7 +451,7 @@ export const FinancialPerformanceSlice: React.FC<{
           </button>
           <button
             type="button"
-            disabled={!canConfirmSelectedPerimeter || !storageReady || isLoading || isSaving || draft.flows.length >= MAX_FINANCIAL_PERFORMANCE_FLOWS}
+            disabled={!storageReady || isLoading || isSaving || draft.flows.length >= MAX_FINANCIAL_PERFORMANCE_FLOWS}
             onClick={() => addFlow('aporte')}
             className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-white/15 bg-white/5 px-3 text-[11px] font-semibold text-slate-100 disabled:opacity-40"
           >
@@ -467,7 +459,7 @@ export const FinancialPerformanceSlice: React.FC<{
           </button>
           <button
             type="button"
-            disabled={!canConfirmSelectedPerimeter || !storageReady || isLoading || isSaving || draft.flows.length >= MAX_FINANCIAL_PERFORMANCE_FLOWS}
+            disabled={!storageReady || isLoading || isSaving || draft.flows.length >= MAX_FINANCIAL_PERFORMANCE_FLOWS}
             onClick={() => addFlow('retiro')}
             className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-white/15 bg-white/5 px-3 text-[11px] font-semibold text-slate-100 disabled:opacity-40"
           >
@@ -595,7 +587,7 @@ export const FinancialPerformanceSlice: React.FC<{
           </div>
           <button
             type="button"
-            disabled={!canConfirmSelectedPerimeter || !storageReady || isLoading || isSaving || !isDraftDirty}
+            disabled={!storageReady || isLoading || isSaving || !isDraftDirty}
             onClick={() => void persistDraft(draft)}
             className="min-h-10 rounded-lg bg-sky-400 px-4 text-xs font-semibold text-slate-950 disabled:opacity-40"
           >

@@ -89,7 +89,7 @@ describe('financial performance confirmation read errors', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(storageMock.load).toHaveBeenCalledWith({ startMonth: '2024-07', endMonth: '2024-08' }, { expectedUid: 'performance-test-user' });
+    expect(storageMock.load).toHaveBeenCalledWith({ startMonth: '2024-07', endMonth: '2024-08' }, { expectedUid: 'performance-test-user', perimeter: 'investment' });
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('No pudimos verificar la confirmación guardada');
     expect(container.textContent).toContain('No verificable');
     expect(container.textContent).not.toContain('Cargando confirmación…');
@@ -102,6 +102,25 @@ describe('financial performance confirmation read errors', () => {
     expect(Array.from(container.querySelectorAll('[role="alert"]'))
       .some((alert) => alert.textContent?.includes('permission-denied'))).toBe(true);
     expect(storageMock.append).not.toHaveBeenCalled();
+  });
+
+  it('reads and saves risk-inclusive confirmations through their own perimeter context', async () => {
+    storageMock.load.mockResolvedValue(null);
+    storageMock.append.mockImplementation(async (value) => ({ ...value, revision: 1 }));
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const period = { startMonth: '2024-07', endMonth: '2024-08' };
+    await act(async () => root?.render(React.createElement(FinancialPerformanceSlice, {
+      closures: [makeClosure('2024-07', 100), makeClosure('2024-08', 110)],
+      includeRiskCapital: true, period,
+    })));
+    expect(storageMock.load).toHaveBeenCalledWith(period, { expectedUid: 'performance-test-user', perimeter: 'investment_with_risk' });
+    const noFlows = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'No hubo flujos este mes');
+    await act(async () => noFlows?.click());
+    expect(storageMock.append).toHaveBeenCalledWith(expect.objectContaining({ perimeter: 'investment_with_risk' }), period,
+      { expectedUid: 'performance-test-user', perimeter: 'investment_with_risk' });
+    expect(container.textContent).toContain('INDICATIVO');
   });
 
   it('does not read or write confirmations when there is no comparable monthly interval', async () => {

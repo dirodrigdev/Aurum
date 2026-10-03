@@ -780,6 +780,39 @@ describe('reconcileFinancialPerformance', () => {
     expect(result.fxAttributable).toBeNull();
   });
 
+  it('never reuses a base confirmation for the risk-inclusive perimeter or vice versa', () => {
+    const initial = [makeRecord({ label: 'Fondo', amount: 100 })];
+    const final = [makeRecord({ label: 'Fondo', amount: 110 })];
+    const confirmed: FinancialPerformanceConfirmation = { ...closedZeroFlows, positionMovementCompleteness: 'no_unrecorded_movements' };
+    expect(run(initial, final, confirmed, { includeRiskCapital: true })).toMatchObject({ quality: 'INDICATIVO', returnPct: null, flowListComplete: false });
+    expect(run(initial, final, { ...confirmed, perimeter: 'investment_with_risk' }, { includeRiskCapital: true }))
+      .toMatchObject({ quality: 'RECONSTRUIDO', returnPct: 0.1 });
+    expect(run(initial, final, { ...confirmed, perimeter: 'investment_with_risk' }))
+      .toMatchObject({ quality: 'INDICATIVO', returnPct: null });
+  });
+
+  it('does not call cancellation of unmatched positions fully explained', () => {
+    const initial = [makeRecord({ label: 'Fondo', amount: 100 }), makeRecord({ label: 'Desaparece', amount: 50 })];
+    const final = [makeRecord({ label: 'Fondo', amount: 110 }), makeRecord({ label: 'Aparece', amount: 50 })];
+    const result = run(initial, final, { ...closedZeroFlows, positionMovementCompleteness: 'no_unrecorded_movements' });
+    expect(result.unexplainedResidual).toBe(0);
+    expect(result.attributionComplete).toBe(false);
+    expect(result.returnWithoutFxPct).toBeNull();
+  });
+
+  it('separates each currency coverage and publishes the no-FX bridge only when fully attributed', () => {
+    const initial = [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })];
+    const final = [makeRecord({ label: 'Fondo USD', amount: 110, currency: 'USD' })];
+    const result = run(initial, final, { ...closedZeroFlows, positionMovementCompleteness: 'no_unrecorded_movements' }, { finalRates: { usdClp: 1100 } });
+    expect(result.usdFxCoveragePct).toBe(100);
+    expect(result.eurFxCoverageStatus).toBe('no_exposure');
+    expect(result.eurFxCoveragePct).toBeNull();
+    expect(result.attributionComplete).toBe(true);
+    expect(result.returnWithoutFxPct).toBeCloseTo(0.1);
+    expect(result.fxContributionPct).toBeCloseTo(0.11);
+    expect(result.returnPct).toBeCloseTo(result.returnWithoutFxPct! + result.fxContributionPct!);
+  });
+
   it('includes CapRiesgo only when the existing control is active', () => {
     const riskLabel = RISK_CAPITAL_LABELS[0];
     const initial = [makeRecord({ label: 'Fondo', amount: 100 }), makeRecord({ label: riskLabel, amount: 20 })];

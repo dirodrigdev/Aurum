@@ -334,6 +334,29 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
   await Promise.all(persistedAttributionTestIds.map((testId, index) =>
     expect(page.getByTestId(testId)).toHaveText(modifiedDietzAttributions[index]),
   ));
+  await page.getByRole('button', { name: 'Incluir CapRiesgo', exact: true }).click();
+  await expect(page.getByText('INDICATIVO', { exact: true })).toBeVisible();
+  await expect(publishedPerformanceValue).toHaveText('—');
+  await page.getByText('Completar validación del período', { exact: true }).click();
+  await page.getByRole('button', { name: 'No hubo flujos este mes', exact: true }).click();
+  await expect(page.getByText(/^Guardado como revisión 1\./)).toBeVisible();
+  await page.getByLabel('Confirmo que no hubo compras, ventas ni traslados de posición sin registrar durante el período.').check();
+  await page.getByRole('button', { name: 'Guardar confirmación', exact: true }).click();
+  await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
+  await expect(page.getByText('Rentabilidad sin efecto cambiario', { exact: true })).toBeVisible();
+  const riskReturn = await publishedPerformanceValue.innerText();
+  for (const [name, width, height] of [['desktop', 1440, 1000], ['tablet', 820, 1180], ['mobile', 390, 844]] as const) {
+    await page.setViewportSize({ width, height });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+    await page.screenshot({ path: testInfo.outputPath(`aurum-risk-confirmed-${name}.png`), fullPage: true });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole('button', { name: 'Excluir CapRiesgo', exact: true }).click();
+  await expect(publishedPerformanceValue).toHaveText(modifiedDietzReturnValue);
+  await page.getByRole('button', { name: 'Incluir CapRiesgo', exact: true }).click();
+  await expect(publishedPerformanceValue).toHaveText(riskReturn);
+  await page.getByRole('button', { name: 'Excluir CapRiesgo', exact: true }).click();
+  await expect(publishedPerformanceValue).toHaveText(modifiedDietzReturnValue);
   await page.getByRole('button', { name: 'Últimos 12 meses', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Aún no hay rentabilidad financiera validada para este período' })).toBeVisible();
   await expect(page.getByText('Cambio observado por mes', { exact: true })).toBeVisible();
