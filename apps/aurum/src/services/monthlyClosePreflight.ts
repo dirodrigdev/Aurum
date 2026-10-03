@@ -538,6 +538,8 @@ export const buildMonthlyClosePreflightDiagnostic = (
   const uiSectionAmounts = computeWealthHomeSectionAmounts(uiRecordsEquivalent, safeFx);
   const closeSectionAmounts = computeWealthHomeSectionAmounts(closeTargetForTotals, safeFx);
   const closeSummary = buildCanonicalClosureSummary(closeTargetRecords, safeFx);
+  const comparableSummaryKey = input.includeRiskCapitalInTotals ? 'netClpWithRisk' : 'netClp';
+  const comparableSummaryNetClp = Number(closeSummary[comparableSummaryKey] || 0);
   const freshness = buildWealthFreshnessModel(input.records, safeFx, {
     includeRiskCapitalInTotals: input.includeRiskCapitalInTotals,
     now: nowMs,
@@ -979,8 +981,8 @@ export const buildMonthlyClosePreflightDiagnostic = (
     buildCheck(
       'summary_matches_records',
       'sum(targetRecords) == summary',
-      Math.abs(Number(closeSummary.netClp || 0) - closeSectionAmounts.totalNetClp) <= DIFF_TOLERANCE_CLP ? 'ok' : 'fail',
-      `Summary netClp ${Number(closeSummary.netClp || 0).toLocaleString('es-CL')} vs total canónico ${closeSectionAmounts.totalNetClp.toLocaleString('es-CL')}.`,
+      Math.abs(comparableSummaryNetClp - closeSectionAmounts.totalNetClp) <= DIFF_TOLERANCE_CLP ? 'ok' : 'fail',
+      `Summary ${comparableSummaryKey} ${comparableSummaryNetClp.toLocaleString('es-CL')} vs total canónico ${closeSectionAmounts.totalNetClp.toLocaleString('es-CL')}.`,
     ),
     buildCheck(
       'debt_assets_match_blocks',

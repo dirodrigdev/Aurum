@@ -66,6 +66,31 @@ async function seedMortgageStart() {
   }] });
 }
 
+test('preflight summary check remains readable across viewports', async ({ page }, testInfo) => {
+  await page.clock.setFixedTime(new Date('2026-07-31T12:00:00.000Z'));
+  const { modal, networkGuard, pageErrors, consoleErrors } = await prepare(page);
+  await modal.getByRole('button', { name: 'Cancelar', exact: true }).click();
+  await page.getByRole('button', { name: 'Simular cierre / Preflight', exact: true }).click();
+  const summaryCheck = page.getByText('sum(targetRecords) == summary', { exact: true });
+  await expect(summaryCheck).toBeVisible();
+  await expect(summaryCheck.locator('..')).toContainText('ok');
+  // Capture the settled screen after the existing transient balance notification.
+  await expect(page.locator('.pointer-events-none.fixed.inset-x-0')).toBeHidden();
+  for (const viewport of [
+    { name: 'desktop', width: 1280, height: 800 },
+    { name: 'tablet', width: 768, height: 1024 },
+    { name: 'mobile', width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await summaryCheck.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath(`preflight-summary-${viewport.name}.png`) });
+    await expect(summaryCheck).toBeVisible();
+  }
+  await networkGuard.assertClean(testInfo);
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
 for (const viewport of [
   { name: 'desktop', width: 1280, height: 800, rejectFx: true },
   { name: 'mobile', width: 390, height: 844, rejectFx: false },

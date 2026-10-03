@@ -37,6 +37,23 @@ const record = (input: Partial<WealthRecord> & Pick<WealthRecord, 'id' | 'block'
 });
 
 describe('monthly close preflight diagnostic', () => {
+  it.each([false, true])('reconciles the summary with risk inclusion set to %s', (includeRiskCapitalInTotals) => {
+    const records = [
+      record({ id: 'bank', block: 'bank', label: BANK_BCHILE_CLP_LABEL, amount: 20_000_000, currency: 'CLP', snapshotDate: '2026-06-30', createdAt: '2026-06-30T10:00:00Z' }),
+      record({ id: 'risk', block: 'investment', label: RISK_CAPITAL_LABEL_CLP, amount: 5_000_000, currency: 'CLP', snapshotDate: '2026-06-30', createdAt: '2026-06-30T10:00:00Z' }),
+    ];
+    const diagnostic = buildMonthlyClosePreflightDiagnostic({
+      records, closures: [], fxForClose: fx, includeRiskCapitalInTotals,
+      uiMonthKey: '2026-06', targetMonthKey: '2026-06', calendarMonthKey: '2026-07',
+      investmentInstruments: [], todayYmd: '2026-07-02',
+      gastappExpenseClose: { monthKey: '2026-06', status: 'complete', partialGastosEur: 2400, snapshotAvailable: true, message: 'Cierre disponible.' },
+    });
+    expect(diagnostic.closeSummary.netClp).toBe(20_000_000);
+    expect(diagnostic.closeSummary.netClpWithRisk).toBe(25_000_000);
+    expect(diagnostic.checks.find((check) => check.key === 'summary_matches_records')?.status).toBe('ok');
+    expect(diagnostic.decision).toBe('GO_PARA_CERRAR');
+  });
+
   it('returns GO when UI equivalent, freshness and close target reconcile', () => {
     const records: WealthRecord[] = [
       record({
