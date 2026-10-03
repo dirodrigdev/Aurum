@@ -166,7 +166,6 @@ import {
 } from '../services/closureFxRates';
 import { clearClosureFxDraft, loadClosureFxDraft, saveClosureFxDraft } from '../services/closureFxDraft';
 import {
-  applyCertifiedGastappRevisions,
   buildGastappRevisionNotices,
   type GastappRevisionNotice,
 } from '../services/acceptReviewedGastappRevision';
@@ -4851,11 +4850,8 @@ export const Patrimonio: React.FC = () => {
   const [closePreflightVisible, setClosePreflightVisible] = useState(false);
   const [gastosSourceVersion, setGastosSourceVersion] = useState(0);
   const [closePreflightCopied, setClosePreflightCopied] = useState(false);
-  const [gastappRevisionSaving, setGastappRevisionSaving] = useState(false);
-  const [gastappRevisionMessage, setGastappRevisionMessage] = useState('');
   const [gastappRevisionNoticeVersion, setGastappRevisionNoticeVersion] = useState(0);
   const [gastappRevisionDetail, setGastappRevisionDetail] = useState<GastappRevisionNotice | null>(null);
-  const gastappRevisionAutoSyncRef = useRef(false);
   const [closeBackupCheck, setCloseBackupCheck] = useState<MonthlyCloseCheckpointReadinessResult | null>(null);
   const [closeBackupRunning, setCloseBackupRunning] = useState(false);
   const [closeRunning, setCloseRunning] = useState(false);
@@ -7233,39 +7229,6 @@ export const Patrimonio: React.FC = () => {
     setGastappRevisionNoticeVersion((current) => current + 1);
   };
 
-  useEffect(() => {
-    if (!hydrationReady || gastappRevisionAutoSyncRef.current) return;
-    if (!pendingGastappRevisions.some(({ candidate }) => Boolean(candidate.snapshot))) return;
-
-    gastappRevisionAutoSyncRef.current = true;
-    setGastappRevisionSaving(true);
-    setGastappRevisionMessage('');
-    void applyCertifiedGastappRevisions()
-      .then((result) => {
-        if (result.applied.length) {
-          refreshClosures();
-          setGastappRevisionNoticeVersion((current) => current + 1);
-        }
-        if (result.failed.length) {
-          setGastappRevisionMessage(
-            `Actualización automática pendiente: ${result.failed.map((item) => `${monthLabel(item.monthKey)}: ${item.message}`).join(' · ')}`,
-          );
-        } else if (result.applied.length) {
-          setGastappRevisionMessage(
-            `GastApp actualizó automáticamente ${result.applied.length === 1 ? '1 cierre' : `${result.applied.length} cierres`} de Aurum. Revisa el detalle y marca OK, leído cuando quieras.`,
-          );
-        }
-      })
-      .catch((error) => {
-        setGastappRevisionMessage(
-          String((error as Error)?.message || 'No pude completar la actualización automática desde GastApp.'),
-        );
-      })
-      .finally(() => {
-        gastappRevisionAutoSyncRef.current = false;
-        setGastappRevisionSaving(false);
-      });
-  }, [hydrationReady, pendingGastappRevisions]);
   const closePreflightDiagnostic = useMemo(() => {
     if (!closePreflightVisible) return null;
     return buildMonthlyClosePreflightDiagnostic({
@@ -7900,11 +7863,6 @@ export const Patrimonio: React.FC = () => {
 
   return (
     <div className="p-3 space-y-3">
-      {gastappRevisionSaving && (
-        <div role="status" className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
-          GastApp publicó una revisión certificada. Aurum está actualizando la cadena automáticamente…
-        </div>
-      )}
       {!!unreadGastappRevisionNotices.length && (
         <section className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-950" aria-live="polite">
           <div className="font-semibold">GastApp actualizó cierres de Aurum</div>
@@ -7947,9 +7905,6 @@ export const Patrimonio: React.FC = () => {
             ))}
           </div>
         </section>
-      )}
-      {!!gastappRevisionMessage && !gastappRevisionSaving && (
-        <div role="status" className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">{gastappRevisionMessage}</div>
       )}
       {gastappRevisionDetail && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/60 p-4" role="presentation">
