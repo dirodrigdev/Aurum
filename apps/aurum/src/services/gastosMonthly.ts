@@ -166,6 +166,8 @@ const gastappMonthlyDiag = {
   lastMarchSignature: '',
 };
 
+let gastappMonthlyLoadGeneration = 0;
+
 type GastappFirebaseBridge = {
   getGastappConfiguredProjectId: () => string;
   isGastappFirestoreConfigured: () => boolean;
@@ -316,6 +318,7 @@ const markGastappMonthlyUnavailable = (errorCode: string, error: string) => {
 };
 
 const resetGastappMonthlyRuntime = () => {
+  gastappMonthlyLoadGeneration += 1;
   gastappMonthlyRuntime.status = 'idle';
   gastappMonthlyRuntime.mode = null;
   gastappMonthlyRuntime.map = {};
@@ -428,11 +431,14 @@ const loadGastappMonthlyContable = async () => {
   }
   if (gastappMonthlyRuntime.status === 'ready') return;
 
+  const loadGeneration = ++gastappMonthlyLoadGeneration;
+  const isCurrentLoad = () => loadGeneration === gastappMonthlyLoadGeneration;
   gastappMonthlyRuntime.status = 'loading';
   gastappMonthlyRuntime.error = null;
   gastappMonthlyRuntime.errorCode = null;
   gastappMonthlyRuntime.loadPromise = (async () => {
     const firebaseBridge = await loadGastappFirebaseBridge();
+    if (!isCurrentLoad()) return;
     if (!firebaseBridge) {
       markGastappMonthlyUnavailable(
         gastappMonthlyRuntime.errorCode || 'bridge_unavailable',
@@ -484,6 +490,10 @@ const loadGastappMonthlyContable = async () => {
         `${GASTAPP_DIAG_PREFIX} read_start document=${GASTAPP_MONTHLY_CONTRACT_PATH} projectId_runtime=${runtimeProjectId || 'n/a'}`,
       );
       const contractResult = await loadGastappCanonicalMonthContract();
+      if (!isCurrentLoad()) {
+        diagInfo(`${GASTAPP_DIAG_PREFIX} read_discarded reason=newer_refresh_started`);
+        return;
+      }
       const loaded: Record<string, GastappMonthlyContableEntry> = {};
       contractResult.months.forEach((month) => {
         if (!isValidMonthKey(month.calendarMonthKey)) return;
@@ -573,6 +583,10 @@ const loadGastappMonthlyContable = async () => {
       }
       emitGastappSourceUpdated();
     } catch (error: any) {
+      if (!isCurrentLoad()) {
+        diagWarn(`${GASTAPP_DIAG_PREFIX} obsolete_read_failed error=${String(error?.message || error || 'unknown_error')}`);
+        return;
+      }
       gastappMonthlyRuntime.status = 'error';
       gastappMonthlyRuntime.mode = null;
       gastappMonthlyRuntime.errorCode = String(error?.code || '');
@@ -586,7 +600,7 @@ const loadGastappMonthlyContable = async () => {
     }
   })()
     .finally(() => {
-      gastappMonthlyRuntime.loadPromise = null;
+      if (isCurrentLoad()) gastappMonthlyRuntime.loadPromise = null;
     });
 
   return gastappMonthlyRuntime.loadPromise;

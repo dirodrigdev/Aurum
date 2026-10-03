@@ -184,6 +184,45 @@ describe('gastosMonthly canonical source', () => {
     expect(loadGastappCanonicalV2OfficialMonthContractFreshMock).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    { olderOutcome: 'pending', currentStatus: 'complete' },
+    { olderOutcome: 'error', currentStatus: 'complete' },
+    { olderOutcome: 'complete', currentStatus: 'pending' },
+  ])('keeps the current $currentStatus month when an older $olderOutcome read completes later', async ({ olderOutcome, currentStatus }) => {
+    const hash = `sha256:${'a'.repeat(64)}`;
+    const fresh = {
+      version: 'gastapp-aurum-calendar-months-v2', generatedAt: '2026-10-03T12:00:00Z',
+      canonicalDataHash: hash, operationalDataHash: hash, operationalRevision: 2, sourceGeneration: 2,
+      months: [{
+        calendarMonthKey: '2026-09', status: 'complete', calendarStatus: 'complete', eligibleForAurumReturns: true,
+        totalEur: 2805, byFamily: { dayToDay: 2805, trips: 0, others: 0 },
+        monthContractRevision: 2, monthContractHash: hash,
+        calendarCertification: { status: 'certified', certificationRevision: 2, certificationHash: hash, sourceGeneration: 2 },
+      }],
+    };
+    let resolveOld!: (value: unknown) => void;
+    let rejectOld!: (error: Error) => void;
+    let notifyOldStarted!: () => void;
+    const oldStarted = new Promise<void>((resolve) => { notifyOldStarted = resolve; });
+    const oldRead = new Promise((resolve, reject) => { resolveOld = resolve; rejectOld = reject; });
+    const partial = { ...fresh, months: [{ ...fresh.months[0], status: 'pending', calendarStatus: 'pending', eligibleForAurumReturns: false, calendarCertification: null }] };
+    loadGastappCanonicalV2OfficialMonthContractFreshMock
+      .mockImplementationOnce(() => { notifyOldStarted(); return oldRead; })
+      .mockResolvedValueOnce(currentStatus === 'complete' ? fresh : partial);
+    const { warmGastappMonthlyContable, refreshGastappMonthlyContable, resolveGastappMonthlyCloseCandidate } = await import('../src/services/gastosMonthly');
+    const warming = warmGastappMonthlyContable();
+    await oldStarted;
+    await refreshGastappMonthlyContable();
+    expect(resolveGastappMonthlyCloseCandidate('2026-09').status).toBe(currentStatus);
+    if (olderOutcome === 'error') rejectOld(new Error('Old request failed'));
+    else resolveOld(olderOutcome === 'complete' ? fresh : partial);
+    await warming;
+    expect(resolveGastappMonthlyCloseCandidate('2026-09')).toMatchObject({
+      status: currentStatus,
+      snapshot: currentStatus === 'complete' ? { totalEur: 2805, monthContractRevision: 2 } : null,
+    });
+  });
+
   it('does not use legacy as official when Firestore is loading or missing a canonical doc', async () => {
     loadGastappCanonicalV2OfficialMonthContractFreshMock.mockResolvedValue({ version: 'gastapp-aurum-calendar-months-v2', generatedAt: '2026-03-01T00:00:00.000Z', canonicalDataHash: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', operationalDataHash: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', operationalRevision: 4, sourceGeneration: 7, months: [] });
     const { previewGastappMonthlyLegacyBackfill, resolveGastappMonthlySpend, warmGastappMonthlyContable } = await import(

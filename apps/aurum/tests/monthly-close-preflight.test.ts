@@ -37,6 +37,22 @@ const record = (input: Partial<WealthRecord> & Pick<WealthRecord, 'id' | 'block'
 });
 
 describe('monthly close preflight diagnostic', () => {
+  it('compares freshness against September without importing an October asset value', () => {
+    const records = [
+      record({ id: 'september-tenencia', block: 'investment', label: 'Tenencia / CxC', amount: 16_497_820, currency: 'CLP', snapshotDate: '2026-09-30', createdAt: '2026-09-30T12:00:00Z' }),
+      record({ id: 'october-tenencia', block: 'investment', label: 'Tenencia / CxC', amount: 31_539_950, currency: 'CLP', snapshotDate: '2026-10-03', createdAt: '2026-10-03T12:00:00Z' }),
+    ];
+    const before = structuredClone(records);
+    const diagnostic = buildMonthlyClosePreflightDiagnostic({
+      records, closures: [], fxForClose: fx, investmentInstruments: [],
+      includeRiskCapitalInTotals: false, uiMonthKey: '2026-09', targetMonthKey: '2026-09',
+      calendarMonthKey: '2026-10', todayYmd: '2026-10-03',
+    });
+    expect(diagnostic.freshness.totalExposureClp).toBe(16_497_820);
+    expect(diagnostic.checks.find((check) => check.key === 'freshness_vs_close')?.status).toBe('ok');
+    expect(records).toEqual(before);
+  });
+
   it('labels and checks the selected economic month instead of the suggested operational month', () => {
     const diagnostic = buildMonthlyClosePreflightDiagnostic({
       records: [], closures: [], fxForClose: fx, investmentInstruments: [],

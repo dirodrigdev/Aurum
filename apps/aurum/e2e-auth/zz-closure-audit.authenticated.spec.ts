@@ -320,7 +320,7 @@ test('legacy close expenses stay explicitly unavailable without rebuilding histo
   expect(consoleErrors).toEqual([]);
 });
 
-test('September close seals its own GastApp snapshot and prepares October without changing history', async ({ page }, testInfo) => {
+async function seedSeptemberAudit() {
   await seedMortgageStart();
   const ref = emulatorDb().doc(`aurum_wealth/${uid}`);
   const root = (await ref.get()).data()!;
@@ -334,6 +334,51 @@ test('September close seals its own GastApp snapshot and prepares October withou
     ...record, id: `september-${record.id}`, snapshotDate: '2026-09-30', createdAt: '2026-09-30T12:00:00.000Z',
   }));
   await ref.update({ records: septemberRecords, closures: [...root.closures, august] });
+  return ref;
+}
+
+test('September preflight compares its own freshness despite different October values', async ({ page }, testInfo) => {
+  const ref = await seedSeptemberAudit();
+  const root = (await ref.get()).data()!;
+  const tenencia = { block: 'investment', source: 'manual', label: 'Tenencia / CxC', currency: 'CLP' };
+  await ref.update({ records: [
+    ...root.records,
+    { ...tenencia, id: 'september-tenencia', amount: 16_497_820, snapshotDate: '2026-09-30', createdAt: '2026-09-30T12:00:00Z' },
+    { ...tenencia, id: 'october-tenencia', amount: 31_539_950, snapshotDate: '2026-10-03', createdAt: '2026-10-03T12:00:00Z' },
+  ] });
+  await page.clock.setFixedTime(new Date('2026-10-03T12:00:00.000Z'));
+  const { modal, networkGuard, pageErrors, consoleErrors } = await prepare(page, '2026-09');
+  await modal.getByRole('button', { name: 'Cancelar', exact: true }).click();
+  await page.getByRole('combobox').selectOption('2026-09');
+  await page.getByRole('button', { name: 'Simular cierre / Preflight', exact: true }).click();
+  await expect(page.getByText('Final al', { exact: false })).toHaveCount(3);
+  await page.getByRole('checkbox', { name: /tasas utilizadas corresponden al cierre económico de septiembre/i }).check();
+  await expect(page.getByText('GO PARA CERRAR', { exact: true })).toBeVisible();
+  const freshnessCheck = page.getByText('Frescura y cierre usan mismos assets materiales o diferencia explicada', { exact: true }).locator('..');
+  await expect(freshnessCheck).toContainText('ok');
+  await expect(page.getByText(/Tenencia \/ CxC: freshness/)).toHaveCount(0);
+  await expect(page.getByText(/Inversiones actualizadas.*Bienes raíces actualizados/)).toBeHidden();
+  for (const viewport of [
+    { name: 'desktop', width: 1280, height: 800 },
+    { name: 'tablet', width: 768, height: 1024 },
+    { name: 'mobile', width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await freshnessCheck.evaluate((element) => element.scrollIntoView({ block: 'center', behavior: 'instant' }));
+    await page.screenshot({ path: testInfo.outputPath(`september-freshness-${viewport.name}.png`) });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  }
+  const after = (await ref.get()).data()!;
+  expect(after.records.find((record: AuditRecord) => record.id === 'september-tenencia')).toMatchObject({ amount: 16_497_820, snapshotDate: '2026-09-30' });
+  expect(after.records.find((record: AuditRecord) => record.id === 'october-tenencia')).toMatchObject({ amount: 31_539_950, snapshotDate: '2026-10-03' });
+  expect(after.closures.some((closure: { monthKey: string }) => closure.monthKey === '2026-09')).toBe(false);
+  await networkGuard.assertClean(testInfo);
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
+test('September close seals its own GastApp snapshot and prepares October without changing history', async ({ page }, testInfo) => {
+  const ref = await seedSeptemberAudit();
   await page.clock.setFixedTime(new Date('2026-10-01T12:00:00.000Z'));
   const { modal, networkGuard, pageErrors, consoleErrors } = await prepare(page, '2026-09');
   const augustBeforeClose = await page.evaluate(async () => {

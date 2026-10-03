@@ -540,7 +540,7 @@ export const buildMonthlyClosePreflightDiagnostic = (
   const closeSummary = buildCanonicalClosureSummary(closeTargetRecords, safeFx);
   const comparableSummaryKey = input.includeRiskCapitalInTotals ? 'netClpWithRisk' : 'netClp';
   const comparableSummaryNetClp = Number(closeSummary[comparableSummaryKey] || 0);
-  const freshness = buildWealthFreshnessModel(input.records, safeFx, {
+  const freshness = buildWealthFreshnessModel(closeTargetRecords, safeFx, {
     includeRiskCapitalInTotals: input.includeRiskCapitalInTotals,
     now: nowMs,
   });
@@ -554,7 +554,7 @@ export const buildMonthlyClosePreflightDiagnostic = (
     input.includeRiskCapitalInTotals,
   ).map((entry) => entry.record);
   const freshnessRecordById = new Map(
-    selectCanonicalWealthExposureRecords(input.records, input.includeRiskCapitalInTotals).map((entry) => [entry.record.id, entry.record]),
+    selectCanonicalWealthExposureRecords(closeTargetRecords, input.includeRiskCapitalInTotals).map((entry) => [entry.record.id, entry.record]),
   );
 
   const uiMap = aggregateRecordsByDiagnosticKey(uiDiagnosticRecords, safeFx, nowMs);
