@@ -16,7 +16,7 @@ import { appendFinancialPerformanceConfirmation, loadFinancialPerformanceConfirm
 import { getCurrentUid } from '../../services/firebase';
 import { type WealthMonthlyClosure } from '../../services/wealthStorage';
 import { formatMonthLabel as monthLabel } from '../../utils/wealthFormat';
-import { formatFreedomCompactClp } from './shared';
+import { FinancialPerformanceResultView } from './FinancialPerformanceResultView';
 
 const monthEndDate = (monthKey: string): string => {
   const [year, month] = monthKey.split('-').map(Number);
@@ -50,12 +50,6 @@ const toConfirmationDraft = (
         flows: confirmation.flows.map((flow) => ({ ...flow, amountClp: String(flow.amountClp) })),
       }
     : emptyConfirmationDraft(monthKey);
-
-const formatPerformancePct = (value: number | null) =>
-  value === null ? '—' : `${(value * 100).toLocaleString('es-CL', { maximumFractionDigits: 2 })}%`;
-
-const formatFlowCount = (draft: ConfirmationDraft) =>
-  `${draft.flows.length} ${draft.flows.length === 1 ? 'movimiento' : 'movimientos'}`;
 
 export const FinancialPerformanceSlice: React.FC<{
   closures: WealthMonthlyClosure[];
@@ -234,6 +228,7 @@ export const FinancialPerformanceSlice: React.FC<{
   };
 
   const saveNoFlows = () => {
+    if (draft.flows.length > 0 && !window.confirm('Esta confirmación eliminará la lista de movimientos ingresada. ¿Confirmas que no hubo aportes ni retiros en este período?')) return;
     const noFlowsDraft: ConfirmationDraft = {
       ...draft,
       flows: [],
@@ -243,51 +238,10 @@ export const FinancialPerformanceSlice: React.FC<{
     void persistDraft(noFlowsDraft);
   };
 
-  const flowCompletenessLabel = confirmation?.flowCompleteness === 'complete'
-    ? `Lista completa · ${formatFlowCount(persistedDraft)}`
-    : 'Lista pendiente';
   const noFlowsWouldChange =
     draft.flowCompleteness !== 'complete' ||
     draft.flows.length > 0 ||
     draft.positionMovementCompleteness !== (confirmation?.positionMovementCompleteness || 'unconfirmed');
-  const flowNetValue = result.flowListComplete || Boolean(confirmation?.flows.length)
-    ? formatFreedomCompactClp(result.confirmedFlowsNetClp)
-    : 'No confirmado';
-  const flowEquationValue = result.flowListComplete
-    ? formatFreedomCompactClp(result.confirmedFlowsNetClp)
-    : confirmation?.flows.length
-      ? `parcial ${formatFreedomCompactClp(result.confirmedFlowsNetClp)}`
-      : 'sin confirmar';
-  const moneyValue = (value: number | null) => value === null ? 'Pendiente' : formatFreedomCompactClp(value);
-  const coverageValue = (status: 'no_exposure' | 'not_evaluated' | 'evaluated', value: number | null) =>
-    status === 'no_exposure'
-      ? 'No aplica · sin exposición'
-      : status === 'not_evaluated'
-        ? 'Pendiente de atribución'
-        : `${(value ?? 0).toFixed(0)}%`;
-  const canPublishReturn =
-    storageReady && !isLoading &&
-    (result.quality === 'RECONSTRUIDO' || result.quality === 'EXACTO') && result.returnPct !== null;
-  const methodLabel = result.returnMethod === 'simple'
-    ? 'Método simple'
-    : result.returnMethod === 'simple_adjusted'
-      ? 'Método simple ajustado'
-      : result.returnMethod === 'modified_dietz'
-        ? 'Modified Dietz'
-        : 'Método pendiente';
-  const causeAttributionNote = result.investmentAttributable !== null
-    ? 'Separamos instrumentos, dólar, euro, UF y la parte que aún no podemos explicar.'
-    : result.flowListComplete && Boolean(confirmation?.flows.length)
-      ? 'La rentabilidad está calculada con los flujos confirmados; esta vista no distribuye el resultado entre instrumentos cuando hubo aportes o retiros.'
-      : confirmation?.positionMovementCompleteness !== 'no_unrecorded_movements'
-        ? 'Confirma que no hubo compras, ventas ni traslados sin registrar para habilitar la atribución por causa.'
-        : 'No hay detalle comparable suficiente para separar el cambio por causa.';
-  const residualLabel = result.quality !== 'RECONSTRUIDO'
-    ? 'Residuo provisional'
-    : confirmation?.flows.length
-      ? 'Resultado sin desglose por causa'
-      : 'Residuo no explicado';
-
   return (
     <Card className="overflow-hidden border-slate-200 bg-gradient-to-br from-[#0b1728] via-[#10203a] to-[#12284a] p-4 text-slate-100 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -316,100 +270,20 @@ export const FinancialPerformanceSlice: React.FC<{
       {storageError && (
         <div role="alert" className="mt-3 rounded-lg border border-rose-300/30 bg-rose-300/10 p-3 text-xs text-rose-100">
           No pudimos verificar la confirmación guardada. La rentabilidad no se publica hasta recuperar el acceso.
-          <button type="button" onClick={() => setLoadAttempt((attempt) => attempt + 1)} className="mt-2 block min-h-9 rounded-lg border border-rose-200/40 px-3 font-semibold text-white">Reintentar lectura</button>
+          <button type="button" onClick={() => setLoadAttempt((attempt) => attempt + 1)} className="mt-2 block min-h-11 rounded-lg border border-rose-200/40 px-3 font-semibold text-white">Reintentar lectura</button>
         </div>
       )}
 
-      <div className="mt-5 grid gap-2 border-b border-white/10 pb-5 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-            <div className="text-xs text-slate-300">Valor inicial · {monthLabel(period.startMonth)}</div>
-            <div className="mt-1 break-words text-sm font-semibold text-white">{moneyValue(result.initialValue)}</div>
-          </div>
-          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-            <div className="text-xs text-slate-300">Valor final · {monthLabel(period.endMonth)}</div>
-            <div className="mt-1 break-words text-sm font-semibold text-white">{moneyValue(result.finalValue)}</div>
-          </div>
-          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-            <div className="text-xs text-slate-300">Variación observada</div>
-            <div data-testid="financial-performance-observed-change" className="mt-1 break-words text-sm font-semibold text-white">{moneyValue(result.observedChange)}</div>
-          </div>
-          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-            <div className="text-xs text-slate-300">Aportes y retiros</div>
-            <div className="mt-1 break-words text-sm font-semibold text-white">{flowNetValue}</div>
-            <div className="mt-1 text-[11px] text-slate-300">{flowCompletenessLabel}</div>
-          </div>
-      </div>
-
-      <div className="mt-5">
-        <h4 className="text-sm font-semibold text-white">Por qué cambió</h4>
-        <p className="mt-1 text-xs text-slate-300">
-          {causeAttributionNote}
-        </p>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 md:grid-cols-3">
-          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-            <div className="text-xs text-slate-300">Instrumentos</div>
-            <div data-testid="financial-performance-instruments-result" className="mt-1 break-words text-base font-semibold text-white">{moneyValue(result.investmentAttributable)}</div>
-          </div>
-          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-            <div className="text-xs text-slate-300">Efecto USD</div>
-            <div data-testid="financial-performance-usd-result" className="mt-1 break-words text-base font-semibold text-white">{moneyValue(result.usdFxAttributable)}</div>
-            <div className="mt-1 text-[11px] text-slate-300">{coverageValue(result.usdFxCoverageStatus, result.usdFxCoveragePct)}</div>
-          </div>
-          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-            <div className="text-xs text-slate-300">Efecto EUR</div>
-            <div data-testid="financial-performance-eur-result" className="mt-1 break-words text-base font-semibold text-white">{moneyValue(result.eurFxAttributable)}</div>
-            <div className="mt-1 text-[11px] text-slate-300">{coverageValue(result.eurFxCoverageStatus, result.eurFxCoveragePct)}</div>
-          </div>
-          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-            <div className="text-xs text-slate-300">Indexación UF</div>
-            <div data-testid="financial-performance-uf-result" className="mt-1 break-words text-base font-semibold text-white">{moneyValue(result.ufAttributable)}</div>
-            <div className="mt-1 text-[11px] text-slate-300">{coverageValue(result.ufCoverageStatus, result.ufCoveragePct)}</div>
-          </div>
-          <div className="rounded-xl border border-amber-200/20 bg-amber-200/5 p-3">
-            <div className="text-xs text-amber-100/80">
-              {residualLabel}
-            </div>
-            <div data-testid="financial-performance-residual-result" className="mt-1 break-words text-base font-semibold text-amber-100">
-              {moneyValue(result.unexplainedResidual)}
-            </div>
-            {result.quality !== 'RECONSTRUIDO' && <div className="mt-1 text-[10px] text-amber-100/70">Puede incluir causas aún no validadas; no se suma a la rentabilidad.</div>}
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-5 rounded-xl border border-sky-200/20 bg-sky-200/5 p-4">
-        <div className="text-xs font-semibold uppercase tracking-wide text-sky-100">
-          {canPublishReturn ? 'Rentabilidad financiera' : 'Rentabilidad pendiente de validación'}
-        </div>
-        <div className="mt-1 break-words text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-          <span data-testid="financial-performance-published-value">
-            {isLoading ? 'Cargando…' : canPublishReturn ? formatPerformancePct(result.returnPct) : '—'}
-          </span>
-        </div>
-        <div className="mt-2 text-xs text-slate-300">
-          {canPublishReturn
-            ? `${methodLabel} · resultado de cartera ${moneyValue(result.portfolioResult)}`
-            : storageError
-                ? 'No pudimos comprobar la confirmación guardada.'
-                : 'Se muestra la variación de saldos, no una rentabilidad confirmada.'}
-        </div>
-      </div>
-
-      {canPublishReturn && result.returnWithoutFxPct !== null && (
-        <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
-          <div className="rounded-lg border border-white/10 p-3"><span>Rentabilidad sin efecto cambiario</span> <strong className="block mt-1 text-base text-white">{formatPerformancePct(result.returnWithoutFxPct)}</strong><span>Resultado de inversiones e indexación UF.</span></div>
-          <div className="rounded-lg border border-white/10 p-3"><span>Contribución del tipo de cambio</span> <strong className="block mt-1 text-base text-white">{formatPerformancePct(result.fxContributionPct)}</strong><span>Puntos porcentuales sobre el saldo inicial.</span></div>
-        </div>
-      )}
-
-      <details className="mt-5 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-slate-300">
-        <summary className="cursor-pointer font-semibold text-white">Ver cómo se concilia el cálculo</summary>
-        <div className="mt-2 break-words">
-          Variación {moneyValue(result.observedChange)} = flujos {flowEquationValue} + instrumentos {moneyValue(result.investmentAttributable)} + USD {moneyValue(result.usdFxAttributable)} + EUR {moneyValue(result.eurFxAttributable)} + UF {moneyValue(result.ufAttributable)} + sin explicar {moneyValue(result.unexplainedResidual)}
-        </div>
-        <div className="mt-1 text-slate-300">{result.qualityReason}</div>
-        <div className="mt-1 text-slate-300">{result.attributionComplete ? 'Cambio completamente explicado · todas las posiciones conciliadas; tolerancia de $0,01 CLP.' : 'Desglose por causa pendiente o parcial; un residuo redondeado a cero no confirma la cobertura.'}</div>
-      </details>
+      <FinancialPerformanceResultView
+        result={result} confirmation={confirmation} isLoading={isLoading}
+        storageReady={storageReady} storageError={Boolean(storageError)}
+        closures={closures} includeRiskCapital={includeRiskCapital}
+      />
+      <p role="status" className="mt-4 text-xs text-slate-300">
+        {isDraftDirty ? 'Cambios sin guardar: el resultado publicado conserva la última confirmación guardada.' : confirmation?.revision
+          ? `Confirmación guardada · revisión ${confirmation.revision} · ${includeRiskCapital ? 'inversiones con CapRiesgo' : 'inversiones sin CapRiesgo'}.`
+          : 'Falta confirmar los movimientos de este período para publicar rentabilidad.'}
+      </p>
 
       <details className="mt-5 border-t border-white/10 pt-4">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-white [&::-webkit-details-marker]:hidden">
@@ -445,7 +319,7 @@ export const FinancialPerformanceSlice: React.FC<{
             type="button"
             disabled={!storageReady || isLoading || isSaving || !noFlowsWouldChange}
             onClick={saveNoFlows}
-            className="min-h-9 rounded-lg border border-emerald-300/30 bg-emerald-300/10 px-3 text-[11px] font-semibold text-emerald-100 disabled:opacity-40"
+            className="min-h-11 rounded-lg border border-emerald-300/30 bg-emerald-300/10 px-3 text-[11px] font-semibold text-emerald-100 disabled:opacity-40"
           >
             No hubo flujos este mes
           </button>
@@ -453,7 +327,7 @@ export const FinancialPerformanceSlice: React.FC<{
             type="button"
             disabled={!storageReady || isLoading || isSaving || draft.flows.length >= MAX_FINANCIAL_PERFORMANCE_FLOWS}
             onClick={() => addFlow('aporte')}
-            className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-white/15 bg-white/5 px-3 text-[11px] font-semibold text-slate-100 disabled:opacity-40"
+            className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-white/15 bg-white/5 px-3 text-[11px] font-semibold text-slate-100 disabled:opacity-40"
           >
             <Plus size={13} /> Agregar aporte
           </button>
@@ -461,7 +335,7 @@ export const FinancialPerformanceSlice: React.FC<{
             type="button"
             disabled={!storageReady || isLoading || isSaving || draft.flows.length >= MAX_FINANCIAL_PERFORMANCE_FLOWS}
             onClick={() => addFlow('retiro')}
-            className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-white/15 bg-white/5 px-3 text-[11px] font-semibold text-slate-100 disabled:opacity-40"
+            className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-white/15 bg-white/5 px-3 text-[11px] font-semibold text-slate-100 disabled:opacity-40"
           >
             <Plus size={13} /> Agregar retiro
           </button>
@@ -479,7 +353,7 @@ export const FinancialPerformanceSlice: React.FC<{
                   <select
                     value={flow.direction}
                     onChange={(event) => updateFlow(flow.id, { direction: event.target.value as PerformanceFlowDirection })}
-                    className="mt-1 min-h-9 w-full rounded-lg border border-white/15 bg-[#14243a] px-2 text-[11px] text-white"
+                    className="mt-1 min-h-11 w-full rounded-lg border border-white/15 bg-[#14243a] px-2 text-[11px] text-white"
                   >
                     <option value="aporte">Aporte</option>
                     <option value="retiro">Retiro</option>
@@ -493,7 +367,7 @@ export const FinancialPerformanceSlice: React.FC<{
                     max={monthEndDate(period.endMonth)}
                     value={flow.effectiveDate}
                     onChange={(event) => updateFlow(flow.id, { effectiveDate: event.target.value })}
-                    className="mt-1 min-h-9 w-full rounded-lg border border-white/15 bg-[#14243a] px-2 text-[11px] text-white"
+                    className="mt-1 min-h-11 w-full rounded-lg border border-white/15 bg-[#14243a] px-2 text-[11px] text-white"
                   />
                 </label>
                 <label className="text-[10px] text-slate-400">
@@ -504,7 +378,7 @@ export const FinancialPerformanceSlice: React.FC<{
                     step="1"
                     value={flow.amountClp}
                     onChange={(event) => updateFlow(flow.id, { amountClp: event.target.value })}
-                    className="mt-1 min-h-9 w-full rounded-lg border border-white/15 bg-[#14243a] px-2 text-[11px] text-white"
+                    className="mt-1 min-h-11 w-full rounded-lg border border-white/15 bg-[#14243a] px-2 text-[11px] text-white"
                     placeholder="10.000.000"
                   />
                 </label>
@@ -514,7 +388,7 @@ export const FinancialPerformanceSlice: React.FC<{
                     type="text"
                     value={flow.note || ''}
                     onChange={(event) => updateFlow(flow.id, { note: event.target.value })}
-                    className="mt-1 min-h-9 w-full rounded-lg border border-white/15 bg-[#14243a] px-2 text-[11px] text-white"
+                    className="mt-1 min-h-11 w-full rounded-lg border border-white/15 bg-[#14243a] px-2 text-[11px] text-white"
                     maxLength={160}
                   />
                 </label>
@@ -524,7 +398,7 @@ export const FinancialPerformanceSlice: React.FC<{
                     type="text"
                     value={flow.reference || ''}
                     onChange={(event) => updateFlow(flow.id, { reference: event.target.value })}
-                    className="mt-1 min-h-9 w-full rounded-lg border border-white/15 bg-[#14243a] px-2 text-[11px] text-white"
+                    className="mt-1 min-h-11 w-full rounded-lg border border-white/15 bg-[#14243a] px-2 text-[11px] text-white"
                     maxLength={120}
                   />
                 </label>
@@ -532,7 +406,7 @@ export const FinancialPerformanceSlice: React.FC<{
                   type="button"
                   onClick={() => removeFlow(flow.id)}
                   aria-label={`Eliminar movimiento ${index + 1}`}
-                  className="inline-flex min-h-9 items-center justify-center gap-1 self-end rounded-lg border border-rose-300/25 bg-rose-300/5 px-2 text-[11px] text-rose-200"
+                  className="inline-flex min-h-11 items-center justify-center gap-1 self-end rounded-lg border border-rose-300/25 bg-rose-300/5 px-2 text-[11px] text-rose-200"
                 >
                   <Trash2 size={13} /> Eliminar
                 </button>
@@ -547,8 +421,9 @@ export const FinancialPerformanceSlice: React.FC<{
               <button
                 type="button"
                 onClick={() => setFlowCompleteness('complete')}
+                aria-pressed={draft.flowCompleteness === 'complete'}
                 className={cn(
-                  'min-h-9 rounded-lg border px-3 text-[11px] font-semibold',
+                  'min-h-11 rounded-lg border px-3 text-[11px] font-semibold',
                   draft.flowCompleteness === 'complete'
                     ? 'border-emerald-300/40 bg-emerald-300/10 text-emerald-100'
                     : 'border-white/15 bg-white/5 text-slate-300',
@@ -559,8 +434,9 @@ export const FinancialPerformanceSlice: React.FC<{
               <button
                 type="button"
                 onClick={() => setFlowCompleteness('incomplete')}
+                aria-pressed={draft.flowCompleteness === 'incomplete'}
                 className={cn(
-                  'min-h-9 rounded-lg border px-3 text-[11px] font-semibold',
+                  'min-h-11 rounded-lg border px-3 text-[11px] font-semibold',
                   draft.flowCompleteness === 'incomplete'
                     ? 'border-amber-300/40 bg-amber-300/10 text-amber-100'
                     : 'border-white/15 bg-white/5 text-slate-300',
@@ -589,11 +465,12 @@ export const FinancialPerformanceSlice: React.FC<{
             type="button"
             disabled={!storageReady || isLoading || isSaving || !isDraftDirty}
             onClick={() => void persistDraft(draft)}
-            className="min-h-10 rounded-lg bg-sky-400 px-4 text-xs font-semibold text-slate-950 disabled:opacity-40"
+            className="min-h-11 rounded-lg bg-sky-400 px-4 text-xs font-semibold text-slate-950 disabled:opacity-40"
           >
             {isSaving ? 'Guardando…' : 'Guardar confirmación'}
           </button>
         </div>
+        {isDraftDirty && <button type="button" onClick={() => { setDraft(toConfirmationDraft(confirmation, period.endMonth)); setDraftError(''); }} className="mt-2 min-h-11 rounded-lg border border-white/20 px-3 text-xs text-slate-100">Descartar borrador</button>}
         {confirmation?.revision && (
           <p className="mt-2 text-[10px] text-slate-400">
             Guardado como revisión {confirmation.revision}. Las revisiones anteriores se conservan para auditoría.

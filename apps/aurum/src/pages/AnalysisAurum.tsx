@@ -636,9 +636,15 @@ export const AnalysisAurum: React.FC = () => {
         <ReturnsTab {...returnsTabProps} />
       )}
 
-      {!!errorMessage && (
+      {!!errorMessage && (tab === 'lab' ? (
+        <details className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+          <summary className="min-h-6 cursor-pointer font-semibold">Auditoría del contexto patrimonial</summary>
+          <p className="mt-2">Estos avisos contables corresponden al patrimonio. No cambian el cálculo de las inversiones mostrado arriba.</p>
+          <p className="mt-2 whitespace-pre-line break-words">{errorMessage}</p>
+        </details>
+      ) : (
         <Card className="whitespace-pre-line border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{errorMessage}</Card>
-      )}
+      ))}
 
       <Card className="border-slate-200 bg-slate-50 p-3">
         <div className="flex items-center gap-2 text-xs text-slate-600">

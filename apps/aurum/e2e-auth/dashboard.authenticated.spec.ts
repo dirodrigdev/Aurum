@@ -20,6 +20,8 @@ const addFinancialPerformanceClosureFixture = async () => {
   const appName = 'aurum-financial-performance-e2e';
   const app = getApps().find((candidate) => candidate.name === appName)
     || initializeApp({ projectId: 'aurum-e2e-local' }, appName);
+  // Each repeat starts from its own synthetic confirmation state; never reuse a previous run.
+  await getFirestore(app).recursiveDelete(getFirestore(app).doc('aurum_financial_performance/aurum-e2e-user'));
   const closureRef = getFirestore(app).doc('aurum_wealth/aurum-e2e-user');
   const snapshot = await closureRef.get();
   if (!snapshot.exists) throw new Error('No existe el usuario sintético de Aurum E2E.');
@@ -277,7 +279,7 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
   await page.getByLabel('Monto CLP').fill('10000000');
   await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
   await expect(publishedPerformanceValue).toHaveText(simpleReturnValue);
-  await expect(page.getByText('cambios sin guardar', { exact: false })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Cambios sin guardar' })).toBeVisible();
   await page.getByRole('button', { name: 'Guardar confirmación', exact: true }).click();
   await expect(page.getByText(/^Guardado como revisión 3\./)).toBeVisible();
   await expect(page.getByText('INDICATIVO', { exact: true })).toBeVisible();
@@ -345,9 +347,22 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
   await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
   await expect(page.getByText('Rentabilidad sin efecto cambiario', { exact: true })).toBeVisible();
   const riskReturn = await publishedPerformanceValue.innerText();
+  await page.getByText('Ver cómo se concilia el cálculo', { exact: true }).click();
+  await expect(page.getByText('Saldo inicial', { exact: true })).toBeVisible();
+  await page.getByText('Cierre y posiciones · Julio de 2026', { exact: true }).click();
+  await expect(page.getByText('Cierre y posiciones · Julio de 2026', { exact: true }).locator('..').getByText('Capital de riesgo CLP', { exact: true })).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: testInfo.outputPath('aurum-risk-audit-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-risk-audit-mobile.png'), fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByText('Ver cómo se concilia el cálculo', { exact: true }).click();
+  await page.getByText('Revisar validación del período', { exact: true }).click();
   for (const [name, width, height] of [['desktop', 1440, 1000], ['tablet', 820, 1180], ['mobile', 390, 844]] as const) {
     await page.setViewportSize({ width, height });
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+    await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: testInfo.outputPath(`aurum-risk-confirmed-${name}.png`), fullPage: true });
   }
   await page.setViewportSize({ width: 1440, height: 1000 });

@@ -123,6 +123,34 @@ describe('financial performance confirmation read errors', () => {
     expect(container.textContent).toContain('INDICATIVO');
   });
 
+  it('requires confirmation before replacing entered flows with zero and can discard a draft without writing', async () => {
+    const saved = {
+      schemaVersion: 1, monthKey: '2024-08', revision: 3,
+      flowCompleteness: 'complete', positionMovementCompleteness: 'no_unrecorded_movements',
+      flows: [{ id: 'existing', direction: 'aporte', effectiveDate: '2024-08-15', amountClp: 100 }],
+    };
+    storageMock.load.mockResolvedValue(saved);
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => root?.render(React.createElement(FinancialPerformanceSlice, {
+      closures: [makeClosure('2024-07', 1000), makeClosure('2024-08', 1200)],
+      includeRiskCapital: false, period: { startMonth: '2024-07', endMonth: '2024-08' },
+    })));
+    const button = (name: string) => Array.from(container!.querySelectorAll('button')).find(b => b.textContent === name);
+    await act(async () => button('No hubo flujos este mes')?.click());
+    expect(window.confirm).toHaveBeenCalledOnce();
+    expect(storageMock.append).not.toHaveBeenCalled();
+    expect(container.querySelectorAll('input[type="number"]')).toHaveLength(1);
+    await act(async () => button('Incompleta / no sé')?.click());
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('Cambios sin guardar');
+    await act(async () => button('Descartar borrador')?.click());
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('Confirmación guardada');
+    expect(container.querySelectorAll('input[type="number"]')).toHaveLength(1);
+    expect(storageMock.append).not.toHaveBeenCalled();
+  });
+
   it('does not read or write confirmations when there is no comparable monthly interval', async () => {
     container = document.createElement('div');
     document.body.appendChild(container);
