@@ -5797,9 +5797,17 @@ export const mergeClosuresForSync = (
         ? [toClosureVersion(remoteClosure, localClosure.closedAt)]
         : [];
       const mergedVersions = mergeClosureVersions(localClosure.previousVersions, remoteClosure.previousVersions, remoteAsVersion);
+      const gastappRevisionMerge = mergeSameFinancialClosureGastappRevision(localClosure, remoteClosure);
+      let reconciledClosure = gastappRevisionMerge;
+      if (reconciledClosure) {
+        const previousVersions = mergeClosureVersions(reconciledClosure.previousVersions, mergedVersions);
+        if (previousVersions.length) reconciledClosure = { ...reconciledClosure, previousVersions };
+      }
       mergedByMonth.set(
         localClosure.monthKey,
-        mergedVersions.length ? { ...localClosure, previousVersions: mergedVersions } : localClosure,
+        reconciledClosure
+          ? reconciledClosure
+          : mergedVersions.length ? { ...localClosure, previousVersions: mergedVersions } : localClosure,
       );
     });
     return [...mergedByMonth.values()].sort(compareClosuresByMonthDesc);
@@ -5811,6 +5819,11 @@ export const mergeClosuresForSync = (
     const prev = map.get(key);
     if (!prev) {
       map.set(key, closure);
+      continue;
+    }
+    const gastappRevisionMerge = mergeSameFinancialClosureGastappRevision(prev, closure);
+    if (gastappRevisionMerge) {
+      map.set(key, gastappRevisionMerge);
       continue;
     }
     const tPrev = new Date(prev.closedAt).getTime();
@@ -5832,6 +5845,51 @@ export const mergeClosuresForSync = (
     );
   }
   return [...map.values()].sort(compareClosuresByMonthDesc);
+};
+
+/**
+ * Reconcile accepted GastApp revisions independently of the sealed wealth
+ * photo. A stale browser must not roll back a newer accepted revision when
+ * its unrelated local edits make the general sync prefer local state.
+ */
+const mergeSameFinancialClosureGastappRevision = (
+  first: WealthMonthlyClosure,
+  second: WealthMonthlyClosure,
+): WealthMonthlyClosure | null => {
+  if (confirmedClosureMismatchFields(first, second, ['gastappExpenseClose']).length) return null;
+  const firstSnapshot = first.gastappExpenseClose;
+  const secondSnapshot = second.gastappExpenseClose;
+  const mergedPreviousVersions = mergeClosureVersions(first.previousVersions, second.previousVersions);
+  if (!firstSnapshot && !secondSnapshot) return null;
+  if (!firstSnapshot) return { ...second, previousVersions: mergedPreviousVersions.length ? mergedPreviousVersions : undefined };
+  if (!secondSnapshot) return { ...first, previousVersions: mergedPreviousVersions.length ? mergedPreviousVersions : undefined };
+  if (firstSnapshot.contractHash === secondSnapshot.contractHash) {
+    return { ...second, previousVersions: mergedPreviousVersions.length ? mergedPreviousVersions : undefined };
+  }
+
+  const firstRevision = Number(firstSnapshot.certificationRevision || 0);
+  const secondRevision = Number(secondSnapshot.certificationRevision || 0);
+  const firstCapturedAt = new Date(firstSnapshot.capturedAt || firstSnapshot.generatedAt).getTime();
+  const secondCapturedAt = new Date(secondSnapshot.capturedAt || secondSnapshot.generatedAt).getTime();
+  const winner = secondRevision > firstRevision ||
+    (secondRevision === firstRevision && secondCapturedAt >= firstCapturedAt) ? second : first;
+  const superseded = winner === second ? first : second;
+  const supersededSnapshot = superseded.gastappExpenseClose!;
+  const archivedVersion = toClosureVersion(
+    {
+      ...superseded,
+      id: `${superseded.id}:gastapp:${supersededSnapshot.certificationRevision}:${supersededSnapshot.contractHash.slice(-8)}`,
+    },
+    winner.gastappExpenseClose?.capturedAt || nowIso(),
+  );
+  return {
+    ...winner,
+    previousVersions: mergeClosureVersions(
+      first.previousVersions,
+      second.previousVersions,
+      [archivedVersion],
+    ),
+  };
 };
 
 const mergeClosures = (
@@ -5906,12 +5964,13 @@ const serializeConfirmedClosure = (closure: WealthMonthlyClosure) => ({
 const confirmedClosureMismatchFields = (
   expected: WealthMonthlyClosure,
   persisted: WealthMonthlyClosure | null,
+  ignoredFields: Array<keyof ReturnType<typeof serializeConfirmedClosure>> = [],
 ) => {
   if (!persisted) return ['missing'];
   const expectedFields = serializeConfirmedClosure(expected);
   const persistedFields = serializeConfirmedClosure(persisted);
   return (Object.keys(expectedFields) as Array<keyof typeof expectedFields>).filter(
-    (field) => stableJson(expectedFields[field]) !== stableJson(persistedFields[field]),
+    (field) => !ignoredFields.includes(field) && stableJson(expectedFields[field]) !== stableJson(persistedFields[field]),
   );
 };
 
@@ -6015,6 +6074,7 @@ export const upsertMonthlyClosure = (input: {
 export const acceptGastappMonthlyClosureRevision = async (input: {
   monthKey: string;
   expectedPreviousContractHash: string;
+  expectedCandidateContractHash: string;
   snapshot: GastappMonthlyExpenseCloseInput;
 }): Promise<{ closure: WealthMonthlyClosure; changed: boolean }> => {
   const monthKey = normalizeMonthKey(input.monthKey);
@@ -6026,10 +6086,13 @@ export const acceptGastappMonthlyClosureRevision = async (input: {
   if (!localClosure?.gastappExpenseClose || !localClosure.fxRates) {
     throw new Error('Este cierre no tiene un snapshot de GastApp y requiere revisión manual.');
   }
-  if (localClosure.gastappExpenseClose.contractHash === input.snapshot.contractHash) {
-    return { closure: localClosure, changed: false };
+  if (input.snapshot.contractHash !== input.expectedCandidateContractHash) {
+    throw new Error('La revisión de GastApp cambió desde la comparación. Vuelve a revisar antes de aceptar.');
   }
-  if (localClosure.gastappExpenseClose.contractHash !== input.expectedPreviousContractHash) {
+  if (
+    localClosure.gastappExpenseClose.contractHash !== input.expectedPreviousContractHash &&
+    localClosure.gastappExpenseClose.contractHash !== input.snapshot.contractHash
+  ) {
     throw new Error('El cierre de Aurum cambió desde que se mostró la comparación. Vuelve a revisar la nueva versión.');
   }
 
@@ -6054,7 +6117,7 @@ export const acceptGastappMonthlyClosureRevision = async (input: {
     if (remoteClosure.gastappExpenseClose.contractHash !== input.expectedPreviousContractHash) {
       throw new Error('La versión cloud del cierre cambió. Vuelve a comparar antes de aceptar.');
     }
-    const changedFinancialFields = confirmedClosureMismatchFields(localClosure, remoteClosure);
+    const changedFinancialFields = confirmedClosureMismatchFields(localClosure, remoteClosure, ['gastappExpenseClose']);
     if (changedFinancialFields.length) {
       throw new Error(`El cierre de Aurum cambió en la nube (${changedFinancialFields.join(', ')}); no apliqué la revisión.`);
     }
@@ -6082,6 +6145,9 @@ export const acceptGastappMonthlyClosureRevision = async (input: {
   const currentLocalClosures = loadClosures();
   const latestLocal = currentLocalClosures.find((closure) => closure.monthKey === monthKey);
   const updatedClosure = transactionResult.closure;
+  if (latestLocal && confirmedClosureMismatchFields(updatedClosure, latestLocal, ['gastappExpenseClose']).length) {
+    throw new Error('La revisión quedó guardada en la nube, pero el cierre local cambió durante la espera. Recarga Aurum y revisa de nuevo antes de continuar.');
+  }
   const localUpdatedClosure: WealthMonthlyClosure = {
     ...(latestLocal || updatedClosure),
     gastappExpenseClose: updatedClosure.gastappExpenseClose,

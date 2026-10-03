@@ -173,7 +173,32 @@ test('accepting a certified GastApp revision updates the whole Aurum chain witho
     expect(buttonBox!.y + buttonBox!.height).toBeLessThan(viewport.height - 80);
     await page.screenshot({ path: testInfo.outputPath(`gastapp-revision-accept-${viewport.name}.png`) });
   }
-  await page.getByRole('button', { name: 'Aceptar y actualizar cadena', exact: true }).click();
+  const acceptButton = page.getByRole('button', { name: 'Aceptar y actualizar cadena', exact: true });
+  await page.evaluate((hash) => {
+    const closures = JSON.parse(window.localStorage.getItem('wealth_closures_v1') || '[]');
+    window.localStorage.setItem('wealth_closures_v1', JSON.stringify(closures.map((closure: { monthKey: string; gastappExpenseClose?: { contractHash: string } }) =>
+      closure.monthKey === '2026-07'
+        ? { ...closure, gastappExpenseClose: { ...(closure.gastappExpenseClose || {}), contractHash: hash } }
+        : closure)));
+  }, `sha256:${'c'.repeat(64)}`);
+  await acceptButton.click();
+  const staleComparisonMessage = page.getByRole('status').filter({ hasText: 'La revisión cambió o aún no está certificada' }).last();
+  await expect(staleComparisonMessage).toBeVisible();
+  for (const viewport of [
+    { name: 'desktop', width: 1280, height: 800 },
+    { name: 'tablet', width: 768, height: 1024 },
+    { name: 'mobile', width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await staleComparisonMessage.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath(`gastapp-revision-stale-warning-${viewport.name}.png`) });
+  }
+  await page.evaluate((snapshot) => {
+    const closures = JSON.parse(window.localStorage.getItem('wealth_closures_v1') || '[]');
+    window.localStorage.setItem('wealth_closures_v1', JSON.stringify(closures.map((closure: { monthKey: string }) =>
+      closure.monthKey === '2026-07' ? { ...closure, gastappExpenseClose: snapshot } : closure)));
+  }, previousSnapshot);
+  await acceptButton.click();
   await expect(page.getByRole('status').filter({ hasText: 'aceptada' })).toBeVisible();
   const updated = await cloudClosure('2026-07');
   expect(updated.gastappExpenseClose.totalEur).toBe(2715);

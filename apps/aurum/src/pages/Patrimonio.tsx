@@ -7254,10 +7254,18 @@ export const Patrimonio: React.FC = () => {
     }
   };
 
-  const acceptGastappRevision = async (monthKey: string) => {
+  const acceptGastappRevision = async (
+    monthKey: string,
+    expectedPreviousContractHash: string,
+    expectedCandidateContractHash: string,
+  ) => {
     const closure = loadClosures().find((item) => item.monthKey === monthKey);
     if (!closure?.gastappExpenseClose) {
       setGastappRevisionMessage('No encontré el snapshot de GastApp guardado para este cierre.');
+      return;
+    }
+    if (closure.gastappExpenseClose.contractHash !== expectedPreviousContractHash) {
+      setGastappRevisionMessage('La revisión cambió o aún no está certificada. Actualiza la comparación.');
       return;
     }
     setGastappRevisionSaving(true);
@@ -7268,9 +7276,13 @@ export const Patrimonio: React.FC = () => {
       if (!candidate.snapshot || !candidate.sourceChangedAfterClosure) {
         throw new Error(candidate.message || 'La revisión cambió o aún no está certificada. Actualiza la comparación.');
       }
+      if (candidate.snapshot.contractHash !== expectedCandidateContractHash) {
+        throw new Error('La revisión cambió o aún no está certificada. Actualiza la comparación.');
+      }
       const result = await acceptGastappMonthlyClosureRevision({
         monthKey,
-        expectedPreviousContractHash: closure.gastappExpenseClose.contractHash,
+        expectedPreviousContractHash,
+        expectedCandidateContractHash,
         snapshot: candidate.snapshot,
       });
       refreshClosures();
@@ -8667,7 +8679,11 @@ export const Patrimonio: React.FC = () => {
                     </div>
                     <div className="mt-1">Día a día: {selectedClosureForDraft.gastappExpenseClose.byFamilyEur.dayToDay.toFixed(2)} → {gastappMonthlyCloseCandidate.snapshot.byFamilyEur.dayToDay.toFixed(2)} EUR · Viajes: {selectedClosureForDraft.gastappExpenseClose.byFamilyEur.trips.toFixed(2)} → {gastappMonthlyCloseCandidate.snapshot.byFamilyEur.trips.toFixed(2)} EUR · Otros: {selectedClosureForDraft.gastappExpenseClose.byFamilyEur.others.toFixed(2)} → {gastappMonthlyCloseCandidate.snapshot.byFamilyEur.others.toFixed(2)} EUR</div>
                     <div className="mt-1">Al aceptar se recalculan Análisis mensual y acumulado, Wealth Lab, Dashboard (12/36 meses) y presentaciones. Se mantienen iguales tasas y datos de patrimonio.</div>
-                    <Button className="mt-2" size="sm" disabled={gastappRevisionSaving} onClick={() => void acceptGastappRevision(closeMonthDraft)}>
+                    <Button className="mt-2" size="sm" disabled={gastappRevisionSaving} onClick={() => void acceptGastappRevision(
+                      closeMonthDraft,
+                      selectedClosureForDraft.gastappExpenseClose!.contractHash,
+                      gastappMonthlyCloseCandidate.snapshot!.contractHash,
+                    )}>
                       {gastappRevisionSaving ? 'Guardando revisión…' : 'Aceptar y actualizar cadena'}
                     </Button>
                   </>
