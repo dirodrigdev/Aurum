@@ -59,10 +59,21 @@ service cloud.firestore {
         );
     }
 
-    function pointsToFinancialPerformanceRevisionAfter(database, userId, monthKey, headData) {
+    function hasValidFinancialPerformancePerimeter(data, perimeter) {
+      return (perimeter == 'investment'
+          && (!data.keys().hasAny(['perimeter']) || data.perimeter == perimeter))
+        || (perimeter == 'investment_with_risk'
+          && data.keys().hasAll(['perimeter', 'startMonth', 'endMonth'])
+          && data.perimeter == perimeter);
+    }
+
+    function pointsToFinancialPerformanceRevisionAfter(database, userId, monthKey, headData, perimeter) {
       let revisionId = headData.currentRevisionId;
-      let revisionPath = /databases/$(database)/documents/aurum_financial_performance/$(userId)/months/$(monthKey)/revisions/$(revisionId);
+      let revisionPath = perimeter == 'investment'
+        ? /databases/$(database)/documents/aurum_financial_performance/$(userId)/months/$(monthKey)/revisions/$(revisionId)
+        : /databases/$(database)/documents/aurum_financial_performance/$(userId)/perimeters/$(perimeter)/months/$(monthKey)/revisions/$(revisionId);
       return existsAfter(revisionPath)
+        && hasValidFinancialPerformancePerimeter(getAfter(revisionPath).data, perimeter)
         && getAfter(revisionPath).data.schemaVersion == 1
         && getAfter(revisionPath).data.monthKey == monthKey
         && financialPerformancePeriodsMatch(headData, getAfter(revisionPath).data, monthKey)
@@ -72,20 +83,24 @@ service cloud.firestore {
         && getAfter(revisionPath).data.createdAt == request.time;
     }
 
-    function pointsToFinancialPerformanceHeadAfter(database, userId, monthKey, revisionData, revisionId) {
-      let headPath = /databases/$(database)/documents/aurum_financial_performance/$(userId)/months/$(monthKey);
+    function pointsToFinancialPerformanceHeadAfter(database, userId, monthKey, revisionData, revisionId, perimeter) {
+      let headPath = perimeter == 'investment'
+        ? /databases/$(database)/documents/aurum_financial_performance/$(userId)/months/$(monthKey)
+        : /databases/$(database)/documents/aurum_financial_performance/$(userId)/perimeters/$(perimeter)/months/$(monthKey);
       return existsAfter(headPath)
+        && hasValidFinancialPerformancePerimeter(getAfter(headPath).data, perimeter)
         && getAfter(headPath).data.currentRevision == revisionData.revision
         && getAfter(headPath).data.currentRevisionId == revisionId
         && financialPerformancePeriodsMatch(getAfter(headPath).data, revisionData, monthKey)
         && getAfter(headPath).data.updatedAt == request.time;
     }
 
-    function isValidFinancialPerformanceMonthPointer(database, userId, monthKey) {
+    function isValidFinancialPerformanceMonthPointer(database, userId, monthKey, perimeter) {
       let data = request.resource.data;
       return isOwner(userId)
         && hasValidFinancialPerformancePeriod(data, monthKey)
-        && data.keys().hasOnly(['schemaVersion', 'monthKey', 'startMonth', 'endMonth', 'currentRevision', 'currentRevisionId', 'updatedAt'])
+        && hasValidFinancialPerformancePerimeter(data, perimeter)
+        && data.keys().hasOnly(['schemaVersion', 'monthKey', 'perimeter', 'startMonth', 'endMonth', 'currentRevision', 'currentRevisionId', 'updatedAt'])
         && data.keys().hasAll(['schemaVersion', 'monthKey', 'currentRevision', 'currentRevisionId', 'updatedAt'])
         && data.schemaVersion == 1
         && data.monthKey == monthKey
@@ -94,16 +109,17 @@ service cloud.firestore {
         && data.currentRevisionId is string
         && data.currentRevisionId == string(data.currentRevision)
         && data.updatedAt == request.time
-        && pointsToFinancialPerformanceRevisionAfter(database, userId, monthKey, data);
+        && pointsToFinancialPerformanceRevisionAfter(database, userId, monthKey, data, perimeter);
     }
 
-    function isValidFinancialPerformanceRevision(database, userId, monthKey, revisionId) {
+    function isValidFinancialPerformanceRevision(database, userId, monthKey, revisionId, perimeter) {
       let data = request.resource.data;
       return isOwner(userId)
         && hasValidFinancialPerformancePeriod(data, monthKey)
+        && hasValidFinancialPerformancePerimeter(data, perimeter)
         && revisionId.matches('^[1-9][0-9]*$')
         && data.keys().hasOnly([
-          'schemaVersion', 'monthKey', 'startMonth', 'endMonth', 'revision', 'revisionId', 'flowCompleteness',
+          'schemaVersion', 'monthKey', 'perimeter', 'startMonth', 'endMonth', 'revision', 'revisionId', 'flowCompleteness',
           'positionMovementCompleteness', 'flows', 'createdAt', 'createdByUid'
         ])
         && data.keys().hasAll([
@@ -123,7 +139,7 @@ service cloud.firestore {
         && data.createdAt == request.time
         && data.createdByUid == userId
         // Flow-item fields are validated by the app service; Rules enforce the owner-scoped envelope and list size.
-        && pointsToFinancialPerformanceHeadAfter(database, userId, monthKey, data, revisionId);
+        && pointsToFinancialPerformanceHeadAfter(database, userId, monthKey, data, revisionId, perimeter);
     }
 
     // Aurum wealth data is user-scoped. This includes:
@@ -143,21 +159,47 @@ service cloud.firestore {
     // Each revision is append-only; only the month document's current pointer can change.
     match /aurum_financial_performance/{userId}/months/{monthKey} {
       allow read: if isOwner(userId) && isValidFinancialPerformanceMonthKey(monthKey);
-      allow create: if isValidFinancialPerformanceMonthPointer(database, userId, monthKey)
+      allow create: if isValidFinancialPerformanceMonthPointer(database, userId, monthKey, 'investment')
         && request.resource.data.currentRevision == 1;
-      allow update: if isValidFinancialPerformanceMonthPointer(database, userId, monthKey)
+      allow update: if isValidFinancialPerformanceMonthPointer(database, userId, monthKey, 'investment')
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'startMonth', 'endMonth', 'currentRevision', 'currentRevisionId', 'updatedAt'
+          'perimeter', 'startMonth', 'endMonth', 'currentRevision', 'currentRevisionId', 'updatedAt'
         ])
         && (!resource.data.keys().hasAny(['startMonth', 'endMonth'])
           || (request.resource.data.startMonth == resource.data.startMonth
             && request.resource.data.endMonth == resource.data.endMonth))
+        && (!resource.data.keys().hasAny(['perimeter'])
+          || request.resource.data.perimeter == resource.data.perimeter)
         && request.resource.data.currentRevision == resource.data.currentRevision + 1;
       allow delete: if false;
 
       match /revisions/{revisionId} {
         allow read: if isOwner(userId) && isValidFinancialPerformanceMonthKey(monthKey);
-        allow create: if isValidFinancialPerformanceRevision(database, userId, monthKey, revisionId);
+        allow create: if isValidFinancialPerformanceRevision(database, userId, monthKey, revisionId, 'investment');
+        allow update, delete: if false;
+      }
+    }
+
+    // Risk-inclusive confirmations have their own immutable revision stream.
+    match /aurum_financial_performance/{userId}/perimeters/{perimeter}/months/{monthKey} {
+      allow read: if perimeter == 'investment_with_risk' && isOwner(userId) && isValidFinancialPerformanceMonthKey(monthKey);
+      allow create: if perimeter == 'investment_with_risk' && isValidFinancialPerformanceMonthPointer(database, userId, monthKey, perimeter)
+        && request.resource.data.currentRevision == 1;
+      allow update: if perimeter == 'investment_with_risk' && isValidFinancialPerformanceMonthPointer(database, userId, monthKey, perimeter)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'perimeter', 'startMonth', 'endMonth', 'currentRevision', 'currentRevisionId', 'updatedAt'
+        ])
+        && (!resource.data.keys().hasAny(['startMonth', 'endMonth'])
+          || (request.resource.data.startMonth == resource.data.startMonth
+            && request.resource.data.endMonth == resource.data.endMonth))
+        && (!resource.data.keys().hasAny(['perimeter'])
+          || request.resource.data.perimeter == resource.data.perimeter)
+        && request.resource.data.currentRevision == resource.data.currentRevision + 1;
+      allow delete: if false;
+
+      match /revisions/{revisionId} {
+        allow read: if perimeter == 'investment_with_risk' && isOwner(userId) && isValidFinancialPerformanceMonthKey(monthKey);
+        allow create: if perimeter == 'investment_with_risk' && isValidFinancialPerformanceRevision(database, userId, monthKey, revisionId, perimeter);
         allow update, delete: if false;
       }
     }

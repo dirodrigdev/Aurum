@@ -147,9 +147,16 @@ export interface FinancialPerformanceFlow {
   reference?: string;
 }
 
+export type FinancialPerformancePerimeter = 'investment' | 'investment_with_risk';
+
+export const financialPerformancePerimeter = (includeRiskCapital: boolean): FinancialPerformancePerimeter =>
+  includeRiskCapital ? 'investment_with_risk' : 'investment';
+
 export interface FinancialPerformanceConfirmation {
   schemaVersion: 1;
   monthKey: string;
+  /** Legacy confirmations without this field apply only to the base investment perimeter. */
+  perimeter?: FinancialPerformancePerimeter;
   flowCompleteness: FlowCompleteness;
   positionMovementCompleteness: PositionMovementCompleteness;
   flows: FinancialPerformanceFlow[];
@@ -347,6 +354,7 @@ export const isFinancialPerformanceConfirmationValid = (
     !period ||
     !isFinancialPerformancePeriodValid(period) ||
     confirmation.monthKey !== period.endMonth ||
+    (confirmation.perimeter !== undefined && confirmation.perimeter !== 'investment' && confirmation.perimeter !== 'investment_with_risk') ||
     (confirmation.flowCompleteness !== 'complete' && confirmation.flowCompleteness !== 'incomplete') ||
     (confirmation.positionMovementCompleteness !== 'no_unrecorded_movements' &&
     confirmation.positionMovementCompleteness !== 'unconfirmed') ||

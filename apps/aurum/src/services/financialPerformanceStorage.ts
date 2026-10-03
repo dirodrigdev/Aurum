@@ -16,6 +16,7 @@ import {
   type FinancialPerformanceConfirmation,
   type FinancialPerformanceFlow,
   type FinancialPerformancePeriod,
+  type FinancialPerformancePerimeter,
 } from './financialPerformance';
 
 const PERFORMANCE_COLLECTION = 'aurum_financial_performance';
@@ -28,7 +29,19 @@ const LEGACY_PERIOD: FinancialPerformancePeriod = {
 
 export interface FinancialPerformanceStorageContext {
   expectedUid?: string;
+  perimeter?: FinancialPerformancePerimeter;
 }
+
+const resolvePerimeter = (context: FinancialPerformanceStorageContext): FinancialPerformancePerimeter => {
+  const perimeter = context.perimeter ?? 'investment';
+  if (perimeter !== 'investment' && perimeter !== 'investment_with_risk') throw new Error('financial_performance_invalid_perimeter');
+  return perimeter;
+};
+
+const perimeterMetadataMatches = (raw: Record<string, unknown>, perimeter: FinancialPerformancePerimeter): boolean =>
+  perimeter === 'investment'
+    ? raw.perimeter === undefined || raw.perimeter === 'investment'
+    : raw.perimeter === perimeter && typeof raw.startMonth === 'string' && typeof raw.endMonth === 'string';
 
 const assertCurrentAccount = (uid: string): void => {
   if (getCurrentUid() !== uid) throw new Error('financial_performance_account_changed');
@@ -44,8 +57,10 @@ const requireUid = async (context: FinancialPerformanceStorageContext): Promise<
   return uid;
 };
 
-const monthDocument = (uid: string, monthKey: string) =>
-  doc(db, PERFORMANCE_COLLECTION, uid, MONTHS_SUBCOLLECTION, monthKey);
+const monthDocument = (uid: string, monthKey: string, perimeter: FinancialPerformancePerimeter) =>
+  perimeter === 'investment'
+    ? doc(db, PERFORMANCE_COLLECTION, uid, MONTHS_SUBCOLLECTION, monthKey)
+    : doc(db, PERFORMANCE_COLLECTION, uid, 'perimeters', perimeter, MONTHS_SUBCOLLECTION, monthKey);
 
 const resolvePeriod = (period: FinancialPerformancePeriod = LEGACY_PERIOD) => {
   const monthKey = financialPerformancePeriodKey(period);
@@ -95,11 +110,13 @@ const normalizeConfirmation = (
   revisionId: string,
   uid: string,
   period: FinancialPerformancePeriod,
+  perimeter: FinancialPerformancePerimeter,
 ): FinancialPerformanceConfirmation | null => {
   if (
     raw.schemaVersion !== 1 ||
     raw.monthKey !== period.endMonth ||
     !periodMetadataMatches(raw, period) ||
+    !perimeterMetadataMatches(raw, perimeter) ||
     raw.revision !== revision ||
     raw.revisionId !== revisionId ||
     raw.createdByUid !== uid ||
@@ -115,6 +132,7 @@ const normalizeConfirmation = (
   const confirmation: FinancialPerformanceConfirmation = {
     schemaVersion: 1,
     monthKey: period.endMonth,
+    ...(raw.perimeter === undefined ? {} : { perimeter }),
     flowCompleteness: raw.flowCompleteness,
     positionMovementCompleteness: raw.positionMovementCompleteness,
     flows: flows as FinancialPerformanceFlow[],
@@ -130,8 +148,9 @@ export const loadFinancialPerformanceConfirmation = async (
   context: FinancialPerformanceStorageContext = {},
 ): Promise<FinancialPerformanceConfirmation | null> => {
   const { period, monthKey } = resolvePeriod(requestedPeriod);
+  const perimeter = resolvePerimeter(context);
   const uid = await requireUid(context);
-  const monthRef = monthDocument(uid, monthKey);
+  const monthRef = monthDocument(uid, monthKey, perimeter);
   const monthSnapshot = await getDoc(monthRef);
   assertCurrentAccount(uid);
   if (!monthSnapshot.exists()) return null;
@@ -142,6 +161,7 @@ export const loadFinancialPerformanceConfirmation = async (
     monthData?.schemaVersion !== 1 ||
     monthData.monthKey !== monthKey ||
     !periodMetadataMatches(monthData, period) ||
+    !perimeterMetadataMatches(monthData, perimeter) ||
     !Number.isInteger(revision) ||
     revision < 1 ||
     monthData.currentRevisionId !== revisionId
@@ -150,7 +170,7 @@ export const loadFinancialPerformanceConfirmation = async (
   const revisionSnapshot = await getDoc(revisionRef);
   assertCurrentAccount(uid);
   if (!revisionSnapshot.exists()) throw new Error('financial_performance_missing_revision');
-  const confirmation = normalizeConfirmation(revisionSnapshot.data(), revision, revisionId, uid, period);
+  const confirmation = normalizeConfirmation(revisionSnapshot.data(), revision, revisionId, uid, period, perimeter);
   const headUpdatedAt = normalizeTimestamp(monthData.updatedAt);
   if (!confirmation || confirmation.updatedAt !== headUpdatedAt) {
     throw new Error('financial_performance_invalid_revision');
@@ -165,11 +185,13 @@ export const appendFinancialPerformanceConfirmation = async (
   context: FinancialPerformanceStorageContext = {},
 ): Promise<FinancialPerformanceConfirmation> => {
   const { period, monthKey } = resolvePeriod(requestedPeriod);
-  if (!isFinancialPerformanceConfirmationValid(input, period)) {
+  const perimeter = resolvePerimeter(context);
+  if (!isFinancialPerformanceConfirmationValid(input, period) ||
+      (input.perimeter ?? 'investment') !== perimeter) {
     throw new Error('financial_performance_invalid_month_or_schema');
   }
   const uid = await requireUid(context);
-  const monthRef = monthDocument(uid, monthKey);
+  const monthRef = monthDocument(uid, monthKey, perimeter);
   const revision = await runTransaction(db, async (transaction) => {
     assertCurrentAccount(uid);
     const monthSnapshot = await transaction.get(monthRef);
@@ -180,6 +202,7 @@ export const appendFinancialPerformanceConfirmation = async (
       (monthData?.schemaVersion !== 1 ||
         monthData.monthKey !== monthKey ||
         !periodMetadataMatches(monthData, period) ||
+        !perimeterMetadataMatches(monthData, perimeter) ||
         !Number.isInteger(currentRevision) ||
         currentRevision < 1 ||
         monthData.currentRevisionId !== String(currentRevision))
@@ -202,6 +225,7 @@ export const appendFinancialPerformanceConfirmation = async (
     transaction.set(revisionRef, {
       schemaVersion: 1,
       monthKey,
+      ...(input.perimeter === undefined ? {} : { perimeter }),
       startMonth: period.startMonth,
       endMonth: period.endMonth,
       revision: nextRevision,
@@ -215,6 +239,7 @@ export const appendFinancialPerformanceConfirmation = async (
     transaction.set(monthRef, {
       schemaVersion: 1,
       monthKey,
+      ...(input.perimeter === undefined ? {} : { perimeter }),
       startMonth: period.startMonth,
       endMonth: period.endMonth,
       currentRevision: nextRevision,

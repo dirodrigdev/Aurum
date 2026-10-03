@@ -104,6 +104,34 @@ describe('financial performance confirmation storage', () => {
     expect(firestoreState.reads).not.toContain('aurum_financial_performance/another-user/months/2026-08');
   });
 
+  it('keeps base and risk-inclusive confirmations independent for the same month', async () => {
+    const base = await appendFinancialPerformanceConfirmation(confirmation(), augustPeriod);
+    const riskInput: FinancialPerformanceConfirmation = { ...confirmation(), perimeter: 'investment_with_risk' };
+    const risk = await appendFinancialPerformanceConfirmation(riskInput, augustPeriod, { perimeter: 'investment_with_risk' });
+    await appendFinancialPerformanceConfirmation(riskInput, augustPeriod, { perimeter: 'investment_with_risk' });
+    expect(base.revision).toBe(1);
+    expect(risk.revision).toBe(1);
+    expect(await loadFinancialPerformanceConfirmation(augustPeriod)).toMatchObject({ revision: 1 });
+    expect(await loadFinancialPerformanceConfirmation(augustPeriod, { perimeter: 'investment_with_risk' }))
+      .toMatchObject({ revision: 2, perimeter: 'investment_with_risk' });
+    expect(firestoreState.docs.get('aurum_financial_performance/target-uid/months/2026-08')?.currentRevision).toBe(1);
+  });
+
+  it('requires explicit risk metadata and never substitutes the base confirmation', async () => {
+    await appendFinancialPerformanceConfirmation(confirmation(), augustPeriod);
+    expect(await loadFinancialPerformanceConfirmation(augustPeriod, { perimeter: 'investment_with_risk' })).toBeNull();
+    const writesBefore = firestoreState.writes.length;
+    await expect(appendFinancialPerformanceConfirmation(confirmation(), augustPeriod, { perimeter: 'investment_with_risk' }))
+      .rejects.toThrow('financial_performance_invalid_month_or_schema');
+    await expect(appendFinancialPerformanceConfirmation({ ...confirmation(), perimeter: 'investment_with_risk' }, augustPeriod))
+      .rejects.toThrow('financial_performance_invalid_month_or_schema');
+    expect(firestoreState.writes).toHaveLength(writesBefore);
+    const head = firestoreState.docs.get('aurum_financial_performance/target-uid/months/2026-08')!;
+    firestoreState.docs.set('aurum_financial_performance/target-uid/perimeters/investment_with_risk/months/2026-08', head);
+    await expect(loadFinancialPerformanceConfirmation(augustPeriod, { perimeter: 'investment_with_risk' }))
+      .rejects.toThrow('financial_performance_invalid_head');
+  });
+
   it('rejects a head with an invalid schema, wrong month, or mismatched revision id', async () => {
     const headPath = 'aurum_financial_performance/target-uid/months/2026-08';
     const revisionPath = `${headPath}/revisions/1`;

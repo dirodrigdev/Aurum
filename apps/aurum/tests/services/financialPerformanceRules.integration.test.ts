@@ -27,22 +27,25 @@ let auth: Auth;
 let db: Firestore;
 let ownerUid = '';
 
-const periodRef = (userId: string, monthKey: string) =>
-  doc(db, 'aurum_financial_performance', userId, 'months', monthKey);
+const periodRef = (userId: string, monthKey: string, perimeter?: string) =>
+  perimeter
+    ? doc(db, 'aurum_financial_performance', userId, 'perimeters', perimeter, 'months', monthKey)
+    : doc(db, 'aurum_financial_performance', userId, 'months', monthKey);
 
 const writePeriod = async (
   monthKey: string,
   period: { startMonth: string; endMonth: string } | undefined,
-  options: { userId?: string; schemaVersion?: number } = {},
+  options: { userId?: string; schemaVersion?: number; perimeter?: string; metadataPerimeter?: string } = {},
 ) => {
   const userId = options.userId || ownerUid;
-  const head = periodRef(userId, monthKey);
+  const head = periodRef(userId, monthKey, options.perimeter);
   const revision = doc(head, 'revisions', '1');
   const batch = writeBatch(db);
   batch.set(revision, {
     schemaVersion: options.schemaVersion ?? 1,
     monthKey,
     ...period,
+    ...(options.metadataPerimeter ? { perimeter: options.metadataPerimeter } : {}),
     revision: 1,
     revisionId: '1',
     flowCompleteness: 'complete',
@@ -55,6 +58,7 @@ const writePeriod = async (
     schemaVersion: 1,
     monthKey,
     ...period,
+    ...(options.metadataPerimeter ? { perimeter: options.metadataPerimeter } : {}),
     currentRevision: 1,
     currentRevisionId: '1',
     updatedAt: serverTimestamp(),
@@ -100,6 +104,26 @@ describeRules('financial performance Firestore rules', () => {
       const { head } = await writePeriod(period.endMonth, period);
       expect((await getDoc(head)).exists()).toBe(true);
     }
+  }, 20_000);
+
+  it('keeps risk-inclusive and base streams separate and immutable', async () => {
+    const period = { startMonth: '2026-07', endMonth: '2026-08' };
+    const base = await writePeriod('2026-08', period);
+    const risk = await writePeriod('2026-08', period, { perimeter: 'investment_with_risk', metadataPerimeter: 'investment_with_risk' });
+    expect((await getDoc(base.head)).data()?.perimeter).toBeUndefined();
+    expect((await getDoc(risk.head)).data()?.perimeter).toBe('investment_with_risk');
+    await expectPermissionDenied(updateDoc(risk.revision, { flows: [] }));
+    await expectPermissionDenied(deleteDoc(risk.head));
+    await expectPermissionDenied(getDoc(periodRef('another-user', '2026-08', 'investment_with_risk')));
+  }, 20_000);
+
+  it('rejects absent, mismatched or unknown risk scope metadata', async () => {
+    const period = { startMonth: '2026-07', endMonth: '2026-08' };
+    await expectPermissionDenied(writePeriod('2026-08', period, { perimeter: 'investment_with_risk' }));
+    await expectPermissionDenied(writePeriod('2026-08', period, { perimeter: 'investment_with_risk', metadataPerimeter: 'investment' }));
+    await expectPermissionDenied(writePeriod('2026-08', period, { perimeter: 'unknown', metadataPerimeter: 'investment_with_risk' }));
+    await expectPermissionDenied(writePeriod('2026-08', undefined, { perimeter: 'investment_with_risk', metadataPerimeter: 'investment_with_risk' }));
+    await expectPermissionDenied(writePeriod('2026-08', period, { metadataPerimeter: 'investment_with_risk' }));
   }, 20_000);
 
   it('appends period metadata to a legacy August confirmation without changing its previous revision', async () => {
