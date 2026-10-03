@@ -5,6 +5,7 @@ const firestoreState = vi.hoisted(() => ({
   reads: [] as string[],
   writes: [] as Array<{ path: string; data: Record<string, unknown> }>,
   readError: null as Error | null,
+  onRead: null as (() => void) | null,
 }));
 
 vi.mock('firebase/firestore', () => {
@@ -20,6 +21,7 @@ vi.mock('firebase/firestore', () => {
     getDoc: vi.fn(async (reference: { path: string }) => {
       firestoreState.reads.push(reference.path);
       if (firestoreState.readError) throw firestoreState.readError;
+      firestoreState.onRead?.();
       return snapshotFor(reference.path);
     }),
     runTransaction: vi.fn(async (_db: unknown, callback: (transaction: {
@@ -30,6 +32,7 @@ vi.mock('firebase/firestore', () => {
       const transaction = {
         get: async (reference: { path: string }) => {
           firestoreState.reads.push(reference.path);
+          firestoreState.onRead?.();
           return snapshotFor(reference.path);
         },
         set: (reference: { path: string }, data: Record<string, unknown>) => {
@@ -78,6 +81,7 @@ describe('financial performance confirmation storage', () => {
     firestoreState.reads.length = 0;
     firestoreState.writes.length = 0;
     firestoreState.readError = null;
+    firestoreState.onRead = null;
     authState.uid = 'target-uid';
   });
 
@@ -266,6 +270,23 @@ describe('financial performance confirmation storage', () => {
   it('requires the current authenticated account and does not write without one', async () => {
     authState.uid = null;
     await expect(appendFinancialPerformanceConfirmation(confirmation())).rejects.toThrow('financial_performance_auth_required');
+    expect(firestoreState.writes).toHaveLength(0);
+  });
+
+  it('rejects an operation started for another account before reading or writing', async () => {
+    authState.uid = 'another-user';
+    const context = { expectedUid: 'target-uid' };
+    await expect(loadFinancialPerformanceConfirmation(augustPeriod, context)).rejects.toThrow('financial_performance_account_changed');
+    await expect(appendFinancialPerformanceConfirmation(confirmation(), augustPeriod, context)).rejects.toThrow('financial_performance_account_changed');
+    expect(firestoreState.reads).toHaveLength(0);
+    expect(firestoreState.writes).toHaveLength(0);
+  });
+
+  it('rejects a read or transaction when the account changes during its request', async () => {
+    firestoreState.onRead = () => { authState.uid = 'another-user'; };
+    await expect(loadFinancialPerformanceConfirmation(augustPeriod, { expectedUid: 'target-uid' })).rejects.toThrow('financial_performance_account_changed');
+    authState.uid = 'target-uid';
+    await expect(appendFinancialPerformanceConfirmation(confirmation(), augustPeriod, { expectedUid: 'target-uid' })).rejects.toThrow('financial_performance_account_changed');
     expect(firestoreState.writes).toHaveLength(0);
   });
 });

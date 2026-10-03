@@ -7,6 +7,13 @@ const storageMock = vi.hoisted(() => ({
   load: vi.fn(),
   append: vi.fn(),
 }));
+const authMock = vi.hoisted(() => ({ uid: 'performance-test-user' }));
+vi.mock('../src/services/firebase', () => ({
+  db: {},
+  getCurrentUid: () => authMock.uid,
+  ensureAuthPersistence: async () => undefined,
+  isE2EFirebaseEmulatorEnabled: () => false,
+}));
 
 vi.mock('../src/services/financialPerformanceStorage', () => ({
   loadFinancialPerformanceConfirmation: storageMock.load,
@@ -14,6 +21,7 @@ vi.mock('../src/services/financialPerformanceStorage', () => ({
 }));
 
 import { LabTab } from '../src/components/analysis/LabTab';
+import { FinancialPerformanceSlice } from '../src/components/analysis/FinancialPerformanceSlice';
 import { buildWealthLabModel } from '../src/services/wealthLab';
 import { summarizeWealth, type WealthMonthlyClosure, type WealthRecord } from '../src/services/wealthStorage';
 
@@ -46,6 +54,7 @@ describe('financial performance confirmation read errors', () => {
   let root: Root | null = null;
 
   beforeEach(() => {
+    window.localStorage.clear();
     storageMock.load.mockRejectedValue(new Error('permission-denied'));
   });
 
@@ -59,6 +68,7 @@ describe('financial performance confirmation read errors', () => {
     document.body.innerHTML = '';
     storageMock.load.mockReset();
     storageMock.append.mockReset();
+    vi.restoreAllMocks();
   });
 
   it('stops loading, reports the read error, and does not publish a return', async () => {
@@ -79,7 +89,7 @@ describe('financial performance confirmation read errors', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(storageMock.load).toHaveBeenCalledWith({ startMonth: '2024-07', endMonth: '2024-08' });
+    expect(storageMock.load).toHaveBeenCalledWith({ startMonth: '2024-07', endMonth: '2024-08' }, { expectedUid: 'performance-test-user' });
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('No pudimos verificar la confirmación guardada');
     expect(container.textContent).toContain('No verificable');
     expect(container.textContent).not.toContain('Cargando confirmación…');
@@ -111,6 +121,87 @@ describe('financial performance confirmation read errors', () => {
     expect(container.textContent).toContain('No hay dos cierres detallados consecutivos');
     expect(container.textContent).not.toContain('No verificable');
     expect(storageMock.load).not.toHaveBeenCalled();
+    expect(storageMock.append).not.toHaveBeenCalled();
+  });
+
+  it('recovers a failed read without publishing or writing a confirmation on its own', async () => {
+    const closures = [makeClosure('2024-07', 1000000), makeClosure('2024-08', 1100000)];
+    storageMock.load.mockRejectedValueOnce(new Error('permission-denied')).mockResolvedValueOnce(null);
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => root?.render(React.createElement(LabTab, {
+      model: buildWealthLabModel(closures), closures, includeRiskCapitalInTotals: false, onToggleRiskMode: vi.fn(),
+    })));
+    const retry = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Reintentar lectura');
+    expect(retry).toBeDefined();
+    await act(async () => retry?.click());
+    expect(storageMock.load).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain('INDICATIVO');
+    expect(container.textContent).not.toContain('No verificable');
+    expect(storageMock.append).not.toHaveBeenCalled();
+  });
+
+  it('ignores an old period response that finishes after the selected period has changed', async () => {
+    let finishFirst!: (value: unknown) => void;
+    const firstRead = new Promise(resolve => { finishFirst = resolve; });
+    storageMock.load.mockImplementationOnce(() => firstRead).mockResolvedValueOnce({
+      schemaVersion: 1, monthKey: '2024-07', revision: 2,
+      flowCompleteness: 'complete', positionMovementCompleteness: 'no_unrecorded_movements', flows: [],
+    });
+    const closures = [makeClosure('2024-06', 900000), makeClosure('2024-07', 1000000), makeClosure('2024-08', 1100000)];
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    const renderPeriod = (startMonth: string, endMonth: string) => React.createElement(FinancialPerformanceSlice, {
+      key: endMonth, closures, includeRiskCapital: false, period: { startMonth, endMonth },
+    });
+    await act(async () => root?.render(renderPeriod('2024-07', '2024-08')));
+    await act(async () => root?.render(renderPeriod('2024-06', '2024-07')));
+    const published = container.querySelector('[data-testid="financial-performance-published-value"]')?.textContent;
+    await act(async () => finishFirst({schemaVersion: 1, monthKey: '2024-08', revision: 99, flows: []}));
+    expect(container.textContent).toContain('RECONSTRUIDO');
+    expect(container.textContent).toContain('revisión 2');
+    expect(container.textContent).not.toContain('revisión 99');
+    expect(container.querySelector('[data-testid="financial-performance-published-value"]')?.textContent).toBe(published);
+  });
+
+  it('preserves the draft while recovering from a failed save', async () => {
+    storageMock.load.mockResolvedValue(null);
+    storageMock.append.mockRejectedValueOnce(new Error('unavailable'));
+    const closures = [makeClosure('2024-07', 1000000), makeClosure('2024-08', 1100000)];
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    await act(async () => root?.render(React.createElement(LabTab, {
+      model: buildWealthLabModel(closures), closures, includeRiskCapitalInTotals: false, onToggleRiskMode: vi.fn(),
+    })));
+    const zeroFlows = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'No hubo flujos este mes');
+    await act(async () => zeroFlows?.click());
+    expect(container.textContent).toContain('cambios sin guardar');
+    const retry = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Reintentar lectura');
+    await act(async () => retry?.click());
+    expect(container.textContent).toContain('cambios sin guardar');
+    const save = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Guardar confirmación');
+    expect(save?.disabled).toBe(false);
+    expect(storageMock.append).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets the user keep or explicitly discard a draft before changing month', async () => {
+    storageMock.load.mockResolvedValue(null);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const closures = [makeClosure('2024-06', 900000), makeClosure('2024-07', 1000000), makeClosure('2024-08', 1100000)];
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    await act(async () => root?.render(React.createElement(LabTab, {
+      model: buildWealthLabModel(closures), closures, includeRiskCapitalInTotals: false, onToggleRiskMode: vi.fn(),
+    })));
+    const add = Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Agregar aporte'));
+    await act(async () => add?.click());
+    const select = container.querySelector('[aria-label="Mes de cierre"]') as HTMLSelectElement;
+    await act(async () => { select.value = '2024-07'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(select.value).toBe('2024-08');
+    expect(container.querySelector('input[type="number"]')).not.toBeNull();
+    confirm.mockReturnValue(true);
+    await act(async () => { select.value = '2024-07'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(select.value).toBe('2024-07');
+    expect(container.querySelector('input[type="number"]')).toBeNull();
     expect(storageMock.append).not.toHaveBeenCalled();
   });
 });

@@ -26,10 +26,21 @@ const LEGACY_PERIOD: FinancialPerformancePeriod = {
   endMonth: PERFORMANCE_FINAL_MONTH,
 };
 
-const requireUid = async (): Promise<string> => {
+export interface FinancialPerformanceStorageContext {
+  expectedUid?: string;
+}
+
+const assertCurrentAccount = (uid: string): void => {
+  if (getCurrentUid() !== uid) throw new Error('financial_performance_account_changed');
+};
+
+const requireUid = async (context: FinancialPerformanceStorageContext): Promise<string> => {
   await ensureAuthPersistence();
   const uid = getCurrentUid();
   if (!uid) throw new Error('financial_performance_auth_required');
+  if (context.expectedUid && context.expectedUid !== uid) {
+    throw new Error('financial_performance_account_changed');
+  }
   return uid;
 };
 
@@ -116,11 +127,13 @@ const normalizeConfirmation = (
 /** Reads the latest revision for the period; omission keeps the temporary July→August adapter. */
 export const loadFinancialPerformanceConfirmation = async (
   requestedPeriod: FinancialPerformancePeriod = LEGACY_PERIOD,
+  context: FinancialPerformanceStorageContext = {},
 ): Promise<FinancialPerformanceConfirmation | null> => {
   const { period, monthKey } = resolvePeriod(requestedPeriod);
-  const uid = await requireUid();
+  const uid = await requireUid(context);
   const monthRef = monthDocument(uid, monthKey);
   const monthSnapshot = await getDoc(monthRef);
+  assertCurrentAccount(uid);
   if (!monthSnapshot.exists()) return null;
   const monthData = monthSnapshot.data();
   const revision = Number(monthData?.currentRevision);
@@ -135,6 +148,7 @@ export const loadFinancialPerformanceConfirmation = async (
   ) throw new Error('financial_performance_invalid_head');
   const revisionRef = doc(collection(monthRef, REVISIONS_SUBCOLLECTION), revisionId);
   const revisionSnapshot = await getDoc(revisionRef);
+  assertCurrentAccount(uid);
   if (!revisionSnapshot.exists()) throw new Error('financial_performance_missing_revision');
   const confirmation = normalizeConfirmation(revisionSnapshot.data(), revision, revisionId, uid, period);
   const headUpdatedAt = normalizeTimestamp(monthData.updatedAt);
@@ -148,14 +162,16 @@ export const loadFinancialPerformanceConfirmation = async (
 export const appendFinancialPerformanceConfirmation = async (
   input: FinancialPerformanceConfirmation,
   requestedPeriod: FinancialPerformancePeriod = LEGACY_PERIOD,
+  context: FinancialPerformanceStorageContext = {},
 ): Promise<FinancialPerformanceConfirmation> => {
   const { period, monthKey } = resolvePeriod(requestedPeriod);
   if (!isFinancialPerformanceConfirmationValid(input, period)) {
     throw new Error('financial_performance_invalid_month_or_schema');
   }
-  const uid = await requireUid();
+  const uid = await requireUid(context);
   const monthRef = monthDocument(uid, monthKey);
   const revision = await runTransaction(db, async (transaction) => {
+    assertCurrentAccount(uid);
     const monthSnapshot = await transaction.get(monthRef);
     const monthData = monthSnapshot.data();
     const currentRevision = monthSnapshot.exists() ? Number(monthData?.currentRevision) : 0;
@@ -173,6 +189,7 @@ export const appendFinancialPerformanceConfirmation = async (
     const revisionRef = doc(collection(monthRef, REVISIONS_SUBCOLLECTION), revisionId);
     const existingRevision = await transaction.get(revisionRef);
     if (existingRevision.exists()) throw new Error('financial_performance_revision_conflict');
+    assertCurrentAccount(uid);
 
     const flows = input.flows.map((flow) => ({
       id: flow.id,
