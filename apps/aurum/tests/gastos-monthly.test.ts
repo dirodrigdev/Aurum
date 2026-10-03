@@ -31,6 +31,12 @@ const { clearGastappCanonicalV2CacheMock, loadGastappCanonicalV2OfficialMonthCon
   loadGastappCanonicalV2OfficialMonthContractFreshMock: vi.fn(),
 }));
 
+const revisionStorageMock = vi.hoisted(() => ({ load: vi.fn(), accept: vi.fn() }));
+vi.mock('../src/services/wealthStorage', () => ({
+  loadClosures: revisionStorageMock.load,
+  acceptGastappMonthlyClosureRevision: revisionStorageMock.accept,
+}));
+
 vi.mock('../src/services/gastappCanonicalV2', () => ({
   loadGastappCanonicalV2OfficialMonthContractFresh: loadGastappCanonicalV2OfficialMonthContractFreshMock,
   clearGastappCanonicalV2Cache: clearGastappCanonicalV2CacheMock,
@@ -67,6 +73,46 @@ describe('gastosMonthly canonical source', () => {
   beforeEach(() => {
     vi.resetModules();
     resetFirestoreMock();
+    revisionStorageMock.load.mockReset();
+    revisionStorageMock.accept.mockReset();
+  });
+
+  it('does not accept a different certified source revision published between preview and refresh', async () => {
+    const hash = (letter: string) => `sha256:${letter.repeat(64)}`;
+    const contract = (letter: string, revision: number, totalEur: number) => ({
+      version: 'gastapp-aurum-calendar-months-v2', generatedAt: '2026-10-01T12:00:00Z',
+      canonicalDataHash: hash('e'), operationalDataHash: hash('e'),
+      operationalRevision: revision, sourceGeneration: revision,
+      months: [{
+        calendarMonthKey: '2026-09', status: 'complete', calendarStatus: 'complete', eligibleForAurumReturns: true,
+        coverage: { fromYmd: '2026-09-01', toYmd: '2026-09-30' },
+        totalEur, byFamily: { dayToDay: totalEur, trips: 0, others: 0 },
+        monthContractRevision: revision, monthContractHash: hash(letter),
+        calendarCertification: {
+          status: 'revised', certificationRevision: revision, certificationHash: hash('d'),
+          monthContractRevision: revision, monthContractHash: hash(letter), sourceGeneration: revision,
+          operationalRevision: revision, canonicalDataHash: hash('e'),
+        },
+      }],
+    });
+    loadGastappCanonicalV2OfficialMonthContractFreshMock
+      .mockResolvedValueOnce(contract('b', 2, 2715))
+      .mockResolvedValue(contract('c', 3, 2805));
+    revisionStorageMock.load.mockReturnValue([{ monthKey: '2026-09', gastappExpenseClose: { contractHash: hash('a') } }]);
+    revisionStorageMock.accept.mockResolvedValue({ changed: true });
+    const { warmGastappMonthlyContable, resolveGastappMonthlyCloseCandidate } = await import('../src/services/gastosMonthly');
+    const { acceptReviewedGastappRevision } = await import('../src/services/acceptReviewedGastappRevision');
+    await warmGastappMonthlyContable();
+    const preview = resolveGastappMonthlyCloseCandidate('2026-09', { previousSnapshot: { contractHash: hash('a') } });
+    expect(preview.snapshot).toMatchObject({ totalEur: 2715, certificationRevision: 2 });
+    const reviewed = { monthKey: '2026-09', expectedPreviousContractHash: hash('a'), expectedCandidateContractHash: preview.snapshot!.contractHash };
+    await expect(acceptReviewedGastappRevision(reviewed)).rejects.toThrow('Actualiza la comparación');
+    expect(revisionStorageMock.accept).not.toHaveBeenCalled();
+    const refreshed = resolveGastappMonthlyCloseCandidate('2026-09', { previousSnapshot: { contractHash: hash('a') } });
+    expect(refreshed.snapshot).toMatchObject({ totalEur: 2805, certificationRevision: 3 });
+    await acceptReviewedGastappRevision({ ...reviewed, expectedCandidateContractHash: refreshed.snapshot!.contractHash });
+    expect(revisionStorageMock.accept).toHaveBeenCalledTimes(1);
+    expect(revisionStorageMock.accept.mock.calls[0][0].snapshot).toMatchObject({ totalEur: 2805, certificationRevision: 3, contractHash: hash('c') });
   });
 
   it('uses the certified monthly contract as the official Firestore source within its €0.01 reconciliation tolerance', async () => {

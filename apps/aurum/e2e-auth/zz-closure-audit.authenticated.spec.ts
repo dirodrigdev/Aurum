@@ -129,13 +129,22 @@ test('accepting a certified GastApp revision updates the whole Aurum chain witho
   };
   const ref = emulatorDb().doc(`aurum_wealth/${uid}`);
   const root = (await ref.get()).data()!;
-  await ref.update({ closures: root.closures.map((closure: { monthKey: string }) =>
-    closure.monthKey === '2026-07' ? { ...closure, gastappExpenseClose: previousSnapshot } : closure) });
-  await page.evaluate((snapshot) => {
-    const closures = JSON.parse(window.localStorage.getItem('wealth_closures_v1') || '[]');
-    window.localStorage.setItem('wealth_closures_v1', JSON.stringify(closures.map((closure: { monthKey: string }) =>
-      closure.monthKey === '2026-07' ? { ...closure, gastappExpenseClose: snapshot } : closure)));
-  }, previousSnapshot);
+  // Entirely synthetic accepted snapshots make 12/36-month consumers testable.
+  // These are fixture data; no historical production snapshot is reconstructed.
+  const seededClosures = await page.evaluate(async ({ closures, previous, template }) => {
+    const path = '/src/services/wealthStorage.ts';
+    const { buildGastappMonthlyExpenseCloseSnapshot } = await import(path);
+    return closures.map((closure: { monthKey: string; fxRates: typeof rates }) => {
+      const totalEur = 2400 + (Number(closure.monthKey.slice(5)) % 12) * 45;
+      const snapshot = closure.monthKey === '2026-07' ? previous : buildGastappMonthlyExpenseCloseSnapshot({
+        ...template, monthKey: closure.monthKey, calendarMonthKey: closure.monthKey,
+        totalEur, byFamilyEur: { dayToDay: totalEur, trips: 0, others: 0 },
+      }, closure.fxRates);
+      return { ...closure, gastappExpenseClose: snapshot };
+    });
+  }, { closures: root.closures, previous: previousSnapshot, template: originalClosure.gastappExpenseClose });
+  await ref.update({ closures: seededClosures });
+  await page.evaluate((closures) => window.localStorage.setItem('wealth_closures_v1', JSON.stringify(closures)), seededClosures);
   await page.reload();
   await page.goto('/#/patrimonio');
   await expect(page.getByRole('button', { name: 'Cerrar mes', exact: true })).toBeVisible();
@@ -143,18 +152,19 @@ test('accepting a certified GastApp revision updates the whole Aurum chain witho
     const closures = JSON.parse(window.localStorage.getItem('wealth_closures_v1') || '[]');
     return closures.find((closure: { monthKey: string }) => closure.monthKey === '2026-07')?.gastappExpenseClose?.contractHash || null;
   })).toBe(previousSnapshot.contractHash);
+  const analysisPage = await page.context().newPage();
+  await analysisPage.clock.setFixedTime(new Date('2026-07-31T12:00:00.000Z'));
+  analysisPage.on('pageerror', (error) => pageErrors.push(error.message));
+  analysisPage.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()); });
+  const analysisGuard = await installLocalNetworkGuard(analysisPage);
+  await analysisPage.goto('/#/analysis');
+  await analysisPage.locator('[aria-label="Moneda"]').getByRole('button', { name: 'EUR', exact: true }).click();
+  const julyRow = analysisPage.getByRole('row').filter({ has: analysisPage.getByText('Jul 2026', { exact: true }) });
+  await expect(julyRow.locator('td').nth(4)).toHaveText('2.000,00 EUR');
+  const beforeChain = await readAcceptedChain(analysisPage);
   const revisionAlert = page.getByText('GastApp publicó cambios en cierres Aurum', { exact: true });
   await expect(revisionAlert).toBeVisible();
   await expect(page.locator('section[aria-live="polite"]').filter({ hasText: 'Gasto guardado:' })).toContainText('Gasto guardado: 2000,00 €');
-  for (const viewport of [
-    { name: 'desktop', width: 1280, height: 800 },
-    { name: 'tablet', width: 768, height: 1024 },
-    { name: 'mobile', width: 390, height: 844 },
-  ]) {
-    await page.setViewportSize(viewport);
-    await revisionAlert.scrollIntoViewIfNeeded();
-    await page.screenshot({ path: testInfo.outputPath(`gastapp-revision-banner-${viewport.name}.png`) });
-  }
   const revisionCard = page.locator('section[aria-live="polite"]').filter({ hasText: 'Gasto guardado:' });
   await revisionCard.getByRole('button', { name: 'Revisar impacto', exact: true }).click();
   const comparePanel = page.getByText(/Revisión de GastApp/).last();
@@ -184,15 +194,6 @@ test('accepting a certified GastApp revision updates the whole Aurum chain witho
   await acceptButton.click();
   const staleComparisonMessage = page.getByRole('status').filter({ hasText: 'La revisión cambió o aún no está certificada' }).last();
   await expect(staleComparisonMessage).toBeVisible();
-  for (const viewport of [
-    { name: 'desktop', width: 1280, height: 800 },
-    { name: 'tablet', width: 768, height: 1024 },
-    { name: 'mobile', width: 390, height: 844 },
-  ]) {
-    await page.setViewportSize(viewport);
-    await staleComparisonMessage.scrollIntoViewIfNeeded();
-    await page.screenshot({ path: testInfo.outputPath(`gastapp-revision-stale-warning-${viewport.name}.png`) });
-  }
   await page.evaluate((snapshot) => {
     const closures = JSON.parse(window.localStorage.getItem('wealth_closures_v1') || '[]');
     window.localStorage.setItem('wealth_closures_v1', JSON.stringify(closures.map((closure: { monthKey: string }) =>
@@ -208,6 +209,179 @@ test('accepting a certified GastApp revision updates the whole Aurum chain witho
   expect(updated.fxRates).toEqual(originalClosure.fxRates);
   expect(updated.previousVersions.some((version: { gastappExpenseClose?: { contractHash: string; totalEur: number } }) =>
     version.gastappExpenseClose?.contractHash === previousSnapshot.contractHash && version.gastappExpenseClose.totalEur === 2000)).toBe(true);
+  // The already mounted Analysis page must receive the cloud-only snapshot
+  // change even though the close's financial identity, FX and totals did not change.
+  await expect(julyRow.locator('td').nth(4)).toHaveText('2.715,00 EUR');
+  const afterChain = await readAcceptedChain(analysisPage);
+  expect(afterChain.monthSpendEur).toBe(2715);
+  expect(afterChain.accumulatedSpendClp - beforeChain.accumulatedSpendClp).toBe(715 * rates.eurClp);
+  expect(afterChain.labSpendClp - beforeChain.labSpendClp).toBe(715 * rates.eurClp);
+  expect(afterChain.dashboard12Uf).not.toBe(beforeChain.dashboard12Uf);
+  expect(afterChain.dashboard36Uf).not.toBe(beforeChain.dashboard36Uf);
+  expect(afterChain.presentation36Uf).toBe(Number(afterChain.dashboard36Uf.toFixed(1)));
+  for (const viewport of [
+    { name: 'desktop', width: 1280, height: 800 },
+    { name: 'tablet', width: 768, height: 1024 },
+    { name: 'mobile', width: 390, height: 844 },
+  ]) {
+    await analysisPage.setViewportSize(viewport);
+    await julyRow.scrollIntoViewIfNeeded();
+    await analysisPage.screenshot({ path: testInfo.outputPath(`gastapp-revised-analysis-${viewport.name}.png`) });
+    expect(await analysisPage.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  }
+  expect(await cloudClosure('2026-07')).toEqual(updated);
+  await attachEvidence(testInfo, { beforeChain, afterChain, updated });
+  await analysisGuard.assertClean(testInfo);
+  await networkGuard.assertClean(testInfo);
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
+test('accepted GastApp snapshots survive reload and match Dashboard and presentation', async ({ page }, testInfo) => {
+  await page.clock.setFixedTime(new Date('2026-08-01T12:00:00.000Z'));
+  const { modal, networkGuard, pageErrors, consoleErrors } = await prepare(page);
+  await modal.getByRole('button', { name: 'Cancelar', exact: true }).click();
+  const ref = emulatorDb().doc(`aurum_wealth/${uid}`);
+  const root = (await ref.get()).data()!;
+  const seededClosures = await page.evaluate(async ({ closures, records, fx }) => {
+    const storagePath = '/src/services/wealthStorage.ts';
+    const gastosPath = '/src/services/gastosMonthly.ts';
+    const { buildGastappMonthlyExpenseCloseSnapshot, buildCanonicalClosureSummary } = await import(storagePath);
+    const { resolveGastappMonthlyCloseCandidate } = await import(gastosPath);
+    const template = resolveGastappMonthlyCloseCandidate('2026-07').snapshot;
+    const june = closures.find((closure: { monthKey: string }) => closure.monthKey === '2026-06');
+    const july = {
+      ...june, id: 'synthetic-accepted-july', monthKey: '2026-07', closedAt: '2026-08-01T12:00:00.000Z',
+      records, summary: buildCanonicalClosureSummary(records, fx), fxRates: fx,
+      fxMetadata: { ...june.fxMetadata, economicMonthKey: '2026-07', economicDate: '2026-07-31', usedFxRates: fx },
+    };
+    return [...closures, july].map((closure) => {
+      const totalEur = 2400 + (Number(closure.monthKey.slice(5)) % 12) * 45;
+      return { ...closure, gastappExpenseClose: buildGastappMonthlyExpenseCloseSnapshot({
+        ...template, monthKey: closure.monthKey, calendarMonthKey: closure.monthKey,
+        totalEur, byFamilyEur: { dayToDay: totalEur, trips: 0, others: 0 },
+      }, closure.fxRates) };
+    });
+  }, { closures: root.closures, records: root.records, fx: rates });
+  await ref.update({ closures: seededClosures });
+  await page.goto('/#/analysis');
+  await page.locator('[aria-label="Moneda"]').getByRole('button', { name: 'EUR', exact: true }).click();
+  const julyRow = page.getByRole('row').filter({ has: page.getByText('Jul 2026', { exact: true }) });
+  await expect(julyRow.locator('td').nth(4)).toHaveText('2.715,00 EUR');
+  const expected = await readAcceptedChain(page);
+  const saved = await cloudClosure('2026-07');
+  await page.reload();
+  await page.locator('[aria-label="Moneda"]').getByRole('button', { name: 'EUR', exact: true }).click();
+  await expect(julyRow.locator('td').nth(4)).toHaveText('2.715,00 EUR');
+  expect(await readAcceptedChain(page)).toEqual(expected);
+  await page.goto('/#/dashboard');
+  await expect(page.getByTestId('dashboard-return-12m')).toContainText(expected.dashboard12UfText);
+  await expect(page.getByTestId('dashboard-return-36m')).toContainText(expected.dashboard36UfText);
+  await page.goto('/#/presentation');
+  await expect(page.getByTestId('aurum-presentation')).toContainText(expected.presentation36UfText);
+  expect(await cloudClosure('2026-07')).toEqual(saved);
+  await attachEvidence(testInfo, { expected, saved });
+  await networkGuard.assertClean(testInfo);
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
+test('legacy close expenses stay explicitly unavailable without rebuilding history', async ({ page }, testInfo) => {
+  await page.clock.setFixedTime(new Date('2026-07-31T12:00:00.000Z'));
+  const { modal, networkGuard, pageErrors, consoleErrors } = await prepare(page);
+  await modal.getByRole('button', { name: 'Cancelar', exact: true }).click();
+  // Hydration enriches old synthetic summaries before cloud sync settles.
+  // Establish that full baseline before testing the Analysis navigation.
+  const ordered = (closures: Array<{ monthKey: string }>) => [...closures].sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+  const before = await page.evaluate(() => JSON.parse(window.localStorage.getItem('wealth_closures_v1') || '[]'));
+  expect(before).toHaveLength(38);
+  await expect.poll(async () => ordered((await emulatorDb().doc(`aurum_wealth/${uid}`).get()).get('closures'))).toEqual(ordered(before));
+  await page.goto('/#/analysis');
+  await page.getByRole('button', { name: /Avisos ·/ }).click();
+  const warning = page.getByText(/Meses cerrados sin una versión de GastApp confirmada y guardada en Aurum:/);
+  await expect(warning).toBeVisible();
+  await expect(warning).toContainText('ni se reconstruye el histórico automáticamente');
+  for (const viewport of [
+    { name: 'desktop', width: 1280, height: 800 },
+    { name: 'tablet', width: 768, height: 1024 },
+    { name: 'mobile', width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await warning.scrollIntoViewIfNeeded();
+    const statusText = page.getByRole('button', { name: /Avisos ·/ }).getByText(/^Avisos ·/);
+    expect(await statusText.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+    await page.screenshot({ path: testInfo.outputPath(`legacy-expense-warning-${viewport.name}.png`) });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  }
+  // Sync normalizes array order; compare every complete close by month identity.
+  expect(ordered((await emulatorDb().doc(`aurum_wealth/${uid}`).get()).get('closures'))).toEqual(ordered(before));
+  await networkGuard.assertClean(testInfo);
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
+test('September close seals its own GastApp snapshot and prepares October without changing history', async ({ page }, testInfo) => {
+  await seedMortgageStart();
+  const ref = emulatorDb().doc(`aurum_wealth/${uid}`);
+  const root = (await ref.get()).data()!;
+  const june = root.closures.find((closure: { monthKey: string }) => closure.monthKey === '2026-06');
+  const august = {
+    ...june, id: 'synthetic-august-before-september', monthKey: '2026-08', closedAt: '2026-09-01T12:00:00.000Z',
+    fxMetadata: { ...june.fxMetadata, economicMonthKey: '2026-08', economicDate: '2026-08-31' },
+    records: june.records.map((record: AuditRecord) => ({ ...record, id: `august-${record.id}`, snapshotDate: '2026-08-31' })),
+  };
+  const septemberRecords = root.records.map((record: AuditRecord) => ({
+    ...record, id: `september-${record.id}`, snapshotDate: '2026-09-30', createdAt: '2026-09-30T12:00:00.000Z',
+  }));
+  await ref.update({ records: septemberRecords, closures: [...root.closures, august] });
+  await page.clock.setFixedTime(new Date('2026-10-01T12:00:00.000Z'));
+  const { modal, networkGuard, pageErrors, consoleErrors } = await prepare(page, '2026-09');
+  const augustBeforeClose = await page.evaluate(async () => {
+    const storagePath = '/src/services/wealthStorage.ts';
+    return (await import(storagePath)).loadClosures().find((closure: { monthKey: string }) => closure.monthKey === '2026-08');
+  });
+  await expect.poll(() => cloudClosure('2026-08')).toEqual(augustBeforeClose);
+  const preview = await previewAmounts(modal);
+  await modal.getByRole('button', { name: 'Cancelar', exact: true }).click();
+  await page.getByRole('combobox').selectOption('2026-09');
+  await page.getByRole('button', { name: 'Simular cierre / Preflight', exact: true }).click();
+  // Capture the settled view after the normal, non-interactive update toast.
+  await expect(page.getByText(/Inversiones actualizadas.*Bienes raíces actualizados/)).toBeHidden();
+  await expect(page.getByText('Final al', { exact: false })).toHaveCount(3);
+  await page.getByRole('checkbox', { name: /tasas utilizadas corresponden al cierre económico de septiembre/i }).check();
+  await expect(page.getByText('GO PARA CERRAR', { exact: true })).toBeVisible();
+  await expect(page.getByText(/GastApp cerró 2026-09 con/)).toBeVisible();
+  for (const viewport of [
+    { name: 'desktop', width: 1280, height: 800 },
+    { name: 'tablet', width: 768, height: 1024 },
+    { name: 'mobile', width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.getByText('GO PARA CERRAR', { exact: true }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath(`september-preflight-${viewport.name}.png`) });
+    await page.getByTestId('preflight-gastapp-snapshot').evaluate((element) => element.scrollIntoView({ block: 'center', behavior: 'instant' }));
+    await page.screenshot({ path: testInfo.outputPath(`september-gastapp-snapshot-${viewport.name}.png`) });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  }
+  await page.getByRole('button', { name: 'Cerrar mes', exact: true }).click();
+  await expect(modal).toBeVisible();
+  await modal.getByRole('checkbox', { name: /tasas utilizadas corresponden al cierre económico/i }).check();
+  await confirm(page, modal);
+  const saved = await cloudClosure('2026-09');
+  expect(saved.summary).toMatchObject(preview);
+  expect(saved.fxRates).toEqual(rates);
+  expect(saved.gastappExpenseClose).toMatchObject({ monthKey: '2026-09', calendarMonthKey: '2026-09', totalEur: 2805 });
+  expect(saved.gastappExpenseClose.amountsByCurrency.CLP.total).toBe(2805 * rates.eurClp);
+  await page.getByRole('button', { name: 'Cerrar ventana', exact: true }).click();
+  await expect(page.getByText(/Resumen estratégico octubre de 2026/i)).toBeVisible();
+  await page.reload();
+  await expect(page.getByText(/Resumen estratégico octubre de 2026/i)).toBeVisible();
+  expect(await cloudClosure('2026-09')).toEqual(saved);
+  const after = (await ref.get()).data()!;
+  expect(after.closures.find((closure: { monthKey: string }) => closure.monthKey === '2026-08')).toEqual(augustBeforeClose);
+  expect(nativeAmounts(after.records, '2026-10')).toEqual(nativeAmounts(saved.records, '2026-09'));
+  expect(after.closures.filter((closure: { monthKey: string }) => closure.monthKey === '2026-09')).toHaveLength(1);
+  await attachEvidence(testInfo, { preview, saved, previousClosure: augustBeforeClose });
   await networkGuard.assertClean(testInfo);
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
@@ -366,7 +540,7 @@ test.beforeEach(async () => {
 
 test.afterEach(async ({ page }) => {
   // Stop browser autosync before restoring the isolated fixture.
-  await page.close();
+  await Promise.all(page.context().pages().map((openPage) => openPage.close()));
   const restore = restoreFixture;
   restoreFixture = null;
   if (restore) await restore();
@@ -492,6 +666,36 @@ async function cloudClosure(monthKey: string) {
   const closure = data?.closures.find((item: { monthKey: string }) => item.monthKey === monthKey);
   if (!closure) throw new Error(`No cloud closure for ${monthKey}.`);
   return closure;
+}
+
+async function readAcceptedChain(page: Page) {
+  return page.evaluate(async () => {
+    const storagePath = '/src/services/wealthStorage.ts';
+    const returnsPath = '/src/services/returnsAnalysis.ts';
+    const labPath = '/src/services/wealthLab.ts';
+    const presentationPath = '/src/services/presentationAurumModel.ts';
+    const { loadClosures, loadWealthRecords, loadFxRates, loadIncludeRiskCapitalInTotals } = await import(storagePath);
+    const { computeMonthlyRows, aggregateRows, buildTrailingSummary } = await import(returnsPath);
+    const { buildWealthLabModel } = await import(labPath);
+    const { buildAurumPresentationModel } = await import(presentationPath);
+    const closures = loadClosures();
+    const includeRisk = loadIncludeRiskCapitalInTotals();
+    const rows = computeMonthlyRows(closures, includeRisk, 'CLP');
+    const ufRows = computeMonthlyRows(closures, includeRisk, 'UF');
+    const pct12 = buildTrailingSummary(ufRows, 12, 'test-12', '12M')?.pctRetorno;
+    const pct36 = buildTrailingSummary(ufRows, 36, 'test-36', '36M')?.pctRetorno;
+    const presentation = buildAurumPresentationModel({ closures, records: loadWealthRecords(), fx: loadFxRates(), includeRiskCapitalInTotals: includeRisk });
+    const pctText = (value: number) => `${value >= 0 ? '+' : ''}${value.toFixed(1).replace('.', ',')}%`;
+    return {
+      monthSpendEur: closures.find((closure: { monthKey: string }) => closure.monthKey === '2026-07').gastappExpenseClose.totalEur,
+      accumulatedSpendClp: aggregateRows('test-total', 'Total', rows, null).gastosAcumClp,
+      labSpendClp: buildWealthLabModel(closures, includeRisk).points.find((point: { monthKey: string }) => point.monthKey === '2026-07').gastosClp,
+      dashboard12Uf: pct12, dashboard36Uf: pct36,
+      dashboard12UfText: pctText(pct12), dashboard36UfText: pctText(pct36),
+      presentation36Uf: presentation.return36mUfPct,
+      presentation36UfText: `${presentation.return36mUfPct.toLocaleString('es-CL', { maximumFractionDigits: 1 })} % anualizado`,
+    };
+  });
 }
 
 async function attachEvidence(testInfo: TestInfo, value: unknown) {

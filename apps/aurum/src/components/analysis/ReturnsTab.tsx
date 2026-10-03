@@ -1273,8 +1273,8 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     if (missingSpendMonths.length > 0) {
       return {
         severity: 'alert' as SpendTrustSeverity,
-        title: 'Gasto observado faltante',
-        body: `Meses cerrados sin gasto contable final: ${missingSpendMonths.map((m) => monthLabel(m)).join(', ')}. No se incluyen en agregados cerrados.`,
+        title: 'Gasto no confirmado en el cierre',
+        body: `Meses cerrados sin una versión de GastApp confirmada y guardada en Aurum: ${missingSpendMonths.map((m) => monthLabel(m)).join(', ')}. No se incluyen en agregados cerrados. Requieren una revisión explícita; no se sustituyen por el gasto actual ni se reconstruye el histórico automáticamente.`,
       };
     }
     if (legacySpendMonths.length > 0) {
@@ -1314,8 +1314,8 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     }
     return {
       severity: 'ok' as SpendTrustSeverity,
-      title: 'Gasto observado desde GastApp por periodo',
-      body: 'Gasto observado desde GastApp por periodo · contrato actualizado.',
+      title: 'Gasto confirmado en el cierre de Aurum',
+      body: 'Cada cierre utiliza la versión de GastApp aceptada en Aurum. Una nueva revisión requiere comparar y aceptar su impacto antes de actualizar las cifras.',
     };
   }, [latestGastappSpendRow, legacySpendMonths.length, missingSpendMonths]);
   const spendTrustDetails = React.useMemo(() => {
@@ -1774,8 +1774,8 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                     : 'bg-slate-400',
               )}
             />
-            <div className="truncate text-[12px] font-semibold">
-            {`Avisos · ${spendTrustCollapsedLine}`}
+            <div className="min-w-0 break-words text-[12px] font-semibold leading-snug">
+              {`Avisos · ${spendTrustCollapsedLine}`}
             </div>
           </div>
           <ChevronDown size={16} className={cn('shrink-0 transition-transform', isSpendTrustExpanded ? 'rotate-180' : 'rotate-0')} />
@@ -1785,7 +1785,9 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
             <div>{spendTrustState.body}</div>
             {mainPendingOfficial && (
               <div className="mt-1">
-                {`${monthLabel(mainPendingOfficial.row.monthKey)} tiene cierre patrimonial, pero el gasto asociado aún no está cerrado. El retorno económico oficial se incorporará cuando GastApp publique el cierre mensual confirmado.`}
+                {mainPendingOfficial.row.gastappOfficialForProvisional
+                  ? `${monthLabel(mainPendingOfficial.row.monthKey)} ya tiene el gasto certificado en GastApp; falta formalizar el cierre patrimonial en Aurum. Se muestra como provisional (P).`
+                  : `${monthLabel(mainPendingOfficial.row.monthKey)} sigue provisional (P). El retorno oficial requiere el gasto certificado en GastApp y el cierre confirmado en Aurum.`}
               </div>
             )}
             {latestGastappSpendRow?.gastosStaleReason && legacySpendMonths.length === 0 && (

@@ -420,8 +420,11 @@ export const buildWealthLabModel = (
     const prevNetClp = netClp !== null && Number.isFinite(netClp) && netClp > 0 ? previousValidNet : null;
     const varPatrimonioClp =
       netClp !== null && prevNetClp !== null && prevNetClp > 0 ? netClp - prevNetClp : null;
-    const provisionalSpend = closure.analysisProvisionalReason
-      ? resolveGastappMonthlySpend(closure.monthKey, new Date()).gastosEur
+    const openMonthSpend = closure.analysisProvisionalReason
+      ? resolveGastappMonthlySpend(closure.monthKey, new Date())
+      : null;
+    const provisionalSpend = openMonthSpend
+      ? openMonthSpend.gastosEur ?? openMonthSpend.partialGastosEur ?? null
       : closure.gastappExpenseClose?.totalEur ?? null;
     const gastosClp = provisionalSpend !== null ? provisionalSpend * fx.eurClp : null;
     const retornoEconomicoClp =

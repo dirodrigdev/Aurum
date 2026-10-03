@@ -19,7 +19,7 @@ const gastappCloseCandidateMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../src/services/gastosMonthly', () => ({
   resolveGastappMonthlyCloseCandidate: gastappCloseCandidateMock,
-  resolveGastappMonthlySpend: (monthKey: string) => {
+  resolveGastappMonthlySpend: vi.fn((monthKey: string) => {
     const value = TEST_GASTOS_EUR[monthKey] ?? (monthKey.startsWith('2025-') ? 4200 : undefined);
     if (Number.isFinite(value)) {
       return {
@@ -39,8 +39,10 @@ vi.mock('../src/services/gastosMonthly', () => ({
       contractStatus: 'pending' as const,
       periodKey: `${monthKey}-12__${monthKey.slice(0, 5)}${String(Number(monthKey.slice(5, 7)) + 1).padStart(2, '0')}-11`,
     };
-  },
+  }),
 }));
+
+import { resolveGastappMonthlySpend } from '../src/services/gastosMonthly';
 
 import {
   aggregateRows,
@@ -137,6 +139,37 @@ const withGastappPartial = <T extends ReturnType<typeof computeMonthlyRows>[numb
 });
 
 describe('returns analysis helpers', () => {
+  it('carries a pending GastApp partial through the real open-month builder and P calculation', () => {
+    const records = [{
+      id: 'partial-bank', block: 'bank' as const, source: 'test', label: 'Cuenta ficticia',
+      amount: 1_000_000, currency: 'CLP' as const,
+      snapshotDate: '2026-07-31', createdAt: '2026-07-31T12:00:00.000Z',
+    }];
+    const july = { ...makeClosure('2026-07', { netClp: 1_000_000 }), records };
+    gastappCloseCandidateMock.mockReturnValueOnce({
+      status: 'pending', partialGastosEur: 2500,
+      partialByFamilyEur: { dayToDay: 2300, trips: 100, others: 100 },
+    });
+    const provisional = buildGastappPartialMonthClosure({
+      closures: [july], records, fxRates: july.fxRates!,
+    });
+    expect(provisional).not.toBeNull();
+    vi.mocked(resolveGastappMonthlySpend).mockReturnValueOnce({
+      monthKey: '2026-08', status: 'pending', gastosEur: null, source: 'gastapp_firestore',
+      partialGastosEur: 2500, partialByFamilyEur: { dayToDay: 2300, trips: 100, others: 100 },
+    });
+    const rows = computeMonthlyRows([july, provisional!], false, 'CLP');
+    expect(rows.at(-1)).toMatchObject({
+      gastosStatus: 'pending', gastosClp: null, partialGastosEur: 2500,
+      partialGastosClp: 2_500_000, gastappOfficialForProvisional: undefined,
+    });
+    const view = buildReturnsSeriesView(rows);
+    expect(view.estimatedRows.at(-1)).toMatchObject({ isPartial: true, gastosClp: 2_500_000 });
+    expect(view.officialRows.at(-1)?.gastosClp).toBeNull();
+    expect(july.gastappExpenseClose?.totalEur).toBe(2200);
+    expect(provisional?.gastappExpenseClose).toBeUndefined();
+  });
+
   it('uses the GastApp snapshot accepted in the close instead of a newer live value', () => {
     const january = makeClosure('2026-01', { netClp: 1_000_000_000 });
     january.gastappExpenseClose = {

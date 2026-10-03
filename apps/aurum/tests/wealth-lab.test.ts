@@ -175,6 +175,31 @@ describe('wealthLab model', () => {
     expect(model.points.find((point) => point.monthKey === '2026-01')?.gastosClp).toBe(250_000);
   });
 
+  it('keeps the published partial in the explicitly provisional open month', async () => {
+    const { buildWealthLabModel } = await import('../src/services/wealthLab');
+    resolveGastappMonthlySpendMock.mockReturnValueOnce({
+      monthKey: '2026-02', status: 'pending', gastosEur: null,
+      partialGastosEur: 2500, source: 'gastapp_firestore',
+    } as never);
+    const model = buildWealthLabModel([
+      makeClosure('2026-01', { netClp: 100_000_000 }),
+      { ...makeClosure('2026-02', { netClp: 110_000_000 }), gastappExpenseClose: undefined,
+        analysisProvisionalReason: 'gastapp_partial_aurum_pending' },
+    ] as never, false);
+    expect(model.points.at(-1)?.gastosClp).toBe(2_500_000);
+    expect(model.points.at(-1)?.retornoEconomicoClp).toBe(12_500_000);
+  });
+
+  it('does not reconstruct the expense of a legacy close without an accepted snapshot', async () => {
+    const { buildWealthLabModel } = await import('../src/services/wealthLab');
+    const model = buildWealthLabModel([
+      { ...makeClosure('2026-01', { netClp: 100_000_000 }), gastappExpenseClose: undefined },
+      { ...makeClosure('2026-02', { netClp: 110_000_000 }), gastappExpenseClose: undefined },
+    ] as never, false);
+    expect(model.points.every((point) => point.gastosClp === null && point.retornoEconomicoClp === null)).toBe(true);
+    expect(resolveGastappMonthlySpendMock).not.toHaveBeenCalled();
+  });
+
   it('construye la serie con índices real y sin FX cuando hay exposición USD identificable', async () => {
     const { buildWealthLabModel } = await import('../src/services/wealthLab');
     const model = buildWealthLabModel(

@@ -501,8 +501,8 @@ export const buildMonthlyClosePreflightDiagnostic = (
   input: MonthlyClosePreflightInput,
 ): MonthlyClosePreflightDiagnostic => {
   const calendarMonth = input.calendarMonthKey || currentMonthKey();
-  const candidateMonthKey = deriveOperationalMonthKeyFromClosures(input.closures, calendarMonth);
-  const targetMonthKey = input.targetMonthKey || candidateMonthKey;
+  const candidateMonthKey = input.targetMonthKey || deriveOperationalMonthKeyFromClosures(input.closures, calendarMonth);
+  const targetMonthKey = candidateMonthKey;
   const economicMonthOpen = isEconomicMonthOpen(targetMonthKey, input.todayYmd);
   const previousClosure =
     [...input.closures]
@@ -1183,8 +1183,8 @@ export const buildMonthlyClosePreflightDiagnostic = (
         buildCheck(
           'gastapp_monthly_source_changed',
           'cambios de GastApp desde el cierre Aurum guardado',
-          'warn',
-          'GastApp publicó un nuevo valor para este mes. Revisa el importe y confirma el cierre para guardar el snapshot actualizado; Aurum no cambia cierres históricos automáticamente.',
+          'fail',
+          'GastApp publicó una revisión para este mes. Abre «Revisar impacto» y acepta la versión comparada con «Aceptar y actualizar cadena» cuando esté certificada. Después vuelve a simular el cierre. Se conservan los registros y tasas del cierre patrimonial.',
         ),
       );
     }
@@ -1220,7 +1220,7 @@ export const buildMonthlyClosePreflightDiagnostic = (
     check.status === 'fail',
   );
   const hasSourceTruthFailure = checks.some((check) =>
-    ['ui_assets_vs_close', 'ui_amounts_vs_close', 'aggregate_conflicts'].includes(check.key) &&
+    ['ui_assets_vs_close', 'ui_amounts_vs_close', 'aggregate_conflicts', 'gastapp_monthly_source_changed'].includes(check.key) &&
     check.status === 'fail',
   );
   const hasPendingConfirmations = checks.some((check) =>

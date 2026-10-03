@@ -103,6 +103,27 @@ describe('wealth storage closures merge', () => {
     expect(mergeClosuresForSync([closure], [structuredClone(closure)], true)).toEqual([closure]);
   });
 
+  it.each([false, true])('does not duplicate an already archived GastApp version (preferLocal=%s)', (preferLocal) => {
+    const older = makeClosure('2026-07', 'july', '2026-08-01T12:00:00.000Z');
+    older.gastappExpenseClose = makeGastappSnapshot(1, `sha256:${'a'.repeat(64)}`, '2026-08-02T12:00:00.000Z');
+    const newer = { ...structuredClone(older), gastappExpenseClose: makeGastappSnapshot(2, `sha256:${'b'.repeat(64)}`, '2026-08-03T12:00:00.000Z') };
+    newer.previousVersions = [{ ...structuredClone(older), id: 'july:gastapp:1', replacedAt: '2026-08-03T12:00:00.000Z' }];
+    const merged = mergeClosuresForSync([newer], [older], preferLocal);
+    expect(merged[0].gastappExpenseClose?.contractHash).toBe(newer.gastappExpenseClose.contractHash);
+    expect(merged[0].previousVersions).toHaveLength(1);
+    expect(mergeClosuresForSync(merged, [older], preferLocal)[0].previousVersions).toHaveLength(1);
+  });
+
+  it.each([false, true])('preserves the explicitly accepted successor when revision and capture time tie (preferLocal=%s)', (preferLocal) => {
+    const older = makeClosure('2026-07', 'july', '2026-08-01T12:00:00.000Z');
+    older.gastappExpenseClose = makeGastappSnapshot(1, `sha256:${'a'.repeat(64)}`, '2026-08-02T12:00:00.000Z');
+    const accepted = { ...structuredClone(older), gastappExpenseClose: { ...older.gastappExpenseClose, contractHash: `sha256:${'b'.repeat(64)}`, monthContractHash: `sha256:${'b'.repeat(64)}` } };
+    accepted.previousVersions = [{ ...structuredClone(older), id: 'july:gastapp:1', replacedAt: '2026-08-02T12:00:00.000Z' }];
+    const merged = mergeClosuresForSync([accepted], [older], preferLocal);
+    expect(merged[0].gastappExpenseClose?.contractHash).toBe(accepted.gastappExpenseClose.contractHash);
+    expect(merged[0].previousVersions).toHaveLength(1);
+  });
+
   it('detects a newer local revision before an in-flight cloud write', () => {
     expect(isWealthCloudWriteStale('2026-07-13T10:00:00.001Z', '2026-07-13T10:00:00.001Z')).toBe(false);
     expect(isWealthCloudWriteStale('2026-07-13T10:00:00.001Z', '2026-07-13T10:00:00.002Z')).toBe(true);

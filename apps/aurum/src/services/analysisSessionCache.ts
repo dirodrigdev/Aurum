@@ -1,3 +1,5 @@
+import type { WealthMonthlyClosure } from './wealthStorage';
+
 type AnalysisSessionCacheEntry<T> = {
   fingerprint: string;
   builtAt: string;
@@ -30,3 +32,15 @@ export const clearAnalysisSessionCache = (fingerprint?: string) => {
   }
   analysisSessionCache.clear();
 };
+export const buildClosuresFingerprint = (closures: WealthMonthlyClosure[]) =>
+  closures.map((closure) => [
+    closure.monthKey,
+    closure.closedAt || '',
+    Number(closure.summary?.netClp ?? ''),
+    Number(closure.summary?.netClpWithRisk ?? ''),
+    Number(closure.summary?.netConsolidatedClp ?? ''),
+    Number(closure.fxRates?.usdClp ?? ''),
+    Number(closure.fxRates?.eurClp ?? ''),
+    Number(closure.fxRates?.ufClp ?? ''),
+    JSON.stringify(closure.gastappExpenseClose ?? null),
+  ].join(':')).join('|');

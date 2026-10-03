@@ -112,7 +112,6 @@ import {
   MANUAL_CARD_LABELS,
   START_MONTH_CHECKPOINT_LABEL,
   isStartMonthCheckpointRecord,
-  acceptGastappMonthlyClosureRevision,
   INVESTMENT_BTG_LABEL,
   INVESTMENT_GLOBAL66_USD_LABEL,
   INVESTMENT_PLANVITAL_LABEL,
@@ -166,6 +165,7 @@ import {
   type SuggestedClosureRates,
 } from '../services/closureFxRates';
 import { clearClosureFxDraft, loadClosureFxDraft, saveClosureFxDraft } from '../services/closureFxDraft';
+import { acceptReviewedGastappRevision } from '../services/acceptReviewedGastappRevision';
 
 type MainSection = 'investment' | 'real_estate' | 'bank';
 const PREFERRED_DISPLAY_CURRENCY_KEY = 'aurum.preferred.display.currency';
@@ -7259,31 +7259,13 @@ export const Patrimonio: React.FC = () => {
     expectedPreviousContractHash: string,
     expectedCandidateContractHash: string,
   ) => {
-    const closure = loadClosures().find((item) => item.monthKey === monthKey);
-    if (!closure?.gastappExpenseClose) {
-      setGastappRevisionMessage('No encontré el snapshot de GastApp guardado para este cierre.');
-      return;
-    }
-    if (closure.gastappExpenseClose.contractHash !== expectedPreviousContractHash) {
-      setGastappRevisionMessage('La revisión cambió o aún no está certificada. Actualiza la comparación.');
-      return;
-    }
     setGastappRevisionSaving(true);
     setGastappRevisionMessage('');
     try {
-      await refreshGastappMonthlyContable();
-      const candidate = resolveGastappMonthlyCloseCandidate(monthKey, { previousSnapshot: closure.gastappExpenseClose });
-      if (!candidate.snapshot || !candidate.sourceChangedAfterClosure) {
-        throw new Error(candidate.message || 'La revisión cambió o aún no está certificada. Actualiza la comparación.');
-      }
-      if (candidate.snapshot.contractHash !== expectedCandidateContractHash) {
-        throw new Error('La revisión cambió o aún no está certificada. Actualiza la comparación.');
-      }
-      const result = await acceptGastappMonthlyClosureRevision({
+      const result = await acceptReviewedGastappRevision({
         monthKey,
         expectedPreviousContractHash,
         expectedCandidateContractHash,
-        snapshot: candidate.snapshot,
       });
       refreshClosures();
       setGastappRevisionMessage(result.changed
@@ -8691,6 +8673,15 @@ export const Patrimonio: React.FC = () => {
                   <div className="mt-1">GastApp cambió este mes, pero su nueva versión aún no está certificada. El cierre Aurum permanece con la versión anterior.</div>
                 )}
                 {!!gastappRevisionMessage && <div role="status" className="mt-2 rounded bg-white p-2">{gastappRevisionMessage}</div>}
+              </div>
+            )}
+
+            {closePreflightDiagnostic.gastappExpenseClose && (
+              <div data-testid="preflight-gastapp-snapshot" className="mt-3 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-700">
+                <div className="font-semibold">GastApp para este cierre · {monthLabel(closePreflightDiagnostic.candidateMonthKey)}</div>
+                <p className="mt-1 break-words">
+                  {closePreflightDiagnostic.checks.find((check) => check.key === 'gastapp_monthly_close')?.message}
+                </p>
               </div>
             )}
 

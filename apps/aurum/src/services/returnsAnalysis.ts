@@ -295,9 +295,9 @@ export const buildGastappPartialMonthClosure = (input: {
     id: `gastapp-partial-${monthKey}`,
     monthKey,
     closedAt: new Date().toISOString(),
-    ...(gastapp.status === 'complete'
-      ? { analysisProvisionalReason: 'gastapp_official_aurum_pending' as const }
-      : {}),
+    analysisProvisionalReason: gastapp.status === 'complete'
+      ? 'gastapp_official_aurum_pending'
+      : 'gastapp_partial_aurum_pending',
     summary: buildCanonicalClosureSummary(snapshotRecords, input.fxRates),
     fxRates: { ...input.fxRates },
     records: snapshotRecords,
@@ -647,8 +647,9 @@ export const computeMonthlyRows = (
     const varPatrimonioDisplay =
       invalidNet || prevNetDisplay === null || netDisplay === null ? null : netDisplay - prevNetDisplay;
     const gastappOfficialForProvisional = closure.analysisProvisionalReason === 'gastapp_official_aurum_pending';
+    const gastappForProvisional = Boolean(closure.analysisProvisionalReason);
     const acceptedGastappSnapshot = closure.gastappExpenseClose;
-    const spend: ReturnType<typeof resolveGastappMonthlySpend> = gastappOfficialForProvisional
+    const spend: ReturnType<typeof resolveGastappMonthlySpend> = gastappForProvisional
       ? resolveGastappMonthlySpend(closure.monthKey, new Date())
       : acceptedGastappSnapshot
         ? {
@@ -700,8 +701,8 @@ export const computeMonthlyRows = (
     // The current Aurum photo remains provisional even when GastApp has
     // already published the official calendar-month expense. Keep that
     // distinction local to analysis so official aggregates never absorb it.
-    const gastosStatus = gastappOfficialForProvisional ? 'pending' as const : spend.status;
-    const gastosEur = gastappOfficialForProvisional ? null : spend.gastosEur;
+    const gastosStatus = gastappForProvisional ? 'pending' as const : spend.status;
+    const gastosEur = gastappForProvisional ? null : spend.gastosEur;
     const gastosClp = invalidNet || !fxAuditable || gastosEur === null ? null : gastosEur * fx.eurClp;
     const gastosDisplay = gastosClp === null ? null : convertFromClp(gastosClp, currency, fx);
     const partialGastosEur = gastappOfficialForProvisional

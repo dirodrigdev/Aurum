@@ -22,7 +22,6 @@ import {
   loadFxRates,
   loadIncludeRiskCapitalInTotals,
   loadWealthRecords,
-  repairKnownHistoricalUfClpClosures,
   saveIncludeRiskCapitalInTotals,
 } from '../services/wealthStorage';
 import { buildWealthLabModel } from '../services/wealthLab';
@@ -40,6 +39,7 @@ import {
 } from '../services/returnsAnalysis';
 import { buildCrpContributionInsight } from '../services/returnsCrpInsight';
 import {
+  buildClosuresFingerprint,
   clearAnalysisSessionCache,
   getOrBuildAnalysisSessionValue,
 } from '../services/analysisSessionCache';
@@ -67,22 +67,6 @@ const buildAnalysisClosures = (closures: WealthMonthlyClosure[]) => {
   });
   return partialClosure ? [...closures, partialClosure] : closures;
 };
-
-const buildClosuresFingerprint = (closures: WealthMonthlyClosure[]) =>
-  closures
-    .map((closure) =>
-      [
-        closure.monthKey,
-        closure.closedAt || '',
-        Number(closure.summary?.netClp ?? ''),
-        Number(closure.summary?.netClpWithRisk ?? ''),
-        Number(closure.summary?.netConsolidatedClp ?? ''),
-        Number(closure.fxRates?.usdClp ?? ''),
-        Number(closure.fxRates?.eurClp ?? ''),
-        Number(closure.fxRates?.ufClp ?? ''),
-      ].join(':'),
-    )
-    .join('|');
 
 const buildAnalysisFingerprint = ({
   closuresFingerprint,
@@ -152,17 +136,6 @@ export const AnalysisAurum: React.FC = () => {
 
   useEffect(() => {
     refreshClosures();
-  }, [refreshClosures]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void repairKnownHistoricalUfClpClosures().then((result) => {
-      if (cancelled || result.repairedCount === 0) return;
-      refreshClosures();
-    });
-    return () => {
-      cancelled = true;
-    };
   }, [refreshClosures]);
 
   useEffect(() => {
@@ -464,7 +437,7 @@ export const AnalysisAurum: React.FC = () => {
         return;
       }
       setErrorMessage(
-        `Faltan gastos contables cerrados en: ${analysisDiagnostics.missingSpendMonths.join(', ')}. Esos meses no se incluyen en agregados.`,
+        `Faltan gastos confirmados y guardados en los cierres de Aurum: ${analysisDiagnostics.missingSpendMonths.join(', ')}. Esos meses no se incluyen en agregados ni se sustituyen por datos actuales de GastApp.`,
       );
       return;
     }

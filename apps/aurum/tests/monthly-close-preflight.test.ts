@@ -37,6 +37,17 @@ const record = (input: Partial<WealthRecord> & Pick<WealthRecord, 'id' | 'block'
 });
 
 describe('monthly close preflight diagnostic', () => {
+  it('labels and checks the selected economic month instead of the suggested operational month', () => {
+    const diagnostic = buildMonthlyClosePreflightDiagnostic({
+      records: [], closures: [], fxForClose: fx, investmentInstruments: [],
+      includeRiskCapitalInTotals: false, uiMonthKey: '2026-09', targetMonthKey: '2026-09',
+      calendarMonthKey: '2026-10', todayYmd: '2026-10-01',
+      gastappExpenseClose: { monthKey: '2026-09', status: 'complete', snapshotAvailable: true, partialGastosEur: 2805 },
+    });
+    expect(diagnostic.candidateMonthKey).toBe('2026-09');
+    expect(buildMonthlyClosePreflightReport(diagnostic)).toContain('Preflight cierre mensual (2026-09)');
+  });
+
   it.each([false, true])('reconciles the summary with risk inclusion set to %s', (includeRiskCapitalInTotals) => {
     const records = [
       record({ id: 'bank', block: 'bank', label: BANK_BCHILE_CLP_LABEL, amount: 20_000_000, currency: 'CLP', snapshotDate: '2026-06-30', createdAt: '2026-06-30T10:00:00Z' }),
@@ -54,7 +65,7 @@ describe('monthly close preflight diagnostic', () => {
     expect(diagnostic.decision).toBe('GO_PARA_CERRAR');
   });
 
-  it('returns GO when UI equivalent, freshness and close target reconcile', () => {
+  it.each([false, true])('matches the close gate when GastApp has a pending revision: %s', (sourceChangedAfterClosure) => {
     const records: WealthRecord[] = [
       record({
         id: 'inv-jun',
@@ -152,20 +163,19 @@ describe('monthly close preflight diagnostic', () => {
         partialGastosEur: 2400,
         snapshotAvailable: true,
         message: 'Cierre GastApp disponible.',
-        sourceChangedAfterClosure: true,
+        sourceChangedAfterClosure,
         currentContractHash: 'sha256:new',
         storedContractHash: 'sha256:old',
       },
     });
 
-    expect(diagnostic.decision).toBe('GO_PARA_CERRAR');
+    expect(diagnostic.decision).toBe(sourceChangedAfterClosure ? 'NO_GO_SOURCE_OF_TRUTH_UNCLEAR' : 'GO_PARA_CERRAR');
     expect(diagnostic.fillMissingWarning.wouldRun).toBe(false);
     expect(diagnostic.checks.find((check) => check.key === 'ui_amounts_vs_close')?.status).toBe('ok');
     expect(diagnostic.checks.find((check) => check.key === 'gastapp_monthly_close')?.status).toBe('ok');
-    expect(diagnostic.checks.find((check) => check.key === 'gastapp_monthly_source_changed')).toMatchObject({
-      status: 'warn',
-    });
-    expect(diagnostic.decision).toBe('GO_PARA_CERRAR');
+    if (sourceChangedAfterClosure) {
+      expect(diagnostic.checks.find((check) => check.key === 'gastapp_monthly_source_changed')).toMatchObject({ status: 'fail' });
+    }
   });
 
   it('alerts and blocks the GastApp check when only a partial month is available', () => {

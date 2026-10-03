@@ -1,11 +1,31 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  buildClosuresFingerprint,
   clearAnalysisSessionCache,
   getOrBuildAnalysisSessionValue,
 } from '../src/services/analysisSessionCache';
+import type { WealthMonthlyClosure } from '../src/services/wealthStorage';
 
 describe('analysis session cache', () => {
+  it('refreshes an accepted GastApp revision even when the financial photo stays identical', () => {
+    clearAnalysisSessionCache();
+    const original = {
+      id: 'september', monthKey: '2026-09', closedAt: '2026-10-01T12:00:00Z',
+      summary: { netClp: 1_000_000 }, fxRates: { usdClp: 900, eurClp: 1000, ufClp: 38000 },
+      gastappExpenseClose: { contractHash: 'old', certificationRevision: 1, totalEur: 2000 },
+    } as WealthMonthlyClosure;
+    const revised = { ...original, gastappExpenseClose: {
+      ...original.gastappExpenseClose!, contractHash: 'new', certificationRevision: 2, totalEur: 2715,
+    } };
+    const previous = getOrBuildAnalysisSessionValue(buildClosuresFingerprint([original]), () => original);
+    const next = getOrBuildAnalysisSessionValue(buildClosuresFingerprint([revised]), () => revised);
+    expect(next.value.gastappExpenseClose?.totalEur).toBe(2715);
+    expect(previous.value.gastappExpenseClose?.totalEur).toBe(2000);
+    expect(next.value.summary).toEqual(previous.value.summary);
+    expect(next.value.fxRates).toEqual(previous.value.fxRates);
+  });
+
   it('reuses cache entries for the same fingerprint', () => {
     clearAnalysisSessionCache();
     const builder = vi.fn(() => ({ value: 1 }));

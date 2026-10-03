@@ -104,7 +104,7 @@ export interface WealthMonthlyClosure {
   monthKey: string;
   closedAt: string;
   /** Analysis-only marker for the current month; never persisted as a closure. */
-  analysisProvisionalReason?: 'gastapp_official_aurum_pending';
+  analysisProvisionalReason?: 'gastapp_official_aurum_pending' | 'gastapp_partial_aurum_pending';
   summary: WealthSnapshotSummary;
   fxRates?: WealthFxRates;
   fxMetadata?: ClosureFxMetadata;
@@ -5871,9 +5871,23 @@ const mergeSameFinancialClosureGastappRevision = (
   const secondRevision = Number(secondSnapshot.certificationRevision || 0);
   const firstCapturedAt = new Date(firstSnapshot.capturedAt || firstSnapshot.generatedAt).getTime();
   const secondCapturedAt = new Date(secondSnapshot.capturedAt || secondSnapshot.generatedAt).getTime();
-  const winner = secondRevision > firstRevision ||
-    (secondRevision === firstRevision && secondCapturedAt >= firstCapturedAt) ? second : first;
+  const includesSameRevision = (versions: WealthMonthlyClosureVersion[] | undefined, closure: WealthMonthlyClosure) =>
+    Boolean(versions?.some((version) =>
+      version.gastappExpenseClose?.contractHash === closure.gastappExpenseClose?.contractHash &&
+      confirmedClosureMismatchFields(closure, version, ['id', 'gastappExpenseClose']).length === 0,
+    ));
+  // The accepted close archives its predecessor. That evidence is stronger
+  // than equal counters/timestamps, including two browser syncs in one tick.
+  const firstReplacesSecond = includesSameRevision(first.previousVersions, second);
+  const secondReplacesFirst = includesSameRevision(second.previousVersions, first);
+  const winner = firstReplacesSecond !== secondReplacesFirst
+    ? firstReplacesSecond ? first : second
+    : secondRevision > firstRevision ||
+      (secondRevision === firstRevision && secondCapturedAt >= firstCapturedAt) ? second : first;
   const superseded = winner === second ? first : second;
+  if (includesSameRevision(mergedPreviousVersions, superseded)) {
+    return { ...winner, previousVersions: mergedPreviousVersions };
+  }
   const supersededSnapshot = superseded.gastappExpenseClose!;
   const archivedVersion = toClosureVersion(
     {
