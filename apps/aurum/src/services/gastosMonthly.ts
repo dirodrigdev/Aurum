@@ -638,16 +638,16 @@ export const resolveGastappMonthlyCloseCandidate = (
   const storedContractHash = readString(options.previousSnapshot?.contractHash);
   const withChangeState = (
     candidate: Omit<GastappMonthlyCloseCandidate, 'sourceChangedAfterClosure' | 'currentContractHash' | 'storedContractHash'>,
-  ): GastappMonthlyCloseCandidate => ({
-    ...candidate,
-    sourceChangedAfterClosure: Boolean(
-      candidate.snapshot?.monthContractHash &&
-      storedContractHash &&
-      candidate.snapshot.monthContractHash !== storedContractHash,
-    ),
-    currentContractHash: candidate.snapshot?.monthContractHash || null,
-    storedContractHash,
-  });
+  ): GastappMonthlyCloseCandidate => {
+    const currentContractHash = candidate.snapshot?.monthContractHash ||
+      gastappMonthlyRuntime.map[monthKey]?.monthContractHash || null;
+    return {
+      ...candidate,
+      sourceChangedAfterClosure: Boolean(currentContractHash && storedContractHash && currentContractHash !== storedContractHash),
+      currentContractHash,
+      storedContractHash,
+    };
+  };
   if (gastappMonthlyRuntime.status === 'idle') {
     void loadGastappMonthlyContable();
   }

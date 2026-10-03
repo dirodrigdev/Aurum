@@ -41,6 +41,7 @@ type TestClosure = {
   closedAt: string;
   summary: TestSummary;
   fxRates: { usdClp: number; eurClp: number; ufClp: number };
+  gastappExpenseClose?: { totalEur: number };
   records?: Array<{
     id: string;
     block: string;
@@ -94,6 +95,7 @@ const makeClosure = (
     eurClp = 1000,
     records = true,
     includeAnalysis = true,
+    gastappTotalEur = 1000,
   }: {
     netClp: number;
     netClpWithRisk?: number;
@@ -104,6 +106,7 @@ const makeClosure = (
     eurClp?: number;
     records?: boolean;
     includeAnalysis?: boolean;
+    gastappTotalEur?: number;
   },
 ): TestClosure => ({
   id: monthKey,
@@ -124,6 +127,7 @@ const makeClosure = (
       : {}),
   },
   fxRates: { usdClp, eurClp, ufClp: 38000 },
+  gastappExpenseClose: { totalEur: gastappTotalEur },
   records: records
     ? [
         {
@@ -160,6 +164,15 @@ describe('wealthLab model', () => {
       gastosEur: 1000,
       source: 'gastapp_firestore' as const,
     }));
+  });
+
+  it('uses the accepted GastApp snapshot in historical Wealth Lab rows', async () => {
+    const { buildWealthLabModel } = await import('../src/services/wealthLab');
+    const model = buildWealthLabModel([
+      makeClosure('2026-01', { netClp: 100_000_000, gastappTotalEur: 250 }),
+      makeClosure('2026-02', { netClp: 110_000_000 }),
+    ] as never, false);
+    expect(model.points.find((point) => point.monthKey === '2026-01')?.gastosClp).toBe(250_000);
   });
 
   it('construye la serie con índices real y sin FX cuando hay exposición USD identificable', async () => {

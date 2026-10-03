@@ -77,7 +77,9 @@ const makeClosure = (
     ufClp?: number;
     fxMissing?: Array<'usdClp' | 'eurClp' | 'ufClp'>;
   },
-): WealthMonthlyClosure => ({
+): WealthMonthlyClosure => {
+  const gastappTotalEur = TEST_GASTOS_EUR[monthKey] ?? (monthKey.startsWith('2025-') ? 4200 : null);
+  return ({
   id: monthKey,
   monthKey,
   closedAt: `${monthKey}-28T23:59:59-03:00`,
@@ -101,7 +103,14 @@ const makeClosure = (
     ufClp,
   },
   fxMissing,
-});
+  ...(gastappTotalEur === null ? {} : {
+    gastappExpenseClose: {
+      totalEur: gastappTotalEur,
+      byFamilyEur: { dayToDay: gastappTotalEur, trips: 0, others: 0 },
+    } as NonNullable<WealthMonthlyClosure['gastappExpenseClose']>,
+  }),
+  });
+};
 
 const withGastappPartial = <T extends ReturnType<typeof computeMonthlyRows>[number]>(
   rows: T[],
@@ -115,6 +124,9 @@ const withGastappPartial = <T extends ReturnType<typeof computeMonthlyRows>[numb
   const partialRetornoRealDisplay = row.varPatrimonioDisplay === null ? null : row.varPatrimonioDisplay + partialGastosDisplay;
   return {
     ...row,
+    gastosStatus: 'pending' as const,
+    gastosSource: 'gastapp_firestore' as const,
+    gastosContractStatus: 'pending' as const,
     partialGastosEur: totalEur,
     partialByFamilyEur: { dayToDay: totalEur, trips: 0, others: 0 },
     partialGastosClp,
@@ -125,6 +137,19 @@ const withGastappPartial = <T extends ReturnType<typeof computeMonthlyRows>[numb
 });
 
 describe('returns analysis helpers', () => {
+  it('uses the GastApp snapshot accepted in the close instead of a newer live value', () => {
+    const january = makeClosure('2026-01', { netClp: 1_000_000_000 });
+    january.gastappExpenseClose = {
+      totalEur: 777,
+      byFamilyEur: { dayToDay: 700, trips: 50, others: 27 },
+    } as NonNullable<WealthMonthlyClosure['gastappExpenseClose']>;
+    const rows = computeMonthlyRows([
+      january,
+      makeClosure('2026-02', { netClp: 1_010_000_000 }),
+    ], false, 'CLP');
+    expect(rows.find((row) => row.monthKey === '2026-01')?.gastosClp).toBe(777_000);
+  });
+
   it('excludes the open operational month from aggregates until partial mode is enabled', () => {
     const rows = [
       { monthKey: '2026-08' },
@@ -627,7 +652,7 @@ describe('returns analysis helpers', () => {
         makeClosure('2026-01', { netClp: 940_000_000, eurClp: 1000 }),
         makeClosure('2026-02', { netClp: 960_000_000, eurClp: 1000 }),
         makeClosure('2026-03', { netClp: 980_000_000, eurClp: 1000 }),
-        makeClosure('2026-04', { netClp: 1_000_000_000, eurClp: 1000 }),
+        { ...makeClosure('2026-04', { netClp: 1_000_000_000, eurClp: 1000 }), analysisProvisionalReason: 'gastapp_official_aurum_pending' },
       ],
       false,
       'CLP',

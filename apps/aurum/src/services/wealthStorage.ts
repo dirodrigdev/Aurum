@@ -9,6 +9,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   setDoc,
 } from 'firebase/firestore';
 import {
@@ -6008,6 +6009,91 @@ export const upsertMonthlyClosure = (input: {
   );
   requestImmediateWealthSync();
   return nextClosure;
+};
+
+/** Accepts a certified GastApp revision while leaving the sealed wealth photo and FX untouched. */
+export const acceptGastappMonthlyClosureRevision = async (input: {
+  monthKey: string;
+  expectedPreviousContractHash: string;
+  snapshot: GastappMonthlyExpenseCloseInput;
+}): Promise<{ closure: WealthMonthlyClosure; changed: boolean }> => {
+  const monthKey = normalizeMonthKey(input.monthKey);
+  if (!monthKey || input.snapshot.monthKey !== monthKey || input.snapshot.calendarMonthKey !== monthKey) {
+    throw new Error('La revisión certificada de GastApp no corresponde al mes seleccionado.');
+  }
+  if (!db) throw new Error('Firestore no está disponible para aceptar la revisión de GastApp.');
+  const localClosure = loadClosures().find((closure) => closure.monthKey === monthKey);
+  if (!localClosure?.gastappExpenseClose || !localClosure.fxRates) {
+    throw new Error('Este cierre no tiene un snapshot de GastApp y requiere revisión manual.');
+  }
+  if (localClosure.gastappExpenseClose.contractHash === input.snapshot.contractHash) {
+    return { closure: localClosure, changed: false };
+  }
+  if (localClosure.gastappExpenseClose.contractHash !== input.expectedPreviousContractHash) {
+    throw new Error('El cierre de Aurum cambió desde que se mostró la comparación. Vuelve a revisar la nueva versión.');
+  }
+
+  const acceptedAt = nowIso();
+  const nextSnapshot = buildGastappMonthlyExpenseCloseSnapshot(input.snapshot, localClosure.fxRates, acceptedAt);
+  const ref = await getWealthCloudRef();
+  if (!ref) throw new Error('No pude identificar el cierre cloud de Aurum para guardar esta revisión.');
+
+  const transactionResult = await runTransaction(db, async (transaction) => {
+    const remoteSnap = await transaction.get(ref);
+    if (!remoteSnap.exists()) throw new Error('No encontré el cierre cloud de Aurum para actualizar.');
+    const raw = remoteSnap.data() || {};
+    const rawClosures = Array.isArray(raw.closures) ? raw.closures : [];
+    const remoteClosures = loadClosuresFromRaw(rawClosures);
+    const remoteClosure = remoteClosures.find((closure) => closure.monthKey === monthKey);
+    if (!remoteClosure?.gastappExpenseClose || !remoteClosure.fxRates) {
+      throw new Error('El cierre cloud no tiene un snapshot de GastApp; no lo actualicé.');
+    }
+    if (remoteClosure.gastappExpenseClose.contractHash === input.snapshot.contractHash) {
+      return { closure: remoteClosure, changed: false };
+    }
+    if (remoteClosure.gastappExpenseClose.contractHash !== input.expectedPreviousContractHash) {
+      throw new Error('La versión cloud del cierre cambió. Vuelve a comparar antes de aceptar.');
+    }
+    const changedFinancialFields = confirmedClosureMismatchFields(localClosure, remoteClosure);
+    if (changedFinancialFields.length) {
+      throw new Error(`El cierre de Aurum cambió en la nube (${changedFinancialFields.join(', ')}); no apliqué la revisión.`);
+    }
+    const archivedVersion = toClosureVersion(
+      { ...remoteClosure, id: `${remoteClosure.id}:gastapp:${remoteClosure.gastappExpenseClose.certificationRevision}` },
+      acceptedAt,
+    );
+    const nextClosure: WealthMonthlyClosure = {
+      ...remoteClosure,
+      gastappExpenseClose: nextSnapshot,
+      previousVersions: mergeClosureVersions(remoteClosure.previousVersions, [archivedVersion]),
+    };
+    // toClosureVersion retains optional fields as `undefined`; Firestore rejects
+    // undefined values nested inside the revision archive.
+    const persistedPreviousVersions = JSON.parse(JSON.stringify(nextClosure.previousVersions)) as WealthMonthlyClosureVersion[];
+    const nextRawClosures = rawClosures.map((item: any) =>
+      String(item?.monthKey || '') === monthKey
+        ? { ...item, gastappExpenseClose: nextSnapshot, previousVersions: persistedPreviousVersions }
+        : item,
+    );
+    transaction.set(ref, { closures: nextRawClosures, updatedAt: acceptedAt }, { merge: true });
+    return { closure: nextClosure, changed: true };
+  });
+
+  const currentLocalClosures = loadClosures();
+  const latestLocal = currentLocalClosures.find((closure) => closure.monthKey === monthKey);
+  const updatedClosure = transactionResult.closure;
+  const localUpdatedClosure: WealthMonthlyClosure = {
+    ...(latestLocal || updatedClosure),
+    gastappExpenseClose: updatedClosure.gastappExpenseClose,
+    previousVersions: mergeClosureVersions(latestLocal?.previousVersions, updatedClosure.previousVersions),
+  };
+  const nextLocalClosures = latestLocal
+    ? currentLocalClosures.map((closure) => closure.monthKey === monthKey ? localUpdatedClosure : closure)
+    : [localUpdatedClosure, ...currentLocalClosures];
+  saveClosures(nextLocalClosures, {
+    skipCloudSync: true,
+  });
+  return { closure: localUpdatedClosure, changed: transactionResult.changed };
 };
 
 export const createMonthlyClosure = (

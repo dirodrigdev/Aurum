@@ -91,6 +91,103 @@ test('preflight summary check remains readable across viewports', async ({ page 
   expect(consoleErrors).toEqual([]);
 });
 
+test('accepting a certified GastApp revision updates the whole Aurum chain without rewriting the close', async ({ page }, testInfo) => {
+  await page.clock.setFixedTime(new Date('2026-07-31T12:00:00.000Z'));
+  const { modal, networkGuard, pageErrors, consoleErrors } = await prepare(page);
+  await confirm(page, modal);
+  const originalClosure = await cloudClosure('2026-07');
+  expect(originalClosure.gastappExpenseClose).toMatchObject({
+    schemaVersion: 'aurum-gastapp-monthly-close-v2',
+    sourcePath: 'gastapp_aurum_contracts_v2/months_current',
+    monthKey: '2026-07',
+  });
+  await page.getByRole('button', { name: 'Cerrar ventana', exact: true }).click();
+  const startReminder = page.locator('div.fixed.inset-0').filter({ hasText: 'Mes cerrado correctamente' });
+  await expect(startReminder).toBeVisible();
+  await startReminder.getByRole('button', { name: 'Recordarme después', exact: true }).click();
+  await page.getByRole('link', { name: 'Patrimonio', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Cerrar mes', exact: true })).toBeVisible();
+
+  const previousSnapshot = {
+    ...originalClosure.gastappExpenseClose,
+    totalEur: 2000,
+    byFamilyEur: { dayToDay: 1800, trips: 100, others: 100 },
+    contractHash: `sha256:${'a'.repeat(64)}`,
+    monthContractHash: `sha256:${'a'.repeat(64)}`,
+    certificationHash: `sha256:${'b'.repeat(64)}`,
+  };
+  const oldFx = originalClosure.gastappExpenseClose.fxRates;
+  const oldEur = { total: 2000, dayToDay: 1800, trips: 100, others: 100 };
+  const toCurrency = (factor: number) => Object.fromEntries(
+    Object.entries(oldEur).map(([key, value]) => [key, value * factor]),
+  );
+  previousSnapshot.amountsByCurrency = {
+    EUR: oldEur,
+    CLP: toCurrency(oldFx.eurClp),
+    USD: toCurrency(oldFx.eurClp / oldFx.usdClp),
+    UF: toCurrency(oldFx.eurClp / oldFx.ufClp),
+  };
+  const ref = emulatorDb().doc(`aurum_wealth/${uid}`);
+  const root = (await ref.get()).data()!;
+  await ref.update({ closures: root.closures.map((closure: { monthKey: string }) =>
+    closure.monthKey === '2026-07' ? { ...closure, gastappExpenseClose: previousSnapshot } : closure) });
+  await page.evaluate((snapshot) => {
+    const closures = JSON.parse(window.localStorage.getItem('wealth_closures_v1') || '[]');
+    window.localStorage.setItem('wealth_closures_v1', JSON.stringify(closures.map((closure: { monthKey: string }) =>
+      closure.monthKey === '2026-07' ? { ...closure, gastappExpenseClose: snapshot } : closure)));
+  }, previousSnapshot);
+  await page.reload();
+  await page.goto('/#/patrimonio');
+  await expect(page.getByRole('button', { name: 'Cerrar mes', exact: true })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => {
+    const closures = JSON.parse(window.localStorage.getItem('wealth_closures_v1') || '[]');
+    return closures.find((closure: { monthKey: string }) => closure.monthKey === '2026-07')?.gastappExpenseClose?.contractHash || null;
+  })).toBe(previousSnapshot.contractHash);
+  const revisionAlert = page.getByText('GastApp publicó cambios en cierres Aurum', { exact: true });
+  await expect(revisionAlert).toBeVisible();
+  await expect(page.locator('section[aria-live="polite"]').filter({ hasText: 'Gasto guardado:' })).toContainText('Gasto guardado: 2000,00 €');
+  for (const viewport of [
+    { name: 'desktop', width: 1280, height: 800 },
+    { name: 'tablet', width: 768, height: 1024 },
+    { name: 'mobile', width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await revisionAlert.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath(`gastapp-revision-banner-${viewport.name}.png`) });
+  }
+  const revisionCard = page.locator('section[aria-live="polite"]').filter({ hasText: 'Gasto guardado:' });
+  await revisionCard.getByRole('button', { name: 'Revisar impacto', exact: true }).click();
+  const comparePanel = page.getByText(/Revisión de GastApp/).last();
+  await expect(comparePanel).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Aceptar y actualizar cadena', exact: true })).toBeEnabled();
+  for (const viewport of [
+    { name: 'desktop', width: 1280, height: 800 },
+    { name: 'tablet', width: 768, height: 1024 },
+    { name: 'mobile', width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const acceptButton = page.getByRole('button', { name: 'Aceptar y actualizar cadena', exact: true });
+    await acceptButton.evaluate((element) => element.scrollIntoView({ block: 'center', inline: 'nearest' }));
+    const buttonBox = await acceptButton.boundingBox();
+    expect(buttonBox).not.toBeNull();
+    expect(buttonBox!.y + buttonBox!.height).toBeLessThan(viewport.height - 80);
+    await page.screenshot({ path: testInfo.outputPath(`gastapp-revision-accept-${viewport.name}.png`) });
+  }
+  await page.getByRole('button', { name: 'Aceptar y actualizar cadena', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'aceptada' })).toBeVisible();
+  const updated = await cloudClosure('2026-07');
+  expect(updated.gastappExpenseClose.totalEur).toBe(2715);
+  expect(updated.gastappExpenseClose.certificationRevision).toBe(1);
+  expect(updated.summary).toEqual(originalClosure.summary);
+  expect(updated.records).toEqual(originalClosure.records);
+  expect(updated.fxRates).toEqual(originalClosure.fxRates);
+  expect(updated.previousVersions.some((version: { gastappExpenseClose?: { contractHash: string; totalEur: number } }) =>
+    version.gastappExpenseClose?.contractHash === previousSnapshot.contractHash && version.gastappExpenseClose.totalEur === 2000)).toBe(true);
+  await networkGuard.assertClean(testInfo);
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
 for (const viewport of [
   { name: 'desktop', width: 1280, height: 800, rejectFx: true },
   { name: 'mobile', width: 390, height: 844, rejectFx: false },

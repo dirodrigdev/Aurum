@@ -54,6 +54,12 @@ const makeClosure = (
     eurClp: 1000,
     ufClp: 38000,
   },
+  ...(monthKey === '2026-02' ? {} : {
+    gastappExpenseClose: {
+      totalEur: 1000,
+      byFamilyEur: { dayToDay: 1000, trips: 0, others: 0 },
+    } as NonNullable<WealthMonthlyClosure['gastappExpenseClose']>,
+  }),
 });
 
 describe('computeMonthlyRows with missing spend months', () => {

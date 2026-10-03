@@ -646,8 +646,57 @@ export const computeMonthlyRows = (
       invalidNet || prevNetClp === null || netClp === null ? null : netClp - prevNetClp;
     const varPatrimonioDisplay =
       invalidNet || prevNetDisplay === null || netDisplay === null ? null : netDisplay - prevNetDisplay;
-    const spend = resolveGastappMonthlySpend(closure.monthKey, new Date());
     const gastappOfficialForProvisional = closure.analysisProvisionalReason === 'gastapp_official_aurum_pending';
+    const acceptedGastappSnapshot = closure.gastappExpenseClose;
+    const spend: ReturnType<typeof resolveGastappMonthlySpend> = gastappOfficialForProvisional
+      ? resolveGastappMonthlySpend(closure.monthKey, new Date())
+      : acceptedGastappSnapshot
+        ? {
+            monthKey: closure.monthKey,
+            status: 'complete' as const,
+            gastosEur: acceptedGastappSnapshot.totalEur,
+            source: 'gastapp_firestore' as const,
+            contractStatus: 'complete',
+            dataQuality: 'ok' as const,
+            isStale: false,
+            staleReason: null,
+            partialGastosEur: acceptedGastappSnapshot.totalEur,
+            partialByFamilyEur: acceptedGastappSnapshot.byFamilyEur,
+            contractSource: acceptedGastappSnapshot.contractVersion,
+            schemaVersion: acceptedGastappSnapshot.schemaVersion,
+            dayToDaySource: null,
+            methodologyVersion: null,
+            periodKey: null,
+            publishedAt: acceptedGastappSnapshot.generatedAt,
+            updatedAt: acceptedGastappSnapshot.capturedAt,
+            closedAt: acceptedGastappSnapshot.capturedAt,
+            reportUpdatedAt: null,
+            summaryUpdatedAt: null,
+            lastExpenseUpdatedAt: null,
+            revision: acceptedGastappSnapshot.certificationRevision,
+            reportTotalEur: null,
+            summaryTotalEur: null,
+            directExpenseTotalEur: null,
+            reportVsDirectDiffEur: null,
+            summaryVsDirectDiffEur: null,
+            reportVsSummaryDiffEur: null,
+            categoryGapEur: null,
+            repairedAt: null,
+            reason: null,
+            migratedFrom: null,
+          }
+        : {
+            monthKey: closure.monthKey,
+            status: 'missing' as const,
+            gastosEur: null,
+            source: 'gastapp_firestore' as const,
+            contractStatus: 'missing' as const,
+            dataQuality: null,
+            isStale: false,
+            staleReason: null,
+            partialGastosEur: null,
+            partialByFamilyEur: null,
+          };
     // The current Aurum photo remains provisional even when GastApp has
     // already published the official calendar-month expense. Keep that
     // distinction local to analysis so official aggregates never absorb it.

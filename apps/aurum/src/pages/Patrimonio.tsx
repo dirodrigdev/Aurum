@@ -112,6 +112,7 @@ import {
   MANUAL_CARD_LABELS,
   START_MONTH_CHECKPOINT_LABEL,
   isStartMonthCheckpointRecord,
+  acceptGastappMonthlyClosureRevision,
   INVESTMENT_BTG_LABEL,
   INVESTMENT_GLOBAL66_USD_LABEL,
   INVESTMENT_PLANVITAL_LABEL,
@@ -4829,6 +4830,8 @@ export const Patrimonio: React.FC = () => {
   const [closePreflightVisible, setClosePreflightVisible] = useState(false);
   const [gastosSourceVersion, setGastosSourceVersion] = useState(0);
   const [closePreflightCopied, setClosePreflightCopied] = useState(false);
+  const [gastappRevisionSaving, setGastappRevisionSaving] = useState(false);
+  const [gastappRevisionMessage, setGastappRevisionMessage] = useState('');
   const [closeBackupCheck, setCloseBackupCheck] = useState<MonthlyCloseCheckpointReadinessResult | null>(null);
   const [closeBackupRunning, setCloseBackupRunning] = useState(false);
   const [closeRunning, setCloseRunning] = useState(false);
@@ -6409,6 +6412,11 @@ export const Patrimonio: React.FC = () => {
     const gastappExpenseClose = resolveGastappMonthlyCloseCandidate(targetMonthKey, {
       previousSnapshot: selectedClosureForDraft?.gastappExpenseClose || null,
     });
+    if (selectedClosureForDraft?.gastappExpenseClose && gastappExpenseClose.sourceChangedAfterClosure) {
+      const message = 'GastApp tiene una revisión nueva. Revísala y acéptala desde el aviso del preflight; no reemplacé el cierre patrimonial.';
+      setCloseError(message);
+      return { ok: false, errorMessage: message };
+    }
     if (!gastappExpenseClose.snapshot) {
       const message = `No se puede cerrar Aurum: ${gastappExpenseClose.message}`;
       setCloseInfo('');
@@ -7175,6 +7183,13 @@ export const Patrimonio: React.FC = () => {
     }),
     [closeMonthDraft, gastosSourceVersion, selectedClosureForDraft],
   );
+  const pendingGastappRevisions = useMemo(() => closures.flatMap((closure) => {
+    if (!closure.gastappExpenseClose) return [];
+    const candidate = resolveGastappMonthlyCloseCandidate(closure.monthKey, {
+      previousSnapshot: closure.gastappExpenseClose,
+    });
+    return candidate.sourceChangedAfterClosure ? [{ closure, candidate }] : [];
+  }), [closures, gastosSourceVersion]);
   const closePreflightDiagnostic = useMemo(() => {
     if (!closePreflightVisible) return null;
     return buildMonthlyClosePreflightDiagnostic({
@@ -7236,6 +7251,36 @@ export const Patrimonio: React.FC = () => {
       window.setTimeout(() => setClosePreflightCopied(false), 1800);
     } catch {
       setClosePreflightCopied(false);
+    }
+  };
+
+  const acceptGastappRevision = async (monthKey: string) => {
+    const closure = loadClosures().find((item) => item.monthKey === monthKey);
+    if (!closure?.gastappExpenseClose) {
+      setGastappRevisionMessage('No encontré el snapshot de GastApp guardado para este cierre.');
+      return;
+    }
+    setGastappRevisionSaving(true);
+    setGastappRevisionMessage('');
+    try {
+      await refreshGastappMonthlyContable();
+      const candidate = resolveGastappMonthlyCloseCandidate(monthKey, { previousSnapshot: closure.gastappExpenseClose });
+      if (!candidate.snapshot || !candidate.sourceChangedAfterClosure) {
+        throw new Error(candidate.message || 'La revisión cambió o aún no está certificada. Actualiza la comparación.');
+      }
+      const result = await acceptGastappMonthlyClosureRevision({
+        monthKey,
+        expectedPreviousContractHash: closure.gastappExpenseClose.contractHash,
+        snapshot: candidate.snapshot,
+      });
+      refreshClosures();
+      setGastappRevisionMessage(result.changed
+        ? `Revisión de ${monthLabel(monthKey).toLowerCase()} aceptada. Análisis mensual y acumulado, Wealth Lab, Dashboard y presentaciones de Aurum ya usan el snapshot actualizado.`
+        : `La revisión de ${monthLabel(monthKey).toLowerCase()} ya estaba aceptada y Aurum quedó sincronizado. Análisis mensual y acumulado, Wealth Lab, Dashboard y presentaciones usan esa versión.`);
+    } catch (error) {
+      setGastappRevisionMessage(String((error as Error)?.message || 'No pude confirmar la actualización del cierre.'));
+    } finally {
+      setGastappRevisionSaving(false);
     }
   };
 
@@ -7809,6 +7854,41 @@ export const Patrimonio: React.FC = () => {
 
   return (
     <div className="p-3 space-y-3">
+      {!!pendingGastappRevisions.length && (
+        <section className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" aria-live="polite">
+          <div className="font-semibold">GastApp publicó cambios en cierres Aurum</div>
+          <p className="mt-1 text-xs">Los resultados de los cierres permanecen con la versión aceptada hasta que revises y aceptes cada actualización.</p>
+          <div className="mt-2 space-y-2">
+            {pendingGastappRevisions.map(({ closure, candidate }) => {
+              const saved = closure.gastappExpenseClose!;
+              const next = candidate.snapshot;
+              return (
+                <div key={closure.monthKey} className="rounded-lg border border-amber-200 bg-white p-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-semibold">{monthLabel(closure.monthKey)} · revisión {next?.certificationRevision ?? 'pendiente de certificar'}</div>
+                    <Button size="sm" variant="outline" onClick={() => {
+                      setCloseMonthDraft(closure.monthKey);
+                      setClosePreflightVisible(true);
+                      setGastappRevisionMessage('');
+                    }}>Revisar impacto</Button>
+                  </div>
+                  <div className="mt-1 grid grid-cols-1 gap-1 text-xs sm:grid-cols-3">
+                    <div>Gasto guardado: {saved.totalEur.toLocaleString('es-ES', { style: 'currency', currency: 'EUR' })}</div>
+                    <div>Revisión GastApp: {(next?.totalEur ?? candidate.partialGastosEur ?? 0).toLocaleString('es-ES', { style: 'currency', currency: 'EUR' })}{!next ? ' · falta certificar' : ''}</div>
+                    <div>Diferencia: {next ? (next.totalEur - saved.totalEur).toLocaleString('es-ES', { style: 'currency', currency: 'EUR' }) : 'pendiente'}</div>
+                  </div>
+                  {next && <div className="mt-1 text-xs">Familias · día a día: {saved.byFamilyEur.dayToDay.toFixed(2)} → {next.byFamilyEur.dayToDay.toFixed(2)} EUR · viajes: {saved.byFamilyEur.trips.toFixed(2)} → {next.byFamilyEur.trips.toFixed(2)} EUR · otros: {saved.byFamilyEur.others.toFixed(2)} → {next.byFamilyEur.others.toFixed(2)} EUR</div>}
+                  <div className="mt-1 text-xs">Impacta Análisis mensual y acumulado, Wealth Lab, Dashboard (12/36 meses) y presentaciones de Aurum. Tasas, registros y saldos del cierre se conservan.</div>
+                </div>
+              );
+            })}
+          </div>
+          {!!gastappRevisionMessage && <div role="status" className="mt-2 rounded-lg bg-white p-2 text-xs">{gastappRevisionMessage}</div>}
+        </section>
+      )}
+      {!pendingGastappRevisions.length && !!gastappRevisionMessage && (
+        <div role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">{gastappRevisionMessage}</div>
+      )}
       <Card className="relative overflow-hidden border-0 p-4 bg-gradient-to-br from-[#103c35] via-[#165347] to-[#1f4a3a] text-white shadow-[0_16px_36px_rgba(11,38,34,0.55)]">
         <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_top_right,_#c59a6c_0%,_transparent_46%)]" />
         <div className="relative">
@@ -8572,6 +8652,29 @@ export const Patrimonio: React.FC = () => {
                 <div className="mt-2 text-red-800">
                   Estos bloqueos requieren resolver la fuente o configuración indicada; no se pueden aprobar sólo con una confirmación.
                 </div>
+              </div>
+            )}
+
+            {selectedClosureForDraft?.gastappExpenseClose && gastappMonthlyCloseCandidate.sourceChangedAfterClosure && (
+              <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
+                <div className="font-semibold">Revisión de GastApp · {monthLabel(closeMonthDraft)}</div>
+                {gastappMonthlyCloseCandidate.snapshot ? (
+                  <>
+                    <div className="mt-1">
+                      Total: {selectedClosureForDraft.gastappExpenseClose.totalEur.toLocaleString('es-ES', { style: 'currency', currency: 'EUR' })}
+                      {' → '}{gastappMonthlyCloseCandidate.snapshot.totalEur.toLocaleString('es-ES', { style: 'currency', currency: 'EUR' })}
+                      {' · diferencia '}{(gastappMonthlyCloseCandidate.snapshot.totalEur - selectedClosureForDraft.gastappExpenseClose.totalEur).toLocaleString('es-ES', { style: 'currency', currency: 'EUR' })}
+                    </div>
+                    <div className="mt-1">Día a día: {selectedClosureForDraft.gastappExpenseClose.byFamilyEur.dayToDay.toFixed(2)} → {gastappMonthlyCloseCandidate.snapshot.byFamilyEur.dayToDay.toFixed(2)} EUR · Viajes: {selectedClosureForDraft.gastappExpenseClose.byFamilyEur.trips.toFixed(2)} → {gastappMonthlyCloseCandidate.snapshot.byFamilyEur.trips.toFixed(2)} EUR · Otros: {selectedClosureForDraft.gastappExpenseClose.byFamilyEur.others.toFixed(2)} → {gastappMonthlyCloseCandidate.snapshot.byFamilyEur.others.toFixed(2)} EUR</div>
+                    <div className="mt-1">Al aceptar se recalculan Análisis mensual y acumulado, Wealth Lab, Dashboard (12/36 meses) y presentaciones. Se mantienen iguales tasas y datos de patrimonio.</div>
+                    <Button className="mt-2" size="sm" disabled={gastappRevisionSaving} onClick={() => void acceptGastappRevision(closeMonthDraft)}>
+                      {gastappRevisionSaving ? 'Guardando revisión…' : 'Aceptar y actualizar cadena'}
+                    </Button>
+                  </>
+                ) : (
+                  <div className="mt-1">GastApp cambió este mes, pero su nueva versión aún no está certificada. El cierre Aurum permanece con la versión anterior.</div>
+                )}
+                {!!gastappRevisionMessage && <div role="status" className="mt-2 rounded bg-white p-2">{gastappRevisionMessage}</div>}
               </div>
             )}
 
