@@ -32,7 +32,7 @@ const periodRef = (userId: string, monthKey: string) =>
 
 const writePeriod = async (
   monthKey: string,
-  period: { startMonth: string; endMonth: string },
+  period: { startMonth: string; endMonth: string } | undefined,
   options: { userId?: string; schemaVersion?: number } = {},
 ) => {
   const userId = options.userId || ownerUid;
@@ -100,6 +100,32 @@ describeRules('financial performance Firestore rules', () => {
       const { head } = await writePeriod(period.endMonth, period);
       expect((await getDoc(head)).exists()).toBe(true);
     }
+  }, 20_000);
+
+  it('appends period metadata to a legacy August confirmation without changing its previous revision', async () => {
+    const { head, revision: legacyRevision } = await writePeriod('2026-08', undefined);
+    const original = (await getDoc(legacyRevision)).data();
+    const nextRevision = doc(head, 'revisions', '2');
+    const period = { startMonth: '2026-07', endMonth: '2026-08' };
+    const batch = writeBatch(db);
+    batch.set(nextRevision, {
+      ...original,
+      ...period,
+      revision: 2,
+      revisionId: '2',
+      createdAt: serverTimestamp(),
+    });
+    batch.update(head, {
+      ...period,
+      currentRevision: 2,
+      currentRevisionId: '2',
+      updatedAt: serverTimestamp(),
+    });
+    await batch.commit();
+
+    expect((await getDoc(head)).data()).toMatchObject({ ...period, currentRevision: 2 });
+    expect((await getDoc(nextRevision)).data()).toMatchObject({ ...period, revision: 2 });
+    expect((await getDoc(legacyRevision)).data()).toEqual(original);
   }, 20_000);
 
   it.each([

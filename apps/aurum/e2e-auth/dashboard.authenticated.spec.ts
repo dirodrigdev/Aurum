@@ -319,6 +319,13 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
   await expect(page.getByLabel('Mes de cierre')).toHaveValue('2026-07');
   await expect(page.getByRole('heading', { name: 'Qué cambió entre Junio de 2026 y Julio de 2026' })).toBeVisible();
   await expect(page.getByText('INDICATIVO', { exact: true })).toBeVisible();
+  await page.getByText('Completar validación del período', { exact: true }).click();
+  await page.getByRole('button', { name: 'No hubo flujos este mes', exact: true }).click();
+  await expect(page.getByText(/^Guardado como revisión 1\./)).toBeVisible();
+  await page.getByLabel('Confirmo que no hubo compras, ventas ni traslados de posición sin registrar durante el período.').check();
+  await page.getByRole('button', { name: 'Guardar confirmación', exact: true }).click();
+  await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
+  await expect(page.getByText(/^Guardado como revisión 2\./)).toBeVisible();
   await page.getByLabel('Mes de cierre').selectOption('2026-08');
   await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
   await page.getByText('Revisar validación del período', { exact: true }).click();
