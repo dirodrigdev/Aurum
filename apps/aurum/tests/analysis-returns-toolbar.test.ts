@@ -93,7 +93,8 @@ vi.mock('../src/services/returnsCrpInsight', () => ({
   buildCrpContributionInsight: () => null,
 }));
 
-vi.mock('../src/services/analysisSessionCache', () => ({
+vi.mock('../src/services/analysisSessionCache', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/services/analysisSessionCache')>(),
   clearAnalysisSessionCache: vi.fn(),
   getOrBuildAnalysisSessionValue: vi.fn(() => ({
     builtAt: '2026-07-02T22:16:00.000Z',

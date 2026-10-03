@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { WealthMonthlyClosure } from '../src/services/wealthStorage';
+import { buildGastappMonthlyExpenseCloseSnapshot, type WealthMonthlyClosure } from '../src/services/wealthStorage';
 
 vi.mock('../src/services/firebase', () => ({
   db: {},
@@ -9,12 +9,7 @@ vi.mock('../src/services/firebase', () => ({
 }));
 
 vi.mock('../src/services/gastosMonthly', () => ({
-  resolveGastappMonthlySpend: (monthKey: string) => ({
-    monthKey,
-    status: 'complete' as const,
-    gastosEur: 1000,
-    source: 'gastapp_firestore' as const,
-  }),
+  resolveGastappMonthlySpend: vi.fn(() => { throw new Error('Historical insight must use the snapshot accepted in the close'); }),
 }));
 
 import { computeMonthlyRows } from '../src/services/returnsAnalysis';
@@ -33,6 +28,16 @@ const makeClosure = (
   id: monthKey,
   monthKey,
   closedAt: `${monthKey}-28T23:59:59-03:00`,
+  gastappExpenseClose: buildGastappMonthlyExpenseCloseSnapshot({
+    monthKey, calendarMonthKey: monthKey, totalEur: 1000,
+    byFamilyEur: { dayToDay: 1000, trips: 0, others: 0 },
+    canonicalDataHash: 'sha256:' + '1'.repeat(64), operationalDataHash: 'sha256:' + '2'.repeat(64),
+    operationalRevision: 1, sourceGeneration: 1,
+    monthContractRevision: 1, monthContractHash: 'sha256:' + '3'.repeat(64),
+    certificationStatus: 'certified', certificationRevision: 1, certificationHash: 'sha256:' + '4'.repeat(64),
+    contractHash: 'sha256:' + '5'.repeat(64), contractVersion: 'fixture-v2',
+    generatedAt: `${monthKey}-28T12:00:00.000Z`,
+  }, { usdClp, eurClp, ufClp }, `${monthKey}-28T23:59:59-03:00`),
   summary: {
     netByCurrency: { CLP: netClp, USD: 0, EUR: 0, UF: 0 },
     assetsByCurrency: { CLP: netClp, USD: 0, EUR: 0, UF: 0 },
