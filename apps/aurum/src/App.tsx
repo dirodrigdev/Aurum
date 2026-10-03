@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import { Layout } from './components/Layout';
@@ -43,6 +43,8 @@ import {
   type WealthFxRates,
 } from './services/wealthStorage';
 import { hydrateWealthFromCloudShared } from './services/wealthHydration';
+import { GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT } from './services/gastosMonthly';
+import { applyCertifiedGastappRevisions } from './services/acceptReviewedGastappRevision';
 
 const INCOMPLETE_CLOSURE_PROMPT_DAY_KEY = 'aurum.incomplete-closure.prompt.day.v1';
 const PRESENTATION_ROUTE_EVENT = 'aurum:presentation-route';
@@ -209,6 +211,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [loginLoading, setLoginLoading] = useState(false);
   const [incompletePrompt, setIncompletePrompt] = useState<IncompletePrompt | null>(null);
   const [fxIndicatorPrompt, setFxIndicatorPrompt] = useState<FxIndicatorPrompt | null>(null);
+  const gastappRevisionSyncRef = useRef(false);
   const [isPresentationRoute, setIsPresentationRoute] = useState(
     isPresentationPath,
   );
@@ -392,10 +395,47 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   useEffect(() => {
     if (!user || user.isAnonymous) return;
     let cancelled = false;
+    let hydrated = false;
     let cleanup: (() => void) | null = null;
+
+    const reconcileGastappRevisions = async () => {
+      if (!hydrated || cancelled || gastappRevisionSyncRef.current) return;
+      gastappRevisionSyncRef.current = true;
+      try {
+        const result = await applyCertifiedGastappRevisions();
+        if (result.failed.length) {
+          console.warn('[Aurum][GastApp] revisiones certificadas pendientes de reintento', result.failed);
+        }
+      } catch (error) {
+        console.warn('[Aurum][GastApp] no se pudo completar la sincronización automática', error);
+      } finally {
+        gastappRevisionSyncRef.current = false;
+      }
+    };
+
+    const onGastappSourceUpdated = () => {
+      if (gastappRevisionSyncRef.current) return;
+      void reconcileGastappRevisions();
+    };
+    const onFocus = () => {
+      if (document.visibilityState !== 'visible') return;
+      void reconcileGastappRevisions();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      void reconcileGastappRevisions();
+    };
+
+    window.addEventListener(GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT, onGastappSourceUpdated as EventListener);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
 
     (async () => {
       await hydrateWealthFromCloudShared({ force: true, minIntervalMs: 0 });
+      if (cancelled) return;
+      hydrated = true;
+      await reconcileGastappRevisions();
+      if (cancelled) return;
       const unsub = await subscribeWealthCloud();
       if (cancelled) {
         unsub();
@@ -408,6 +448,9 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
     return () => {
       cancelled = true;
+      window.removeEventListener(GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT, onGastappSourceUpdated as EventListener);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       if (cleanup) cleanup();
       else unsubscribeWealthCloud();
     };
