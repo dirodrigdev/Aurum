@@ -11,6 +11,7 @@ import {
 } from '../components/settings/ClosureReviewModal';
 import { LabToolsSection } from '../components/settings/LabToolsSection';
 import { HistoricalFxCorrectionConsole } from '../components/settings/HistoricalFxCorrectionConsole';
+import { HistoricalGastappBackfillAuditConsole } from '../components/settings/HistoricalGastappBackfillAuditConsole';
 import { SyncStatusSection } from '../components/settings/SyncStatusSection';
 import type { GastappCanonicalV2DiagnosticViewState } from '../components/settings/GastappCanonicalV2Section';
 import type { MidasPublicationViewState } from '../components/settings/SyncStatusSection';
@@ -2305,6 +2306,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
             <span className="mt-1 block text-[11px] font-normal text-slate-500">Operaciones históricas protegidas y trazables</span>
           </summary>
           <div className="mt-3">
+            <HistoricalGastappBackfillAuditConsole authEmail={authEmail} />
             <HistoricalFxCorrectionConsole
               authEmail={authEmail}
               onApplied={async (cloudRead) => {
