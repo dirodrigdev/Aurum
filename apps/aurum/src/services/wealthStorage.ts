@@ -5332,87 +5332,99 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       const localDeletedRecordAssetMonthKeys = loadDeletedRecordAssetMonthKeys();
       const localUpdatedAt = readWealthUpdatedAt();
 
-      const remoteSnap = await getDoc(ref);
-      const remoteData = remoteSnap.exists() ? remoteSnap.data() || {} : {};
-      const remoteRecords = normalizeRecordsFromRaw(Array.isArray(remoteData.records) ? remoteData.records : []);
-      const remoteClosures = loadClosuresFromRaw(Array.isArray(remoteData.closures) ? remoteData.closures : []);
-      const remoteClosureDeletionTombstones = normalizeClosureDeletionTombstones(
-        remoteData.closureDeletionTombstones,
-      );
-      const remoteFx = normalizeFxRates(remoteData.fx || defaultFxRates);
-      const remoteInstruments = loadInstrumentsFromRaw(Array.isArray(remoteData.instruments) ? remoteData.instruments : []);
-      const remoteBankTokens = normalizeBankTokensFromRaw(remoteData.bankTokens);
-      const remoteDeletedRecordIds = normalizeDeletedRecordIds(remoteData.deletedRecordIds);
-      const remoteDeletedRecordAssetMonthKeys = normalizeDeletedRecordAssetMonthKeys(
-        remoteData.deletedRecordAssetMonthKeys,
-      );
-      const remoteUpdatedAt = String(remoteData.updatedAt || '');
-      markLastRemoteUpdatedAt(remoteUpdatedAt);
+      const knownRemoteMs = readLastRemoteUpdatedAtMs();
+      const transactionResult = await runTransaction(db!, async (transaction) => {
+        const remoteSnap = await transaction.get(ref);
+        const remoteData = remoteSnap.exists() ? remoteSnap.data() || {} : {};
+        const remoteRecords = normalizeRecordsFromRaw(Array.isArray(remoteData.records) ? remoteData.records : []);
+        const remoteClosures = loadClosuresFromRaw(Array.isArray(remoteData.closures) ? remoteData.closures : []);
+        const remoteClosureDeletionTombstones = normalizeClosureDeletionTombstones(
+          remoteData.closureDeletionTombstones,
+        );
+        const remoteFx = normalizeFxRates(remoteData.fx || defaultFxRates);
+        const remoteInstruments = loadInstrumentsFromRaw(Array.isArray(remoteData.instruments) ? remoteData.instruments : []);
+        const remoteBankTokens = normalizeBankTokensFromRaw(remoteData.bankTokens);
+        const remoteDeletedRecordIds = normalizeDeletedRecordIds(remoteData.deletedRecordIds);
+        const remoteDeletedRecordAssetMonthKeys = normalizeDeletedRecordAssetMonthKeys(
+          remoteData.deletedRecordAssetMonthKeys,
+        );
+        const remoteUpdatedAt = String(remoteData.updatedAt || '');
 
-      const merged = mergeWealthState({
-        localRecords,
-        remoteRecords,
-        localClosures,
-        remoteClosures,
-        localClosureDeletionTombstones,
-        remoteClosureDeletionTombstones,
-        localInstruments,
-        remoteInstruments,
-        localBankTokens,
-        remoteBankTokens,
-        localDeletedRecordIds,
-        remoteDeletedRecordIds,
-        localDeletedRecordAssetMonthKeys,
-        remoteDeletedRecordAssetMonthKeys,
-        localFx,
-        remoteFx,
-        localUpdatedAt,
-        remoteUpdatedAt,
+        const merged = mergeWealthState({
+          localRecords,
+          remoteRecords,
+          localClosures,
+          remoteClosures,
+          localClosureDeletionTombstones,
+          remoteClosureDeletionTombstones,
+          localInstruments,
+          remoteInstruments,
+          localBankTokens,
+          remoteBankTokens,
+          localDeletedRecordIds,
+          remoteDeletedRecordIds,
+          localDeletedRecordAssetMonthKeys,
+          remoteDeletedRecordAssetMonthKeys,
+          localFx,
+          remoteFx,
+          localUpdatedAt,
+          remoteUpdatedAt,
+        });
+        const mergedDeletedRecordIds = merged.deletedRecordIds;
+        const mergedDeletedRecordAssetMonthKeys = merged.deletedRecordAssetMonthKeys;
+        const mergedRecords = merged.records;
+        const mergedClosures = merged.closures;
+        const mergedClosureDeletionTombstones = merged.closureDeletionTombstones;
+        const closuresProtection = protectRemoteClosuresFromEmptyOverwrite({
+          mergedClosures,
+          remoteClosures,
+        });
+        const closuresForCloud = closuresProtection.closuresForCloud;
+        const mergedInstruments = merged.instruments;
+        const mergedBankTokens = merged.bankTokens;
+        const mergedFx = merged.fx;
+        const mergedUpdatedAt = new Date(Math.max(
+          Date.now(), isoToMs(localUpdatedAt) || 0, isoToMs(remoteUpdatedAt) || 0,
+          Number.isFinite(knownRemoteMs) ? knownRemoteMs : 0,
+        ) + 1).toISOString();
+
+        // A retry must neither persist nor emit effects for an obsolete local snapshot.
+        if (isWealthCloudWriteStale(localUpdatedAt, readWealthUpdatedAt())) return null;
+
+        transaction.set(
+          ref,
+          stripUndefinedDeep({
+            schemaVersion: 1,
+            updatedAt: mergedUpdatedAt,
+            fx: mergedFx,
+            bankTokens: mergedBankTokens,
+            records: mergedRecords,
+            closures: closuresForCloud,
+            closureDeletionTombstones: mergedClosureDeletionTombstones,
+            instruments: mergedInstruments,
+            deletedRecordIds: mergedDeletedRecordIds,
+            deletedRecordAssetMonthKeys: mergedDeletedRecordAssetMonthKeys,
+          }),
+          { merge: true },
+        );
+        return { merged, closuresProtection, mergedUpdatedAt, remoteFx };
       });
-      const mergedDeletedRecordIds = merged.deletedRecordIds;
-      const mergedDeletedRecordAssetMonthKeys = merged.deletedRecordAssetMonthKeys;
+      if (!transactionResult) {
+        wealthCloudSyncRequestedWhileRunning = true;
+        setLastWealthSyncIssue('local_state_changed_during_cloud_sync');
+        saveWealthSyncUiState({ status: 'dirty', at: nowIso(), message: 'Cambios sin guardar' });
+        return false;
+      }
+      const { merged, closuresProtection, mergedUpdatedAt, remoteFx } = transactionResult;
       const mergedRecords = merged.records;
       const mergedClosures = merged.closures;
       const mergedClosureDeletionTombstones = merged.closureDeletionTombstones;
-      const closuresProtection = protectRemoteClosuresFromEmptyOverwrite({
-        mergedClosures,
-        remoteClosures,
-      });
-      const closuresForCloud = closuresProtection.closuresForCloud;
       const mergedInstruments = merged.instruments;
       const mergedBankTokens = merged.bankTokens;
       const mergedFx = merged.fx;
-      const mergedUpdatedAt = nextMonotonicIsoAgainstRemote();
-
-      // A save may have happened while the remote read/merge was in flight.
-      // Never let that older snapshot overwrite the newer local value.
-      if (isWealthCloudWriteStale(localUpdatedAt, readWealthUpdatedAt())) {
-        wealthCloudSyncRequestedWhileRunning = true;
-        setLastWealthSyncIssue('local_state_changed_during_cloud_sync');
-        saveWealthSyncUiState({
-          status: 'dirty',
-          at: nowIso(),
-          message: 'Cambios sin guardar',
-        });
-        return false;
-      }
-
-      await setDoc(
-        ref,
-        stripUndefinedDeep({
-          schemaVersion: 1,
-          updatedAt: mergedUpdatedAt,
-          fx: mergedFx,
-          bankTokens: mergedBankTokens,
-          records: mergedRecords,
-          closures: closuresForCloud,
-          closureDeletionTombstones: mergedClosureDeletionTombstones,
-          instruments: mergedInstruments,
-          deletedRecordIds: mergedDeletedRecordIds,
-          deletedRecordAssetMonthKeys: mergedDeletedRecordAssetMonthKeys,
-        }),
-        { merge: true },
-      );
+      const mergedDeletedRecordIds = merged.deletedRecordIds;
+      const mergedDeletedRecordAssetMonthKeys = merged.deletedRecordAssetMonthKeys;
+      const closuresForCloud = closuresProtection.closuresForCloud;
       // MIDAS consumes only the FX sealed in the confirmed closure. Local browser
       // FX remains a UI/cache concern and cannot alter the published snapshot.
       const publishResult = await publishAurumOptimizableInvestmentsSnapshot(closuresForCloud).catch((err: any) => ({
@@ -5430,6 +5442,14 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
         publishOk: publishResult.ok !== false,
       });
       markLastRemoteUpdatedAt(mergedUpdatedAt);
+
+      // Local edits can also arrive while the commit or MIDAS publication awaits.
+      if (isWealthCloudWriteStale(localUpdatedAt, readWealthUpdatedAt())) {
+        wealthCloudSyncRequestedWhileRunning = true;
+        setLastWealthSyncIssue('local_state_changed_during_cloud_sync');
+        saveWealthSyncUiState({ status: 'dirty', at: nowIso(), message: 'Cambios sin guardar' });
+        return false;
+      }
 
       if (
         !sameRecords(localRecords, mergedRecords) ||
