@@ -732,6 +732,24 @@ test('monthly close keeps final FX stable and carries July balances into August'
   expect(persisted.augustRealEstate).toBeGreaterThan(0);
   expect(persisted.allJulyRecordsCarried).toBe(true);
 
+  const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST || '';
+  if (!/^127\.0\.0\.1:\d+$/.test(emulatorHost)) {
+    throw new Error('La confirmación cloud del cierre sólo puede leerse en el emulador local.');
+  }
+  const appName = 'aurum-monthly-close-confirmation-e2e';
+  const app = getApps().find(candidate => candidate.name === appName)
+    || initializeApp({ projectId: 'aurum-e2e-local' }, appName);
+  const cloudWealth = await getFirestore(app).doc('aurum_wealth/aurum-e2e-user').get();
+  const cloudJuly = (cloudWealth.get('closures') || []).filter(
+    (closure: { monthKey: string }) => closure.monthKey === '2026-07');
+  const localJuly = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('wealth_closures_v1') || '[]').filter(
+      (closure: { monthKey: string }) => closure.monthKey === '2026-07'));
+  expect(cloudJuly).toHaveLength(1);
+  expect(localJuly).toHaveLength(1);
+  expect(cloudJuly).toEqual(localJuly);
+  expect(localJuly[0].previousVersions || []).toHaveLength(0);
+
   const closeSummaryButton = page.getByRole('button', { name: 'Cerrar ventana', exact: true });
   await expect(closeSummaryButton).toBeVisible();
   await closeSummaryButton.click();

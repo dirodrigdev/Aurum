@@ -6298,12 +6298,16 @@ export const closeMonthlyWithCheckpoint = async (input: {
       let cloudVerificationCompleted = false;
       let persisted: WealthMonthlyClosure | null = null;
       try {
-        const cloudSnap = await getDocFromServer(wealthRef);
+        // A server-sourced snapshot listener can still expose the version preceding
+        // an acknowledged transaction. Read through the transaction path so close
+        // verification observes the committed document, without writing or relaxing
+        // any of the sealed closure comparisons.
+        const cloudSnap = await runTransaction(db!, (transaction) => transaction.get(wealthRef));
         const cloudState = cloudSnap.exists() ? normalizeCloudWealthState(cloudSnap.data() || {}) : null;
         persisted = cloudState?.closures.find((item) => item.monthKey === normalizedMonthKey) || null;
         cloudVerificationCompleted = true;
       } catch (verificationError) {
-        // setDoc already acknowledged the write through syncWealthNow. A transient
+        // The sync transaction already acknowledged the write. A transient
         // read-after-write failure must not turn that confirmed write into a false
         // negative or roll back only the local copy of the closure.
         console.warn(

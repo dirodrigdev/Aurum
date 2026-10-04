@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { deleteDoc, getDoc, getDocFromServer, setDoc } from 'firebase/firestore';
 
+const confirmationRead = vi.hoisted(() => vi.fn((snapshot: any) => snapshot));
+
 type MockDoc = { __path: string };
 const cloudStore = new Map<string, any>();
 const pathOf = (segments: Array<string | undefined | null>) =>
@@ -91,7 +93,7 @@ vi.mock('firebase/firestore', () => {
         },
       });
       for (const write of writes) await write();
-      return result;
+      return writes.length ? result : confirmationRead(result);
     }),
   };
 });
@@ -234,6 +236,7 @@ describe('monthly close undo checkpoint', () => {
   beforeEach(() => {
     cloudStore.clear();
     vi.clearAllMocks();
+    confirmationRead.mockReset().mockImplementation((snapshot: any) => snapshot);
     vi.stubGlobal('localStorage', makeMemoryStorage());
     vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'test-project');
     vi.stubEnv('VITE_FIREBASE_API_KEY', 'test-key');
@@ -337,8 +340,31 @@ describe('monthly close undo checkpoint', () => {
     expect(resolveClosureSectionAmounts({ closure: persisted }).nonMortgageDebtClp).toBe(93_200_000);
   });
 
+  it('confirms the committed close while the snapshot listener still exposes the preceding document', async () => {
+    const serverRead = vi.mocked(getDocFromServer);
+    const original = serverRead.getMockImplementation()!;
+    serverRead.mockImplementation(async () => ({ exists: () => true, data: () => ({ closures: [] }) }));
+    try {
+      const created = await closeMonthlyWithCheckpoint({
+        monthKey: '2026-07', records: recordsForMonth('2026-07'), fxRates,
+        closedAt: '2026-08-01T12:00:00.000Z',
+      });
+      const cloud = cloudStore.get('aurum_wealth/test-user');
+      expect(cloud.closures.filter((item: WealthMonthlyClosure) => item.monthKey === '2026-07')).toEqual([created]);
+      expect(loadClosures().find(item => item.monthKey === '2026-07')).toEqual(created);
+      expect(getMonthlyCloseCheckpoint('2026-07')).not.toBeNull();
+      expect(serverRead).not.toHaveBeenCalled();
+      expect(confirmationRead).toHaveBeenCalledTimes(1);
+      const rootWrites = vi.mocked(setDoc).mock.calls.filter(([ref]) =>
+        (ref as unknown as MockDoc).__path === 'aurum_wealth/test-user');
+      expect(rootWrites).toHaveLength(1); // Verification adds no wealth write.
+    } finally {
+      serverRead.mockImplementation(original);
+    }
+  });
+
   it('does not report close success when cloud read-after-write does not include the month closure', async () => {
-    vi.mocked(getDocFromServer).mockImplementationOnce(async () => ({
+    confirmationRead.mockImplementationOnce(() => ({
       exists: () => true,
       data: () => ({
         updatedAt: '2026-06-01T00:00:00.000Z',
@@ -373,7 +399,7 @@ describe('monthly close undo checkpoint', () => {
       closedAt: '2026-05-31T23:59:59.000Z',
     });
     const staleCloudState = structuredClone(cloudStore.get('aurum_wealth/test-user'));
-    vi.mocked(getDocFromServer).mockImplementationOnce(async () => ({
+    confirmationRead.mockImplementationOnce(() => ({
       exists: () => true,
       data: () => staleCloudState,
     }));
@@ -391,7 +417,7 @@ describe('monthly close undo checkpoint', () => {
   });
 
   it('keeps a confirmed close when only the cloud read-after-write verification is unavailable', async () => {
-    vi.mocked(getDocFromServer).mockRejectedValueOnce(new Error('unavailable'));
+    confirmationRead.mockImplementationOnce(() => { throw new Error('unavailable'); });
 
     const created = await closeMonthlyWithCheckpoint({
       monthKey: '2026-05',
@@ -1000,9 +1026,7 @@ describe('monthly close undo checkpoint', () => {
   });
 
   it('does not leave a local close applied when persistence fails after checkpoint', async () => {
-    const getDocFromServerMock = vi.mocked(getDocFromServer);
-    const originalGetDocFromServer = getDocFromServerMock.getMockImplementation();
-    getDocFromServerMock.mockImplementationOnce(async () => ({
+    confirmationRead.mockImplementationOnce(() => ({
       exists: () => true,
       data: () => ({
         updatedAt: '2026-06-01T00:00:00.000Z',
@@ -1027,12 +1051,6 @@ describe('monthly close undo checkpoint', () => {
     ).rejects.toThrow('El cierre no quedó guardado. No se actualizó el historial.');
 
     expect(loadClosures().some((closure) => closure.monthKey === '2026-06')).toBe(false);
-
-    if (originalGetDocFromServer) {
-      getDocFromServerMock.mockImplementation(originalGetDocFromServer);
-    } else {
-      getDocFromServerMock.mockReset();
-    }
   });
 
   it('verifies checkpoint readiness without creating a monthly close and keeps schema v2', async () => {
