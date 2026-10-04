@@ -235,3 +235,25 @@ describe('wealth storage closures merge', () => {
     expect(merged[0].id).toBe('new-may');
   });
 });
+
+
+describe('AUD-04 archive identity', () => {
+  it('deduplicates the same GastApp contract archived by different paths', () => {
+    const closure = makeClosure('2026-07', 'july', '2026-08-01T12:00:00.000Z');
+    closure.gastappExpenseClose = makeGastappSnapshot(3, 'current', '2026-08-03T12:00:00.000Z');
+    const archive = { ...closure, id: 'july:gastapp:2', gastappExpenseClose: makeGastappSnapshot(2, 'previous', '2026-08-02T12:00:00.000Z') };
+    const left = { ...closure, previousVersions: [archive] };
+    const right = { ...closure, previousVersions: [{ ...archive, id: 'july:gastapp:2:previous' }] };
+    expect(mergeClosuresForSync([left], [right])[0].previousVersions).toHaveLength(1);
+  });
+
+  it('preserves material non-GastApp versions with identical ids and dates', () => {
+    const closure = makeClosure('2026-07', 'july', '2026-08-01T12:00:00.000Z');
+    const archive = makeClosure('2026-07', 'original', closure.closedAt);
+    const changed = { ...archive, summary: { ...archive.summary, netConsolidatedClp: 1000 } };
+    const merged = mergeClosuresForSync([{ ...closure, previousVersions: [archive] }], [{ ...closure, previousVersions: [changed] }]);
+    expect(merged[0].previousVersions).toHaveLength(2);
+    expect(merged[0].summary).toEqual(closure.summary);
+    expect(mergeClosuresForSync(merged, merged)[0].previousVersions).toHaveLength(2);
+  });
+});

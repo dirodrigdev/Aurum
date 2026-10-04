@@ -22,9 +22,9 @@ const fx = { usdClp: 900, eurClp: 1000, ufClp: 39000 };
 const snapshot = (revision: number): GastappMonthlyExpenseCloseInput => ({
   monthKey: '2026-07', calendarMonthKey: '2026-07', totalEur: revision * 100,
   byFamilyEur: { dayToDay: revision * 100, trips: 0, others: 0 },
-  contractHash: `sha256:${String(revision).repeat(64)}`, canonicalDataHash: `sha256:${'a'.repeat(64)}`, operationalDataHash: `sha256:${'a'.repeat(64)}`,
+  contractHash: `sha256:${revision.toString(16).padStart(64, '0')}`, canonicalDataHash: `sha256:${'a'.repeat(64)}`, operationalDataHash: `sha256:${'a'.repeat(64)}`,
   operationalRevision: revision, sourceGeneration: revision, monthContractRevision: revision,
-  monthContractHash: `sha256:${String(revision).repeat(64)}`, certificationStatus: 'revised',
+  monthContractHash: `sha256:${revision.toString(16).padStart(64, '0')}`, certificationStatus: 'revised',
   certificationRevision: revision, certificationHash: `sha256:${'b'.repeat(64)}`, contractVersion: 'gastapp-aurum-calendar-months-v2',
   generatedAt: '2026-08-01T12:00:00.000Z',
 });
@@ -168,5 +168,53 @@ describe('AUD-03 general sync transaction', () => {
     // syncWealthNow retries failures, so fail every outer attempt as well.
     mocks.transaction.mockRejectedValue(new Error('synthetic transaction failure'));
     expect(await syncWealthNow()).toBe(false); expect(mocks.publish).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('AUD-04 bounded closure history', () => {
+  const seedHistory = (count: number) => {
+    const closure = cloud.closures[0] as WealthMonthlyClosure;
+    closure.gastappExpenseClose = buildGastappMonthlyExpenseCloseSnapshot(snapshot(count + 1), fx, '2026-08-01T12:00:00.000Z');
+    closure.previousVersions = Array.from({ length: count }, (_, index) => ({
+      ...closure, previousVersions: undefined, id: `july:gastapp:${index + 1}`,
+      gastappExpenseClose: buildGastappMonthlyExpenseCloseSnapshot(snapshot(index + 1), fx, '2026-08-01T12:00:00.000Z'),
+      replacedAt: '2026-08-02T12:00:00.000Z',
+    }));
+  };
+
+  it.each([35, 36])('preserves the immediate predecessor with %s existing same-closedAt archives', async (count) => {
+    seedHistory(count);
+    const before = structuredClone(cloud.closures[0]);
+    await accept(count + 2);
+    const current = cloud.closures[0];
+    expect(current.previousVersions).toHaveLength(36);
+    expect(current.previousVersions).toContainEqual(expect.objectContaining({
+      gastappExpenseClose: expect.objectContaining({ contractHash: snapshot(count + 1).contractHash }),
+    }));
+    expect(current.gastappExpenseClose.contractHash).toBe(snapshot(count + 2).contractHash);
+    expect(current.summary).toEqual(before.summary);
+    expect(current.fxRates).toEqual(before.fxRates);
+    expect(current.closedAt).toBe(before.closedAt);
+    saveClosures(cloud.closures, { skipCloudSync: true, silent: true });
+    expect(loadClosures()[0].previousVersions).toEqual(current.previousVersions);
+  });
+
+  it('retains every direct predecessor through 40 acceptances and idempotent retries', async () => {
+    for (let revision = 2; revision <= 41; revision += 1) {
+      await accept(revision);
+      const current = cloud.closures[0];
+      expect(current.gastappExpenseClose.contractHash).toBe(snapshot(revision).contractHash);
+      expect(current.previousVersions).toHaveLength(Math.min(revision - 1, 36));
+      expect(current.previousVersions).toContainEqual(expect.objectContaining({
+        gastappExpenseClose: expect.objectContaining({ contractHash: snapshot(revision - 1).contractHash }),
+      }));
+      const hashes = current.previousVersions.map((item: WealthMonthlyClosure) => item.gastappExpenseClose?.contractHash);
+      expect(new Set(hashes).size).toBe(hashes.length);
+      if (revision === 3) expect(hashes).toContain(snapshot(1).contractHash);
+      const before = structuredClone(cloud.closures);
+      await accept(revision);
+      expect(cloud.closures).toEqual(before);
+    }
   });
 });
