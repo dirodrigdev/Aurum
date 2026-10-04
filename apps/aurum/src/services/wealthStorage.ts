@@ -1750,6 +1750,27 @@ const normalizeClosureVersion = (
   };
 };
 
+const CLOSURE_HISTORY_LIMIT = 36;
+
+const closureVersionIdentity = (version: WealthMonthlyClosureVersion): string => {
+  const fields = serializeConfirmedClosure(version);
+  const snapshot = version.gastappExpenseClose;
+  // Archive ids differ between acceptance and sync. The contract identifies
+  // the GastApp revision; retain the sealed financial fields in its identity.
+  if (snapshot && version.id.includes(':gastapp:')) {
+    return stableJson({ ...fields, id: version.id.split(':gastapp:')[0], gastappExpenseClose: snapshot.contractHash });
+  }
+  return stableJson(fields);
+};
+
+const compareClosureHistoryPriority = (a: WealthMonthlyClosureVersion, b: WealthMonthlyClosureVersion) => {
+  const time = (version: WealthMonthlyClosureVersion) => {
+    const parsed = Date.parse(version.replacedAt || version.closedAt);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  return time(b) - time(a) || compareClosureVersionsByClosedAtDesc(a, b);
+};
+
 const mergeClosureVersions = (
   ...lists: Array<Array<WealthMonthlyClosureVersion> | undefined>
 ): WealthMonthlyClosureVersion[] => {
@@ -1757,18 +1778,24 @@ const mergeClosureVersions = (
   lists.forEach((list) => {
     (list || []).forEach((item) => {
       if (!item?.monthKey || !item?.summary) return;
-      const key = `${item.monthKey}::${item.id || ''}::${item.closedAt || ''}`;
+      const key = closureVersionIdentity(item);
       const prev = map.get(key);
-      if (!prev) {
-        map.set(key, item);
-        return;
-      }
-      const tPrev = new Date(prev.closedAt).getTime();
-      const tCurr = new Date(item.closedAt).getTime();
-      map.set(key, tCurr >= tPrev ? item : prev);
+      if (!prev || compareClosureHistoryPriority(item, prev) <= 0) map.set(key, item);
     });
   });
-  return [...map.values()].sort(compareClosureVersionsByClosedAtDesc).slice(0, 36);
+  return [...map.values()].sort(compareClosureHistoryPriority).slice(0, CLOSURE_HISTORY_LIMIT);
+};
+
+const mergeClosureVersionsKeepingPredecessor = (
+  predecessor: WealthMonthlyClosureVersion,
+  ...lists: Array<Array<WealthMonthlyClosureVersion> | undefined>
+): WealthMonthlyClosureVersion[] => {
+  const identity = closureVersionIdentity(predecessor);
+  const others = mergeClosureVersions(...lists)
+    .filter((version) => closureVersionIdentity(version) !== identity)
+    .slice(0, CLOSURE_HISTORY_LIMIT - 1);
+  // Reserve a slot explicitly, even if archive timestamps are ambiguous.
+  return [predecessor, ...others].sort(compareClosureHistoryPriority);
 };
 
 export const makeAssetKey = (record: Pick<WealthRecord, 'block' | 'label' | 'currency'>) => {
@@ -5918,10 +5945,8 @@ const mergeSameFinancialClosureGastappRevision = (
   );
   return {
     ...winner,
-    previousVersions: mergeClosureVersions(
-      first.previousVersions,
-      second.previousVersions,
-      [archivedVersion],
+    previousVersions: mergeClosureVersionsKeepingPredecessor(
+      archivedVersion, first.previousVersions, second.previousVersions,
     ),
   };
 };
@@ -6162,7 +6187,7 @@ export const acceptGastappMonthlyClosureRevision = async (input: {
     const nextClosure: WealthMonthlyClosure = {
       ...remoteClosure,
       gastappExpenseClose: nextSnapshot,
-      previousVersions: mergeClosureVersions(remoteClosure.previousVersions, [archivedVersion]),
+      previousVersions: mergeClosureVersionsKeepingPredecessor(archivedVersion, remoteClosure.previousVersions),
     };
     // toClosureVersion retains optional fields as `undefined`; Firestore rejects
     // undefined values nested inside the revision archive.
@@ -6185,7 +6210,14 @@ export const acceptGastappMonthlyClosureRevision = async (input: {
   const localUpdatedClosure: WealthMonthlyClosure = {
     ...(latestLocal || updatedClosure),
     gastappExpenseClose: updatedClosure.gastappExpenseClose,
-    previousVersions: mergeClosureVersions(latestLocal?.previousVersions, updatedClosure.previousVersions),
+    previousVersions: updatedClosure.previousVersions?.length
+      ? mergeClosureVersionsKeepingPredecessor(
+        updatedClosure.previousVersions.find((version) =>
+          version.gastappExpenseClose?.contractHash === input.expectedPreviousContractHash,
+        ) || updatedClosure.previousVersions[0],
+        latestLocal?.previousVersions, updatedClosure.previousVersions,
+      )
+      : mergeClosureVersions(latestLocal?.previousVersions, updatedClosure.previousVersions),
   };
   const nextLocalClosures = latestLocal
     ? currentLocalClosures.map((closure) => closure.monthKey === monthKey ? localUpdatedClosure : closure)
