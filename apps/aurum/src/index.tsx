@@ -79,10 +79,22 @@ if (!container) {
   const bumped = maybeBumpBuildAndRefresh();
   if (!bumped) {
     const root = createRoot(container);
-    root.render(
-      <React.StrictMode>
-        <App />
-      </React.StrictMode>,
-    );
+    const auditOnlyMode = import.meta.env.DEV &&
+      new URLSearchParams(window.location.search).get('historicalGastappAudit') === '1';
+    if (auditOnlyMode) {
+      void import('./pages/HistoricalGastappBackfillAuditDevEntry').then(({ HistoricalGastappBackfillAuditDevEntry }) => {
+        root.render(
+          <React.StrictMode>
+            <HistoricalGastappBackfillAuditDevEntry />
+          </React.StrictMode>,
+        );
+      });
+    } else {
+      root.render(
+        <React.StrictMode>
+          <App />
+        </React.StrictMode>,
+      );
+    }
   }
 }

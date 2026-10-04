@@ -1296,7 +1296,7 @@ const cloneGastappMonthlyExpenseCloseSnapshot = (
       }
     : undefined;
 
-const normalizeGastappMonthlyExpenseCloseSnapshot = (
+export const normalizeGastappMonthlyExpenseCloseSnapshot = (
   raw: unknown,
   expectedMonthKey: string,
 ): GastappMonthlyExpenseCloseSnapshot | undefined => {
@@ -5791,6 +5791,39 @@ export const loadClosuresFromRaw = (parsed: any[]): WealthMonthlyClosure[] => {
     })
     .filter((item: WealthMonthlyClosure) => !!item.monthKey && !!item.summary)
     .sort(compareClosuresByMonthDesc);
+};
+
+export type WealthCloudDocumentReadForAudit = {
+  exists: boolean;
+  projectId: string;
+  updatedAt: string | null;
+  document: Record<string, unknown> | null;
+  closures: WealthMonthlyClosure[];
+};
+
+/** Reads the current aurum_wealth document from Firestore's server without hydrating or scheduling any write. */
+export const readWealthCloudDocumentForAudit = async (): Promise<WealthCloudDocumentReadForAudit> => {
+  const ref = await getWealthCloudRef();
+  if (!ref) throw new Error('No hay sesión autorizada o Firestore patrimonial no está configurado.');
+  const snapshot = await getDocFromServer(ref);
+  if (!snapshot.exists()) {
+    return {
+      exists: false,
+      projectId: String(ref.firestore.app.options.projectId || ''),
+      updatedAt: null,
+      document: null,
+      closures: [],
+    };
+  }
+  const document = snapshot.data() as Record<string, unknown>;
+  const rawClosures = Array.isArray(document.closures) ? document.closures : [];
+  return {
+    exists: true,
+    projectId: String(ref.firestore.app.options.projectId || ''),
+    updatedAt: typeof document.updatedAt === 'string' ? document.updatedAt : null,
+    document,
+    closures: loadClosuresFromRaw(rawClosures),
+  };
 };
 
 const loadInstrumentsFromRaw = (parsed: any[]): WealthInvestmentInstrument[] => {

@@ -6,6 +6,8 @@ Antes de modificar wealth sync, Monthly Close, revisiones GastApp, `previousVers
 
 El hardening AUD-03/AUD-04, la protección H07 y Monthly Close quedaron certificados el 2026-10-04. No relajar esos invariantes ni reabrirlos sin evidencia nueva y concreta.
 
+Toda nueva dependencia de un campo persistido debe demostrar compatibilidad con objetos históricos que carezcan de ese campo, o incluir una migración explícita antes de convertirlo en requisito de validez. Todo cambio de live/fallback a snapshot persistido/fail-closed debe incluir tests con objetos creados antes de existir el nuevo campo.
+
 Estado Git esperado entre tareas: `main` como única rama remota permanente y 0 PR abiertos. Una tarea de implementación → una rama temporal → PR → merge → borrar rama local/remota → verificar `main` → siguiente tarea. No dejar ramas de diagnóstico/fix residuales ni ejecutar implementaciones paralelas dentro de este repo.
 
 ## Validación obligatoria antes de cerrar cambios

@@ -43,6 +43,7 @@ import {
   type WealthFxRates,
 } from './services/wealthStorage';
 import { hydrateWealthFromCloudShared } from './services/wealthHydration';
+import { subscribeHistoricalGastappSidecarForAnalysis, setHistoricalGastappSidecarForAnalysis } from './services/historicalGastappSidecar';
 import { GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT } from './services/gastosMonthly';
 import { applyCertifiedGastappRevisions } from './services/acceptReviewedGastappRevision';
 
@@ -441,7 +442,13 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         unsub();
         return;
       }
-      cleanup = unsub;
+      const unsubSidecar = await subscribeHistoricalGastappSidecarForAnalysis();
+      if (cancelled) {
+        unsub();
+        unsubSidecar();
+        return;
+      }
+      cleanup = () => { unsub(); unsubSidecar(); setHistoricalGastappSidecarForAnalysis(null, null); };
     })().catch(() => {
       // handled by storage/firestore status banners
     });
