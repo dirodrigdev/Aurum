@@ -167,7 +167,7 @@ test('a certified GastApp revision updates the whole Aurum chain automatically a
   await expect(page.getByRole('button', { name: 'Aceptar y actualizar cadena', exact: true })).toHaveCount(0);
 
   await revisionSection.getByRole('button', { name: 'Ver detalle', exact: true }).click();
-  const detailDialog = page.getByRole('dialog', { name: 'Detalle de revisión GastApp Jul 2026' });
+  const detailDialog = page.getByRole('dialog', { name: 'Detalle de revisión GastApp Julio de 2026', exact: true });
   await expect(detailDialog).toBeVisible();
   await expect(detailDialog).toContainText('La actualización ya fue aplicada');
   for (const viewport of [

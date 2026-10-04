@@ -82,6 +82,17 @@ vi.mock('firebase/firestore', () => {
     orderBy,
     query,
     setDoc,
+    runTransaction: vi.fn(async (_db: unknown, callback: (transaction: any) => Promise<unknown>) => {
+      const writes: Array<() => Promise<void>> = [];
+      const result = await callback({
+        get: getDoc,
+        set: (ref: MockDoc, payload: any, options?: { merge?: boolean }) => {
+          writes.push(() => setDoc(ref, payload, options));
+        },
+      });
+      for (const write of writes) await write();
+      return result;
+    }),
   };
 });
 
