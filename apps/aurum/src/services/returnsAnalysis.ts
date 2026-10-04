@@ -10,6 +10,7 @@ import type {
   ReturnCurvePoint,
 } from '../components/analysis/types';
 import { resolveGastappMonthlyCloseCandidate, resolveGastappMonthlySpend } from './gastosMonthly';
+import { getHistoricalGastappSnapshotForAnalysis } from './historicalGastappSidecar';
 import {
   buildCanonicalClosureSummary,
   dedupeLatestByAsset,
@@ -648,7 +649,8 @@ export const computeMonthlyRows = (
       invalidNet || prevNetDisplay === null || netDisplay === null ? null : netDisplay - prevNetDisplay;
     const gastappOfficialForProvisional = closure.analysisProvisionalReason === 'gastapp_official_aurum_pending';
     const gastappForProvisional = Boolean(closure.analysisProvisionalReason);
-    const acceptedGastappSnapshot = closure.gastappExpenseClose;
+    const acceptedGastappSnapshot = closure.gastappExpenseClose ||
+      getHistoricalGastappSnapshotForAnalysis(closure.monthKey, closure.id);
     const spend: ReturnType<typeof resolveGastappMonthlySpend> = gastappForProvisional
       ? resolveGastappMonthlySpend(closure.monthKey, new Date())
       : acceptedGastappSnapshot

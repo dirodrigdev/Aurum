@@ -1296,7 +1296,7 @@ const cloneGastappMonthlyExpenseCloseSnapshot = (
       }
     : undefined;
 
-const normalizeGastappMonthlyExpenseCloseSnapshot = (
+export const normalizeGastappMonthlyExpenseCloseSnapshot = (
   raw: unknown,
   expectedMonthKey: string,
 ): GastappMonthlyExpenseCloseSnapshot | undefined => {

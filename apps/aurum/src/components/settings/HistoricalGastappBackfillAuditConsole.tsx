@@ -4,6 +4,7 @@ import {
   runHistoricalGastappBackfillAudit,
   type HistoricalGastappBackfillAuditResult,
 } from '../../services/historicalGastappSnapshotBackfill';
+import { executeHistoricalGastappSidecarBackfill } from '../../services/historicalGastappBackfillWrite';
 
 const ADMIN_EMAIL = 'diegorp.1978@gmail.com';
 
@@ -17,7 +18,8 @@ export const HistoricalGastappBackfillAuditConsole: React.FC<{ authEmail: string
   const [result, setResult] = useState<HistoricalGastappBackfillAuditResult | null>(null);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
-  const authorized = authEmail.trim().toLowerCase() === ADMIN_EMAIL;
+  const authorized = authEmail.trim().toLowerCase() === ADMIN_EMAIL ||
+    (import.meta.env.VITE_E2E_USE_FIREBASE_EMULATOR === 'true' && authEmail.trim().toLowerCase() === 'aurum.e2e@example.test');
 
   if (!authorized) return null;
 
@@ -34,13 +36,27 @@ export const HistoricalGastappBackfillAuditConsole: React.FC<{ authEmail: string
     }
   };
 
+  const executeBackfill = async () => {
+    setBusy(true);
+    setMessage('Ejecutando controles, backup y transacción sidecar…');
+    try {
+      const outcome = await executeHistoricalGastappSidecarBackfill();
+      setMessage(`Completado: ${outcome.created} snapshots; backup ${outcome.backupId || 'ya existente'}; raíz PRE/POST ${outcome.rootPreFingerprint === outcome.rootPostFingerprint ? 'idéntica' : 'DIFERENTE'}.`);
+      setResult(await runHistoricalGastappBackfillAudit());
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Backfill detenido.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <section className="rounded-xl border border-blue-200 bg-blue-50/40 p-3 text-sm" aria-labelledby="historical-gastapp-audit-title">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h3 id="historical-gastapp-audit-title" className="font-semibold text-slate-900">Auditoría histórica GastApp · solo lectura</h3>
+          <h3 id="historical-gastapp-audit-title" className="font-semibold text-slate-900">Auditoría histórica GastApp</h3>
           <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-600">
-            Lee desde servidor los cierres de Aurum y el contrato mensual oficial Canonical V2. Simula en memoria los snapshots compatibles; no escribe en Aurum ni en GastApp.
+            Lee desde servidor los cierres de Aurum, el sidecar y el contrato mensual oficial Canonical V2. La auditoría no escribe datos.
           </p>
         </div>
         <Button variant="outline" disabled={busy} onClick={() => void runAudit()}>
@@ -52,17 +68,14 @@ export const HistoricalGastappBackfillAuditConsole: React.FC<{ authEmail: string
 
       {result && (() => {
         const { preview, sources } = result;
-        const size = preview.documentSize;
-        const sizeLabel = size.available
-          ? `${number(size.currentApproxBytes)} B → ${number(size.projectedApproxBytes)} B; margen estimado ${number(size.maxBytes - (size.projectedApproxBytes || 0))} B`
-          : 'No disponible: la lectura no permitió medir el documento completo.';
+        const size = preview.sidecarSize;
+        const sizeLabel = `${number(size.currentApproxBytes)} B → ${number(size.projectedApproxBytes)} B; margen estimado ${number(size.maxBytes - size.projectedApproxBytes)} B`;
         const current = preview.coverage.current;
         const projected = preview.coverage.projected;
         const statusLabel = {
           within_limit: 'Dentro del margen',
           near_limit: 'Cerca del límite: bloquear escritura',
           over_limit: 'Supera el límite: bloquear escritura',
-          unavailable: 'No disponible',
         }[size.status];
         return (
           <div className="mt-3 space-y-3">
@@ -86,7 +99,7 @@ export const HistoricalGastappBackfillAuditConsole: React.FC<{ authEmail: string
             </div>
 
             <div className={`rounded-lg border p-2 text-xs ${size.status === 'within_limit' ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-amber-300 bg-amber-50 text-amber-950'}`}>
-              <strong>Tamaño aproximado del documento:</strong> {sizeLabel} · {statusLabel}. Reserva configurada: {number(size.reserveBytes)} B.
+              <strong>Tamaño aproximado del sidecar:</strong> {sizeLabel} · {statusLabel}. Reserva configurada: {number(size.reserveBytes)} B.
             </div>
 
             {preview.blockers > 0 && (
@@ -103,8 +116,13 @@ export const HistoricalGastappBackfillAuditConsole: React.FC<{ authEmail: string
             </details>
 
             <p className="rounded-lg border border-slate-200 bg-white p-2 text-xs font-medium text-slate-700">
-              Proyección en memoria. Fingerprints financieros PRE/POST verificados por cierre. No se modificó ningún dato.
+              Proyección en memoria. Fingerprints financieros PRE/POST verificados por cierre. El documento raíz permanece intacto.
             </p>
+            {preview.snapshotsToComplete === 38 && preview.blockers === 0 && size.status === 'within_limit' && (
+              <Button variant="outline" disabled={busy} onClick={() => void executeBackfill()}>
+                {busy ? 'Verificando…' : 'Ejecutar backfill sidecar certificado'}
+              </Button>
+            )}
           </div>
         );
       })()}

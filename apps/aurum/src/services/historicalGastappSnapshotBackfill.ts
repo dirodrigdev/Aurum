@@ -17,6 +17,10 @@ import {
   GASTAPP_CANONICAL_V2_PROJECT_ID,
   loadGastappCanonicalV2OfficialMonthContractFresh,
 } from './gastappCanonicalV2';
+import {
+  readHistoricalGastappSidecarFromServer,
+  type HistoricalGastappSidecarDocument,
+} from './historicalGastappSidecar';
 
 const AURUM_PRODUCTION_PROJECT_ID = 'aurum-prod-a1918';
 
@@ -107,6 +111,13 @@ export type HistoricalGastappBackfillPreview = {
     reserveBytes: number;
     status: 'within_limit' | 'near_limit' | 'over_limit' | 'unavailable';
   };
+  sidecarSize: {
+    currentApproxBytes: number;
+    projectedApproxBytes: number;
+    maxBytes: number;
+    reserveBytes: number;
+    status: 'within_limit' | 'near_limit' | 'over_limit';
+  };
   manifest: HistoricalGastappBackfillManifestRow[];
   simulatedClosures: WealthMonthlyClosure[];
   allowedPersistentFields: ['gastappExpenseClose', 'repairAudit'];
@@ -121,6 +132,7 @@ type BuildHistoricalGastappBackfillPreviewInput = {
   currency?: WealthCurrency;
   /** Raw aurum_wealth document returned by a read-only cloud read. */
   wealthDocument?: Record<string, unknown> | null;
+  sidecar?: HistoricalGastappSidecarDocument | null;
 };
 
 export type HistoricalGastappBackfillAuditResult = {
@@ -214,9 +226,9 @@ const normalizeForStableJson = (value: unknown): unknown => {
   return null;
 };
 
-const stableStringify = (value: unknown) => JSON.stringify(normalizeForStableJson(value));
+export const stableStringify = (value: unknown) => JSON.stringify(normalizeForStableJson(value));
 
-const sha256Fingerprint = async (value: unknown): Promise<string> => {
+export const sha256Fingerprint = async (value: unknown): Promise<string> => {
   if (!globalThis.crypto?.subtle) throw new Error('Web Crypto no está disponible para calcular fingerprints financieros.');
   const bytes = new TextEncoder().encode(stableStringify(value));
   const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
@@ -263,7 +275,6 @@ const utf8Size = (value: unknown): number => {
 
 const buildDocumentSizeAssessment = (
   wealthDocument: Record<string, unknown> | null | undefined,
-  manifest: HistoricalGastappBackfillManifestRow[],
 ): HistoricalGastappBackfillPreview['documentSize'] => {
   const unavailable = {
     available: false,
@@ -276,45 +287,11 @@ const buildDocumentSizeAssessment = (
   };
   if (!wealthDocument || !Array.isArray(wealthDocument.closures)) return unavailable;
 
-  const closureRows = manifest.filter((row) => row.status === 'eligible_for_backfill' && row.proposedSnapshot);
-  if (closureRows.length && closureRows.some((row) => !row.preFingerprint || !row.postFingerprint || !row.fingerprintsMatch)) {
-    return unavailable;
-  }
-  const plannedByMonth = new Map(closureRows.map((row) => [row.monthKey, row]));
-  const rawClosures = wealthDocument.closures as unknown[];
-  const foundMonths = new Set<string>();
-  const projectedClosures = rawClosures.map((raw) => {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
-    const closure = raw as Record<string, unknown>;
-    const monthKey = typeof closure.monthKey === 'string' ? closure.monthKey : '';
-    const row = plannedByMonth.get(monthKey);
-    if (!row || !row.proposedSnapshot) return raw;
-    foundMonths.add(monthKey);
-    const currentAudit = Array.isArray(closure.repairAudit) ? closure.repairAudit : [];
-    const previewAudit = {
-      id: `preview:historical-gastapp-backfill:${monthKey}:${row.proposedSnapshot.contractHash}`,
-      monthKey,
-      repairedAt: row.proposedSnapshot.capturedAt,
-      reason: 'historical_gastapp_snapshot_backfill',
-      provenance: 'retrospective_schema_compatibility_reconstruction',
-      sourcePath: row.proposedSnapshot.sourcePath,
-      sourceContractHash: row.proposedSnapshot.contractHash,
-      preFingerprint: row.preFingerprint,
-      postFingerprint: row.postFingerprint,
-    };
-    return {
-      ...closure,
-      gastappExpenseClose: row.proposedSnapshot,
-      repairAudit: [...currentAudit, previewAudit],
-    };
-  });
-  if (foundMonths.size !== closureRows.length) return unavailable;
-
   try {
-    const projectedDocument = { ...wealthDocument, closures: projectedClosures };
     const currentApproxBytes = utf8Size(wealthDocument);
-    const projectedApproxBytes = utf8Size(projectedDocument);
-    const incrementApproxBytes = projectedApproxBytes - currentApproxBytes;
+    // The root is never a write target for this repair.
+    const projectedApproxBytes = currentApproxBytes;
+    const incrementApproxBytes = 0;
     const status: HistoricalGastappBackfillPreview['documentSize']['status'] =
       projectedApproxBytes > FIRESTORE_MAX_DOCUMENT_BYTES
         ? 'over_limit'
@@ -390,7 +367,14 @@ export const buildHistoricalGastappBackfillPreview = async (
   const closuresByMonth = new Map<string, number>();
   closures.forEach((closure) => closuresByMonth.set(closure.monthKey, (closuresByMonth.get(closure.monthKey) || 0) + 1));
   const rawByMonth = rawClosuresByMonth(input.wealthDocument);
-  const currentRows = computeMonthlyRows(closures, includeRiskCapital, currency);
+  const sidecarEntries = input.sidecar?.snapshotsByMonth || {};
+  const withExistingSidecar = closures.map((closure) => {
+    const entry = sidecarEntries[closure.monthKey];
+    return !closure.gastappExpenseClose && entry?.closureId === closure.id
+      ? { ...closure, gastappExpenseClose: entry.snapshot }
+      : closure;
+  });
+  const currentRows = computeMonthlyRows(withExistingSidecar, includeRiskCapital, currency);
   const rowByMonth = new Map(currentRows.map((row) => [row.monthKey, row]));
   const manifest: HistoricalGastappBackfillManifestRow[] = [];
 
@@ -420,6 +404,17 @@ export const buildHistoricalGastappBackfillPreview = async (
     const rawHasSnapshot = rawClosure
       ? Object.prototype.hasOwnProperty.call(rawClosure, 'gastappExpenseClose') && rawClosure.gastappExpenseClose !== null
       : false;
+    const sidecarEntry = sidecarEntries[monthKey];
+    if (sidecarEntry && sidecarEntry.closureId !== closure.id) {
+      manifest.push(manifestEntry(monthKey, closure, candidate, 'conflict_existing_snapshot', ['El sidecar existe para otro cierre; no se sobrescribe.']));
+      continue;
+    }
+    if (sidecarEntry && !closure.gastappExpenseClose && !rawHasSnapshot) {
+      const entry = manifestEntry(monthKey, closure, candidate, 'snapshot_present', []);
+      entry.snapshotPresent = true;
+      manifest.push(entry);
+      continue;
+    }
     if (closure.gastappExpenseClose || rawHasSnapshot) {
       const candidateContractHash = candidate?.snapshot?.contractHash || candidate?.currentContractHash || null;
       const candidateHasDifferentContract = Boolean(
@@ -492,7 +487,7 @@ export const buildHistoricalGastappBackfillPreview = async (
   }
 
   const rowByMonthForManifest = new Map(manifest.map((row) => [row.monthKey, row]));
-  const simulatedClosures = closures.map((closure) => {
+  const simulatedClosures = withExistingSidecar.map((closure) => {
     const row = rowByMonthForManifest.get(closure.monthKey);
     return row?.status === 'eligible_for_backfill' && row.proposedSnapshot
       ? { ...closure, gastappExpenseClose: row.proposedSnapshot }
@@ -522,7 +517,7 @@ export const buildHistoricalGastappBackfillPreview = async (
   const safeMonthKeys = new Set(manifest
     .filter((row) => row.status === 'eligible_for_backfill' && row.proposedSnapshot && row.fingerprintsMatch)
     .map((row) => row.monthKey));
-  const safeSimulatedClosures = closures.map((closure) => {
+  const safeSimulatedClosures = withExistingSidecar.map((closure) => {
     if (!safeMonthKeys.has(closure.monthKey)) return closure;
     const row = rowByMonthForManifest.get(closure.monthKey)!;
     return { ...closure, gastappExpenseClose: row.proposedSnapshot! };
@@ -563,7 +558,32 @@ export const buildHistoricalGastappBackfillPreview = async (
         ytd: makeCoverage(safeSimulatedRows, ytdMonthKeys),
       },
     },
-    documentSize: buildDocumentSizeAssessment(input.wealthDocument, manifest),
+    documentSize: buildDocumentSizeAssessment(input.wealthDocument),
+    sidecarSize: (() => {
+      const current = input.sidecar || { schemaVersion: 'aurum-gastapp-historical-sidecar-v1', snapshotsByMonth: {} };
+      const additions = Object.fromEntries(manifest.filter((row) => row.status === 'eligible_for_backfill' && row.proposedSnapshot).map((row) => [row.monthKey, {
+        closureId: row.closureId,
+        snapshot: row.proposedSnapshot,
+        repairAudit: {
+          reason: 'historical_schema_compatibility_reconstruction',
+          reconstructedAt: at,
+          originalClosureAt: closureByMonth.get(row.monthKey)?.closedAt,
+          preFingerprint: row.preFingerprint,
+          postFingerprint: row.postFingerprint,
+          sourceContractHash: row.proposedSnapshot?.contractHash,
+        },
+      }]));
+      const currentApproxBytes = utf8Size(current);
+      const projectedApproxBytes = utf8Size({ ...current, snapshotsByMonth: { ...current.snapshotsByMonth, ...additions } });
+      return {
+        currentApproxBytes,
+        projectedApproxBytes,
+        maxBytes: FIRESTORE_MAX_DOCUMENT_BYTES,
+        reserveBytes: FIRESTORE_DOCUMENT_RESERVE_BYTES,
+        status: projectedApproxBytes > FIRESTORE_MAX_DOCUMENT_BYTES ? 'over_limit' as const :
+          projectedApproxBytes > FIRESTORE_MAX_DOCUMENT_BYTES - FIRESTORE_DOCUMENT_RESERVE_BYTES ? 'near_limit' as const : 'within_limit' as const,
+      };
+    })(),
     manifest,
     simulatedClosures: safeSimulatedClosures,
     allowedPersistentFields: ['gastappExpenseClose', 'repairAudit'],
@@ -621,9 +641,10 @@ export const runHistoricalGastappBackfillAudit = async (options: {
 } = {}): Promise<HistoricalGastappBackfillAuditResult> => {
   const auditedAt = new Date().toISOString();
   const reconstructionAt = options.reconstructionAt || auditedAt;
-  const [wealth, gastapp] = await Promise.all([
+  const [wealth, gastapp, sidecar] = await Promise.all([
     readWealthCloudDocumentForAudit(),
     loadGastappCanonicalV2OfficialMonthContractFresh(),
+    readHistoricalGastappSidecarFromServer(),
   ]);
   if (wealth.projectId !== AURUM_PRODUCTION_PROJECT_ID) {
     throw new Error(`Auditoría detenida: Aurum está conectado a ${wealth.projectId || 'un proyecto desconocido'}, no a ${AURUM_PRODUCTION_PROJECT_ID}.`);
@@ -642,6 +663,7 @@ export const runHistoricalGastappBackfillAudit = async (options: {
     includeRiskCapitalInTotals: options.includeRiskCapitalInTotals,
     currency: options.currency,
     wealthDocument: wealth.document,
+    sidecar: sidecar.document,
   });
   return {
     auditedAt,

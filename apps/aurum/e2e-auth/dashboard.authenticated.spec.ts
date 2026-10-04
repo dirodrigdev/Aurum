@@ -145,6 +145,7 @@ test('authenticated Settings can regenerate the canonical MIDAS publication', as
 });
 
 test('authenticated Settings exposes the GastApp Canonical V2 read-only panel responsively', async ({ page }, testInfo) => {
+  test.setTimeout(60_000);
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
@@ -186,6 +187,24 @@ test('authenticated Settings exposes the GastApp Canonical V2 read-only panel re
   expect(mobileOverflow).toBeLessThanOrEqual(1);
   await page.screenshot({ path: testInfo.outputPath('aurum-gastapp-canonical-v2-mobile.png'), fullPage: true });
   await expect(canonicalSection.getByTestId('gastapp-report-range-modal')).toHaveCount(0);
+
+  await page.locator('summary').filter({ hasText: 'Mantenimiento avanzado' }).click();
+  const historicalAudit = page.getByRole('heading', { name: 'Auditoría histórica GastApp' });
+  await expect(historicalAudit).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.screenshot({ path: testInfo.outputPath('aurum-historical-gastapp-audit-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 768, height: 1024 });
+  const auditTabletOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(auditTabletOverflow).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('aurum-historical-gastapp-audit-tablet.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const auditMobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(auditMobileOverflow).toBeLessThanOrEqual(1);
+  const auditButton = page.getByRole('button', { name: 'Generar auditoría read-only' });
+  await auditButton.scrollIntoViewIfNeeded();
+  await page.evaluate(() => window.scrollBy(0, 240));
+  await expect(auditButton).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('aurum-historical-gastapp-audit-mobile.png') });
 
   await networkGuard.assertClean(testInfo);
   expect(pageErrors, `page errors: ${pageErrors.join(' | ')}`).toEqual([]);

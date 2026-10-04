@@ -16,10 +16,14 @@ vi.mock('../src/services/gastosMonthly', () => ({
 import type { GastappMonthlyCloseCandidate } from '../src/services/gastosMonthly';
 import {
   buildGastappMonthlyExpenseCloseSnapshot,
+  mergeClosuresForSync,
   type GastappMonthlyExpenseCloseInput,
   type WealthMonthlyClosure,
 } from '../src/services/wealthStorage';
 import { buildHistoricalGastappBackfillPreview } from '../src/services/historicalGastappSnapshotBackfill';
+import { buildHistoricalGastappSidecarPlan } from '../src/services/historicalGastappBackfillWrite';
+import { getHistoricalGastappSnapshotForAnalysis, parseHistoricalGastappSidecar, setHistoricalGastappSidecarForAnalysis } from '../src/services/historicalGastappSidecar';
+import { computeMonthlyRows } from '../src/services/returnsAnalysis';
 
 const sha = (letter: string) => `sha256:${letter.repeat(64)}`;
 
@@ -192,7 +196,7 @@ describe('historical GastApp snapshot audit and in-memory simulation', () => {
     expect(preview.manifest.some((row) => row.monthKey === '2026-09')).toBe(false);
     expect(preview.manifest.find((row) => row.monthKey === '2023-05')?.status).toBe('base_month_non_comparable');
     expect(preview.documentSize.available).toBe(true);
-    expect(preview.documentSize.incrementApproxBytes).toBeGreaterThan(0);
+    expect(preview.documentSize.incrementApproxBytes).toBe(0);
     expect(preview.documentSize.status).toBe('within_limit');
     expect(preview.writesPerformed).toBe(false);
     expect(closures).toEqual(originalClosures);
@@ -217,6 +221,33 @@ describe('historical GastApp snapshot audit and in-memory simulation', () => {
       expect(row.proposedSnapshot?.fxRates).toEqual(before.fxRates);
     }
     expect(preview.simulatedClosures[existingIndex].gastappExpenseClose).toEqual(closures[existingIndex].gastappExpenseClose);
+
+    const sidecar = buildHistoricalGastappSidecarPlan(preview, null);
+    expect(parseHistoricalGastappSidecar(structuredClone(sidecar))).toEqual(sidecar);
+    expect(Object.keys(sidecar.snapshotsByMonth)).toHaveLength(38);
+    expect(preview.sidecarSize.status).toBe('within_limit');
+    expect(closures).toEqual(originalClosures);
+    const after = await buildHistoricalGastappBackfillPreview({
+      closures,
+      candidatesByMonth,
+      reconstructionAt: preview.reconstructionAt,
+      wealthDocument,
+      sidecar,
+    });
+    expect(after.snapshotsToComplete).toBe(0);
+    expect(after.coverage.current.sinceStart).toEqual({ valid: 39, expected: 39 });
+    expect(after.coverage.current.last12m).toEqual({ valid: 12, expected: 12 });
+    expect(after.coverage.current.ytd).toEqual({ valid: 8, expected: 8 });
+    expect(buildHistoricalGastappSidecarPlan(after, sidecar)).toEqual(sidecar);
+
+    // A stale client still has root closures without sidecars. Cloud merging must never embed the overlay.
+    setHistoricalGastappSidecarForAnalysis('synthetic-owner', sidecar);
+    expect(getHistoricalGastappSnapshotForAnalysis('2023-07', 'closure-2023-07')).toBeDefined();
+    expect(computeMonthlyRows(closures, false, 'CLP').find((row) => row.monthKey === '2023-07')?.gastosClp).toBeGreaterThan(0);
+    const staleMerge = mergeClosuresForSync(structuredClone(closures), structuredClone(closures), true);
+    expect(staleMerge.every((closure) => closure.gastappExpenseClose === undefined || closure.monthKey === existingMonth)).toBe(true);
+    expect(closures).toEqual(originalClosures);
+    setHistoricalGastappSidecarForAnalysis(null, null);
   });
 
   it('surfaces missing closures, uncertified GastApp, and missing historical FX as separate blockers', async () => {
@@ -278,7 +309,7 @@ describe('historical GastApp snapshot audit and in-memory simulation', () => {
     expect(preview.documentSize.incrementApproxBytes).toBe(0);
   });
 
-  it('blocks the preview estimate when the projected document approaches or exceeds the Firestore size limit', async () => {
+  it('leaves the root size unchanged even when the root is already near the Firestore limit', async () => {
     const closures = monthsBetween('2023-05', '2026-08').map((monthKey, index) => makeClosure(monthKey, index));
     const candidatesByMonth = Object.fromEntries(closures.map((closure) => [closure.monthKey, makeCandidate(closure.monthKey)]));
     const preview = await buildHistoricalGastappBackfillPreview({
@@ -287,9 +318,8 @@ describe('historical GastApp snapshot audit and in-memory simulation', () => {
       reconstructionAt: '2026-10-04T12:00:00.000Z',
       wealthDocument: { closures, padding: 'x'.repeat(900_000) },
     });
-    expect(['near_limit', 'over_limit']).toContain(preview.documentSize.status);
-    expect(preview.documentSize.projectedApproxBytes).toBeGreaterThan(
-      preview.documentSize.maxBytes - preview.documentSize.reserveBytes,
-    );
+    expect(preview.documentSize.incrementApproxBytes).toBe(0);
+    expect(preview.documentSize.projectedApproxBytes).toBe(preview.documentSize.currentApproxBytes);
+    expect(preview.sidecarSize.status).toBe('within_limit');
   });
 });
