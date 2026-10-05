@@ -14,6 +14,7 @@ import {
 } from '../../services/financialPerformance';
 import { appendFinancialPerformanceConfirmation, loadFinancialPerformanceConfirmation } from '../../services/financialPerformanceStorage';
 import { getCurrentUid } from '../../services/firebase';
+import { resolveGastappMonthlySpend } from '../../services/gastosMonthly';
 import { type WealthMonthlyClosure } from '../../services/wealthStorage';
 import { formatMonthLabel as monthLabel } from '../../utils/wealthFormat';
 import { FinancialPerformanceResultView } from './FinancialPerformanceResultView';
@@ -147,15 +148,35 @@ export const FinancialPerformanceSlice: React.FC<{
   // A missing saved revision may use the initial draft after Firestore confirms that no revision exists.
   // This is an in-memory assumption only; it is persisted only after an explicit user action.
   const calculationConfirmation = confirmation ?? (storageReady && !isLoading ? draftConfirmation : null);
+  const initialClosure = selectFinancialPerformanceClosure(closures, period.startMonth, includeRiskCapital);
+  const finalClosure = selectFinancialPerformanceClosure(closures, period.endMonth, includeRiskCapital);
+  const embeddedGastappWithdrawalClp = (() => {
+    const snapshot = finalClosure?.gastappExpenseClose;
+    if (!snapshot || snapshot.calendarMonthKey !== period.endMonth) return null;
+    const amount = Number(snapshot.amountsByCurrency?.CLP?.total);
+    return Number.isFinite(amount) && amount >= 0 ? amount : null;
+  })();
+  const runtimeGastappSpend = resolveGastappMonthlySpend(period.endMonth);
+  const runtimeGastappWithdrawalClp = (() => {
+    if (runtimeGastappSpend.status !== 'complete' || runtimeGastappSpend.gastosEur === null) return null;
+    const eurClp = Number(finalClosure?.fxRates?.eurClp);
+    if (!Number.isFinite(eurClp) || eurClp <= 0) return null;
+    const amount = runtimeGastappSpend.gastosEur * eurClp;
+    return Number.isFinite(amount) && amount >= 0 ? amount : null;
+  })();
+  // Prefer the close-time snapshot; fall back to the current official GastApp
+  // calendar contract for historical periods that predate embedded snapshots.
+  const automaticConsumptionWithdrawalClp = embeddedGastappWithdrawalClp ?? runtimeGastappWithdrawalClp;
   const result = useMemo(
     () => reconcileFinancialPerformanceForPeriod({
       period,
-      initialClosure: selectFinancialPerformanceClosure(closures, period.startMonth, includeRiskCapital),
-      finalClosure: selectFinancialPerformanceClosure(closures, period.endMonth, includeRiskCapital),
+      initialClosure,
+      finalClosure,
       confirmation: calculationConfirmation,
       includeRiskCapital,
+      automaticConsumptionWithdrawalClp,
     }),
-    [calculationConfirmation, closures, includeRiskCapital, period],
+    [automaticConsumptionWithdrawalClp, calculationConfirmation, finalClosure, includeRiskCapital, initialClosure, period],
   );
 
   const persistDraft = async (nextDraft: ConfirmationDraft) => {
@@ -240,7 +261,7 @@ export const FinancialPerformanceSlice: React.FC<{
   };
 
   const saveNoFlows = () => {
-    if (draft.flows.length > 0 && !window.confirm('Esta confirmación eliminará la lista de movimientos ingresada. ¿Confirmas que no hubo aportes ni retiros en este período?')) return;
+    if (draft.flows.length > 0 && !window.confirm('Esta confirmación eliminará la lista de movimientos ingresada. ¿Confirmas que no hubo otros aportes ni retiros aparte del consumo automático de GastApp?')) return;
     const noFlowsDraft: ConfirmationDraft = {
       ...draft,
       flows: [],
@@ -298,7 +319,7 @@ export const FinancialPerformanceSlice: React.FC<{
           : confirmation?.revision
           ? `Confirmación guardada · revisión ${confirmation.revision} · ${includeRiskCapital ? 'inversiones con CapRiesgo' : 'inversiones sin CapRiesgo'}.`
           : storageReady && result.quality === 'RECONSTRUIDO'
-            ? 'Supuesto inicial sin guardar: lista completa, cero aportes/retiros y movimientos reflejados en Aurum.'
+            ? 'Supuesto inicial sin guardar: GastApp se incorpora como retiro automático y no hay otros aportes/retiros.'
             : 'Falta completar la validación de este período para reconstruir la rentabilidad.'}
       </p>
 
@@ -338,7 +359,7 @@ export const FinancialPerformanceSlice: React.FC<{
             onClick={saveNoFlows}
             className="min-h-11 rounded-lg border border-emerald-300/30 bg-emerald-300/10 px-3 text-[11px] font-semibold text-emerald-100 disabled:opacity-40"
           >
-            No hubo flujos este mes
+            No hubo otros flujos este mes
           </button>
           <button
             type="button"
@@ -358,7 +379,7 @@ export const FinancialPerformanceSlice: React.FC<{
           </button>
         </div>
         <p className="mt-2 text-[10px] text-slate-400">
-          Confirma solo aportes o retiros de capital de la cartera. Los gastos personales de GastApp no son flujos de inversión.
+          GastApp se incorpora automáticamente como retiro del portafolio del mes. Agrega aquí solo otros aportes o retiros de capital.
         </p>
 
         {draft.flows.length > 0 && (
