@@ -47,9 +47,9 @@ import {
 import {
   GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT,
   getGastappMonthlyRuntimeDiagnostic,
-  refreshGastappMonthlyContable,
   warmGastappMonthlyContable,
 } from '../services/gastosMonthly';
+import { applyCertifiedGastappRevisions } from '../services/acceptReviewedGastappRevision';
 import { describeGastappAnalysisAccessIssue } from '../services/dataRoom/gastappAccessGuidance';
 // GastApp remains the single XLSX/JSON generation authority; Analysis only
 // exposes the existing handoff entry point.
@@ -129,6 +129,9 @@ export const AnalysisAurum: React.FC = () => {
   const [wealthSourceVersion, setWealthSourceVersion] = useState(0);
   const [includeEstimatedMonth, setIncludeEstimatedMonth] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [gastappRefreshNotice, setGastappRefreshNotice] = useState<
+    { tone: 'warning' | 'error'; message: string } | null
+  >(null);
   const [analysisRefreshTick, setAnalysisRefreshTick] = useState(0);
   const analysisRefreshInFlightRef = useRef(false);
   const refreshClosures = useCallback(() => {
@@ -484,11 +487,35 @@ export const AnalysisAurum: React.FC = () => {
   const refreshAnalysisModels = useCallback(async () => {
     if (analysisRefreshInFlightRef.current) return;
     analysisRefreshInFlightRef.current = true;
+    setGastappRefreshNotice(null);
     try {
-      if (tab !== 'lab') await refreshGastappMonthlyContable();
+      if (tab !== 'lab') {
+        const revisionSync = await applyCertifiedGastappRevisions();
+        if (revisionSync.failed.length) {
+          setGastappRefreshNotice({
+            tone: 'error',
+            message: `No pude aplicar la revisión certificada de GastApp en: ${revisionSync.failed
+              .map((item) => item.monthKey)
+              .join(', ')}. Los retornos conservan el último cierre confirmado.`,
+          });
+        } else if (revisionSync.pendingUncertified.length) {
+          setGastappRefreshNotice({
+            tone: 'warning',
+            message: `GastApp tiene cambios todavía no certificados en: ${revisionSync.pendingUncertified.join(', ')}. Los retornos conservan el último cierre confirmado.`,
+          });
+        }
+      }
       clearAnalysisSessionCache(analysisFingerprint);
       refreshClosures();
       setAnalysisRefreshTick((current) => current + 1);
+    } catch (error) {
+      setGastappRefreshNotice({
+        tone: 'error',
+        message: `No pude completar la sincronización de GastApp antes de recalcular Retornos: ${String(
+          (error as Error)?.message || error || 'error desconocido',
+        )}`,
+      });
+      refreshClosures();
     } finally {
       analysisRefreshInFlightRef.current = false;
     }
@@ -626,6 +653,18 @@ export const AnalysisAurum: React.FC = () => {
         />
       ) : (
         <ReturnsTab {...returnsTabProps} />
+      )}
+
+      {!!gastappRefreshNotice && (
+        <Card
+          className={`whitespace-pre-line p-3 text-xs ${
+            gastappRefreshNotice.tone === 'error'
+              ? 'border-rose-200 bg-rose-50 text-rose-700'
+              : 'border-amber-200 bg-amber-50 text-amber-800'
+          }`}
+        >
+          {gastappRefreshNotice.message}
+        </Card>
       )}
 
       {!!errorMessage && (tab === 'lab' ? (
