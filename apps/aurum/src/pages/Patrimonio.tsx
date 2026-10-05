@@ -6262,9 +6262,27 @@ export const Patrimonio: React.FC = () => {
       return true;
     } catch (error: any) {
       const message = String(error?.message || 'No pude actualizar TC/UF.');
+      const fallbackClosure = previousClosureForSelectedMonth;
+      const fallbackRates = fallbackClosure?.fxRates;
+      const hasValidFallbackRates = [
+        fallbackRates?.usdClp,
+        fallbackRates?.eurClp,
+        fallbackRates?.ufClp,
+      ].every((rate) => Number.isFinite(rate) && Number(rate) > 0);
+      let fallbackNotice = '';
+      if (hasValidFallbackRates && fallbackRates) {
+        try {
+          saveFxRates(fallbackRates);
+          refreshAllWealthState();
+          fallbackNotice = ` Se mantienen las tasas del cierre de ${monthLabel(fallbackClosure.monthKey).toLowerCase()}.`;
+        } catch (fallbackError: any) {
+          const fallbackErrorMessage = String(fallbackError?.message || 'No pude guardar las tasas del cierre anterior.');
+          fallbackNotice = ` No pude aplicar las tasas del cierre anterior: ${fallbackErrorMessage}`;
+        }
+      }
       const visibleMessage = explicitMonthStarted
-        ? `El mes de ${monthLabel(monthToStart).toLowerCase()} quedó iniciado con la hipoteca aplicada. TC/UF sigue pendiente: ${message}`
-        : message;
+        ? `El mes de ${monthLabel(monthToStart).toLowerCase()} quedó iniciado con la hipoteca aplicada.${fallbackNotice} TC/UF online sigue pendiente: ${message}`
+        : `${fallbackNotice.trim()} ${message}`.trim();
       markStartMonthStepFailed(monthToStart, 'fx', visibleMessage, { explicitMonthStarted });
       setCarryMessage(`Error al actualizar TC/UF: ${message}`);
       await syncWealthNow();

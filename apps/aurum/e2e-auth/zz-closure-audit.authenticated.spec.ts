@@ -484,13 +484,22 @@ for (const viewport of [
     let started: Awaited<ReturnType<typeof monthStartState>>;
 
     if (viewport.rejectFx) {
-      // The emulator deliberately has no live FX HTTP request. Reject just the
-      // FX persistence boundary to prove that it cannot block the mortgage start.
+      // The emulator provides deterministic live rates. Reject only those so
+      // the previous close can be persisted as the fallback.
       await page.evaluate(() => {
         const original = Storage.prototype.setItem;
         (window as Window & { restoreAuditFx?: () => void }).restoreAuditFx = () => { Storage.prototype.setItem = original; };
         Storage.prototype.setItem = function (key: string, value: string) {
-          if (this === window.localStorage && key === 'wealth_fx_v1') throw new Error('Fallo ficticio al guardar TC/UF');
+          if (this === window.localStorage && key === 'wealth_fx_v1') {
+            const attemptedRates = JSON.parse(value);
+            if (
+              attemptedRates.usdClp === 950 &&
+              attemptedRates.eurClp === 1030 &&
+              attemptedRates.ufClp === 38000
+            ) {
+              throw new Error('Fallo ficticio al guardar TC/UF');
+            }
+          }
           return original.call(this, key, value);
         };
       });
@@ -504,7 +513,7 @@ for (const viewport of [
       await expect(page.getByText(/mes de agosto de 2026 quedó iniciado con la hipoteca aplicada.*Fallo ficticio al guardar TC\/UF/i)).toBeVisible();
       const failed = await monthStartState(page);
       expect(nativeAmounts(failed.records, '2026-08')).toEqual(expected);
-      expect(failed.fx).toEqual(beforeAccept.fx);
+      expect(failed.fx).toEqual(closed.fxRates);
       expect(failed.checkpoint.failedStep).toBe('fx');
       expect(failed.checkpoint.explicitMonthStarted).toBe(true);
       expect(failed.checkpoint.actions.carry).toBe('applied');
@@ -518,6 +527,7 @@ for (const viewport of [
       }
       await expect.poll(async () => nativeAmounts((await ref.get()).get('records'), '2026-08')).toEqual(expected);
       const afterFailedStart = (await ref.get()).data()!;
+      expect(afterFailedStart.fx).toEqual(closed.fxRates);
       expect(afterFailedStart.closures.find((closure: { monthKey: string }) => closure.monthKey === '2026-07')).toEqual(closed);
       expect(afterFailedStart.closures.some((closure: { monthKey: string }) => closure.monthKey === '2026-08')).toBe(false);
 
