@@ -31,8 +31,7 @@ export const FinancialPerformanceResultView: React.FC<{
     otherClp: number | null;
   };
 }> = ({ result, confirmation, hasSavedConfirmation, isLoading, storageReady, storageError, closures, includeRiskCapital, economicBridge }) => {
-  const canPublish = storageReady && !isLoading &&
-    (result.quality === 'RECONSTRUIDO' || result.quality === 'EXACTO') && result.returnPct !== null;
+  const canPublish = storageReady && !isLoading && result.flowListComplete && result.returnPct !== null;
   const method = result.returnMethod === 'simple' ? 'Método simple' : result.returnMethod === 'simple_adjusted' ? 'Método simple ajustado' : result.returnMethod === 'modified_dietz' ? 'Modified Dietz' : 'Método pendiente';
   const flowCount = confirmation?.flows.length ?? 0;
   const automaticConsumptionWithdrawalClp = result.automaticConsumptionWithdrawalClp;
@@ -66,7 +65,16 @@ export const FinancialPerformanceResultView: React.FC<{
     { label: 'Efecto tipo de cambio · USD', value: result.usdFxAttributable, id: 'usd', note: coverage(result.usdFxCoverageStatus, result.usdFxCoveragePct) },
     { label: 'Efecto tipo de cambio · EUR', value: result.eurFxAttributable, id: 'eur', note: coverage(result.eurFxCoverageStatus, result.eurFxCoveragePct) },
     { label: 'Indexación UF', value: result.ufAttributable, id: 'uf', note: coverage(result.ufCoverageStatus, result.ufCoveragePct) },
-    { label: 'No explicado', value: result.unexplainedResidual, id: 'residual', note: result.attributionComplete ? 'Residuo dentro de la tolerancia de cálculo' : 'Incluye las causas pendientes; no se atribuye a instrumentos' },
+    {
+      label: 'No explicado',
+      value: result.unexplainedResidual,
+      id: 'residual',
+      note: result.attributionComplete
+        ? 'Residuo dentro de la tolerancia de cálculo'
+        : result.unexplainedResidual !== null && result.portfolioResult !== null && Math.abs(result.portfolioResult) > 0.01
+          ? `Residual visible · ${(Math.abs(result.unexplainedResidual) / Math.abs(result.portfolioResult) * 100).toLocaleString('es-CL', { maximumFractionDigits: 2 })}% del resultado generado`
+          : 'Incluye las causas pendientes; no se atribuye a instrumentos',
+    },
   ];
   const auditValues = [
     ['Saldo inicial', result.initialValue], ['Saldo final', result.finalValue], ['Cambio observado', result.observedChange],
@@ -111,9 +119,9 @@ export const FinancialPerformanceResultView: React.FC<{
           : `Rentabilidad en CLP ajustada por los aportes y retiros${hasSavedConfirmation ? ' confirmados' : ' ingresados en el borrador'}.`
         : 'Rentabilidad total observada en CLP, incluidos tipo de cambio e indexación cuando existe exposición.'}</p>}
     </div>
-    {canPublish && result.returnWithoutFxPct !== null && <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
-      <div className="rounded-lg border border-white/10 p-3"><span>Rentabilidad sin efecto cambiario</span><strong className="mt-1 block text-base text-white">{pct(result.returnWithoutFxPct)}</strong><span>Resultado de inversiones e indexación UF.</span></div>
-      <div className="rounded-lg border border-white/10 p-3"><span>Contribución del tipo de cambio</span><strong className="mt-1 block text-base text-white">{result.fxContributionPct === null ? '—' : `${(result.fxContributionPct * 100).toLocaleString('es-CL', { maximumFractionDigits: 2 })} pp`}</strong><span>Sobre el saldo inicial; suma a la rentabilidad sin efecto cambiario.</span></div>
+    {canPublish && <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
+      <div className="rounded-lg border border-white/10 p-3"><span>Rentabilidad sin efecto cambiario</span><strong className="mt-1 block text-base text-white">{pct(result.returnWithoutFxPct)}</strong><span>{result.returnWithoutFxPct === null ? 'No calculable con los datos guardados del período.' : 'Rentabilidad total menos el efecto FX calculado con los saldos por moneda.'}</span></div>
+      <div className="rounded-lg border border-white/10 p-3"><span>Contribución del tipo de cambio</span><strong className="mt-1 block text-base text-white">{result.fxContributionPct === null ? 'Pendiente' : `${(result.fxContributionPct * 100).toLocaleString('es-CL', { maximumFractionDigits: 2 })} pp`}</strong><span>{result.fxContributionPct === null ? 'Falta una tasa guardada necesaria para el cálculo.' : 'USD y EUR se calculan de forma agregada; no depende de identificar el producto de origen.'}</span></div>
     </div>}
     <section className="mt-5" aria-label="Explicación del cambio">
       <h4 className="text-sm font-semibold text-white">Por qué cambió</h4>
@@ -148,7 +156,7 @@ export const FinancialPerformanceResultView: React.FC<{
     </section>}
     <details className="mt-5 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-slate-300">
       <summary className="min-h-6 cursor-pointer font-semibold text-white">Ver cómo se concilia el cálculo</summary>
-      <p className="mt-2 leading-relaxed">Variación = flujos conocidos + resultado de inversiones + USD + EUR + UF + no explicado. Los componentes pendientes siguen dentro de lo no explicado.</p>
+      <p className="mt-2 leading-relaxed">Resultado generado = variación observada − flujos netos. La atribución usa los saldos agregados por moneda de ambos cierres: inversiones a tipo de cambio constante + USD + EUR + UF + residual. El residual nunca se oculta.</p>
       <dl className="mt-2 space-y-2">{auditValues.map(([label, value]) => <div key={label} className="flex flex-wrap justify-between gap-2"><dt>{label}</dt><dd className="break-all font-semibold text-white">{exactMoney(value)}</dd></div>)}</dl>
       <p className="mt-3">{qualityReason}</p>
       <p className="mt-2">{result.attributionComplete ? 'Todas las posiciones conciliadas; tolerancia de $0,01 CLP. No se utiliza el redondeo de la pantalla como prueba de cobertura.' : 'Desglose por causa pendiente o parcial; un residuo redondeado a cero no confirma la cobertura.'}</p>
