@@ -82,6 +82,8 @@ export type HistoricalGastappBackfillManifestRow = {
 export type HistoricalGastappBackfillPreview = {
   schemaVersion: typeof HISTORICAL_GASTAPP_BACKFILL_PREVIEW_SCHEMA;
   reconstructionAt: string;
+  /** Deterministic fingerprint of every persisted closure, independent of root metadata and array order. */
+  closureSourceFingerprint: string;
   totalClosures: number;
   baseMonth: string | null;
   lastOfficialMonth: string | null;
@@ -234,6 +236,33 @@ export const sha256Fingerprint = async (value: unknown): Promise<string> => {
   const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
   const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
   return `sha256:${hex}`;
+};
+
+/** Fingerprints the complete persisted closure objects, sorted by monthKey/id and stable content. */
+export const fingerprintHistoricalClosureSource = async (closures: readonly unknown[]): Promise<string> => {
+  const compare = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0;
+  const sorted = closures.map((closure) => {
+    const row = closure && typeof closure === 'object' && !Array.isArray(closure)
+      ? closure as Record<string, unknown>
+      : {};
+    return {
+      closure,
+      monthKey: typeof row.monthKey === 'string' ? row.monthKey : '',
+      id: typeof row.id === 'string' ? row.id : '',
+      stableContent: stableStringify(closure),
+    };
+  }).sort((left, right) => compare(left.monthKey, right.monthKey) ||
+    compare(left.id, right.id) || compare(left.stableContent, right.stableContent));
+  return sha256Fingerprint(sorted.map(({ closure }) => closure));
+};
+
+export const fingerprintHistoricalClosuresInWealthDocument = async (
+  wealthDocument: Record<string, unknown> | null | undefined,
+): Promise<string> => {
+  if (!wealthDocument || !Array.isArray(wealthDocument.closures)) {
+    throw new Error('El documento no contiene un array de cierres para verificar.');
+  }
+  return fingerprintHistoricalClosureSource(wealthDocument.closures);
 };
 
 const getCandidateBlocker = (
@@ -538,6 +567,11 @@ export const buildHistoricalGastappBackfillPreview = async (
   return {
     schemaVersion: HISTORICAL_GASTAPP_BACKFILL_PREVIEW_SCHEMA,
     reconstructionAt: at,
+    closureSourceFingerprint: await fingerprintHistoricalClosureSource(
+      input.wealthDocument && Array.isArray(input.wealthDocument.closures)
+        ? input.wealthDocument.closures
+        : input.closures,
+    ),
     totalClosures: closures.length,
     baseMonth,
     lastOfficialMonth,
