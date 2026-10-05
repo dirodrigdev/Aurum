@@ -20,7 +20,17 @@ export const FinancialPerformanceResultView: React.FC<{
   storageError: boolean;
   closures: WealthMonthlyClosure[];
   includeRiskCapital: boolean;
-}> = ({ result, confirmation, hasSavedConfirmation, isLoading, storageReady, storageError, closures, includeRiskCapital }) => {
+  economicBridge: {
+    economicReturnClp: number | null;
+    patrimonyChangeClp: number | null;
+    consumptionClp: number | null;
+    investmentGeneratedClp: number | null;
+    realEstateNetChangeClp: number | null;
+    bankChangeClp: number | null;
+    nonMortgageDebtImpactClp: number | null;
+    otherClp: number | null;
+  };
+}> = ({ result, confirmation, hasSavedConfirmation, isLoading, storageReady, storageError, closures, includeRiskCapital, economicBridge }) => {
   const canPublish = storageReady && !isLoading &&
     (result.quality === 'RECONSTRUIDO' || result.quality === 'EXACTO') && result.returnPct !== null;
   const method = result.returnMethod === 'simple' ? 'Método simple' : result.returnMethod === 'simple_adjusted' ? 'Método simple ajustado' : result.returnMethod === 'modified_dietz' ? 'Modified Dietz' : 'Método pendiente';
@@ -115,6 +125,27 @@ export const FinancialPerformanceResultView: React.FC<{
         </div>)}
       </dl>
     </section>
+    {economicBridge.economicReturnClp !== null && <section className="mt-5 rounded-xl border border-emerald-200/20 bg-emerald-200/5 p-4" aria-label="Cuadratura con retorno económico">
+      <div className="text-xs font-semibold uppercase tracking-wide text-emerald-100">Cuadratura con Retorno Económico</div>
+      <div className="mt-1 text-2xl font-semibold text-white">{money(economicBridge.economicReturnClp)}</div>
+      <p className="mt-1 text-xs text-slate-300">Total generado = aumento patrimonial + consumo oficial de GastApp.</p>
+      <dl className="mt-3 divide-y divide-white/10 rounded-lg border border-white/10 px-3">
+        {[
+          ['Inversiones · generado antes del consumo', economicBridge.investmentGeneratedClp],
+          ['Bienes raíces neto', economicBridge.realEstateNetChangeClp],
+          ['Bancos', economicBridge.bankChangeClp],
+          ['Efecto deuda no hipotecaria', economicBridge.nonMortgageDebtImpactClp],
+          ['Otros / no explicado', economicBridge.otherClp],
+        ].map(([label, value]) => <div key={String(label)} className="flex items-center justify-between gap-3 py-2">
+          <dt>{label}</dt><dd className="font-semibold text-white">{money(value as number | null)}</dd>
+        </div>)}
+      </dl>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <div className="rounded-lg border border-white/10 p-3"><div className="text-[11px] text-slate-300">Consumo GastApp</div><div className="mt-1 font-semibold text-white">{economicBridge.consumptionClp === null ? 'Pendiente' : money(-economicBridge.consumptionClp)}</div></div>
+        <div className="rounded-lg border border-white/10 p-3"><div className="text-[11px] text-slate-300">Aumento patrimonial retenido</div><div className="mt-1 font-semibold text-white">{money(economicBridge.patrimonyChangeClp)}</div></div>
+      </div>
+      <p className="mt-2 text-[11px] text-slate-300">La suma de las fuentes debe terminar exactamente en el Retorno Económico; cualquier diferencia queda visible en “Otros / no explicado”.</p>
+    </section>}
     <details className="mt-5 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-slate-300">
       <summary className="min-h-6 cursor-pointer font-semibold text-white">Ver cómo se concilia el cálculo</summary>
       <p className="mt-2 leading-relaxed">Variación = flujos conocidos + resultado de inversiones + USD + EUR + UF + no explicado. Los componentes pendientes siguen dentro de lo no explicado.</p>
