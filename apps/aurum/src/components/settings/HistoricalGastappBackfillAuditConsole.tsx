@@ -41,7 +41,7 @@ export const HistoricalGastappBackfillAuditConsole: React.FC<{ authEmail: string
     setMessage('Ejecutando controles, backup y transacción sidecar…');
     try {
       const outcome = await executeHistoricalGastappSidecarBackfill();
-      setMessage(`Completado: ${outcome.created} snapshots; backup ${outcome.backupId || 'ya existente'}; raíz PRE/POST ${outcome.rootPreFingerprint === outcome.rootPostFingerprint ? 'idéntica' : 'DIFERENTE'}.`);
+      setMessage(`Completado: ${outcome.created} snapshots; ${outcome.backupId ? `backup ${outcome.backupId}` : 'sin backup nuevo (idempotencia)'}; cierres PRE/POST ${outcome.rootPreFingerprint === outcome.rootPostFingerprint ? 'idénticos' : 'DIFERENTES'}.`);
       setResult(await runHistoricalGastappBackfillAudit());
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Backfill detenido.');
@@ -59,7 +59,7 @@ export const HistoricalGastappBackfillAuditConsole: React.FC<{ authEmail: string
             Lee desde servidor los cierres de Aurum, el sidecar y el contrato mensual oficial Canonical V2. La auditoría no escribe datos.
           </p>
         </div>
-        <Button variant="outline" disabled={busy} onClick={() => void runAudit()}>
+        <Button className="h-auto min-h-10" variant="outline" disabled={busy} onClick={() => void runAudit()}>
           {busy ? 'Leyendo y simulando…' : 'Generar auditoría read-only'}
         </Button>
       </div>
@@ -118,9 +118,9 @@ export const HistoricalGastappBackfillAuditConsole: React.FC<{ authEmail: string
             <p className="rounded-lg border border-slate-200 bg-white p-2 text-xs font-medium text-slate-700">
               Proyección en memoria. Fingerprints financieros PRE/POST verificados por cierre. El documento raíz permanece intacto.
             </p>
-            {preview.snapshotsToComplete === 38 && preview.blockers === 0 && size.status === 'within_limit' && (
+            {preview.blockers === 0 && size.status === 'within_limit' && (
               <Button variant="outline" disabled={busy} onClick={() => void executeBackfill()}>
-                {busy ? 'Verificando…' : 'Ejecutar backfill sidecar certificado'}
+                {busy ? 'Verificando…' : preview.snapshotsToComplete === 0 ? 'Verificar idempotencia (0 cambios)' : 'Ejecutar backfill sidecar certificado'}
               </Button>
             )}
           </div>
