@@ -1,5 +1,12 @@
 const FETCH_TIMEOUT_MS = 5000;
 const BCCH_SERIES_ENDPOINT = 'https://si3.bcentral.cl/SieteRestWS/SieteRestWS.ashx';
+const CHILE_TIME_ZONE = 'America/Santiago';
+const safeDiagnosticMessage = (error) =>
+  String(error?.message || error || 'error')
+    .replace(/([?&](?:user|pass|password|token|api[_-]?key)=)[^&\s]*/gi, '$1[redacted]')
+    .replace(/(authorization\s*:\s*bearer\s+)[^\s,;]+/gi, '$1[redacted]')
+    .slice(0, 500);
+
 const setSharedHeaders = (res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -64,41 +71,75 @@ const formatYmd = (date) => {
   return `${y}-${m}-${d}`;
 };
 
-const stripHtml = (html) =>
-  String(html || '')
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+const canonicalChileTodayYmd = (now = new Date()) => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: CHILE_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+};
 
-const findUfCandidate = (text) => {
-  const cleaned = stripHtml(text);
-  if (!cleaned) return Number.NaN;
+const extractSiiMonthSection = (html, monthNumber) => {
+  const monthNames = [
+    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+  ];
+  const name = monthNames[monthNumber - 1];
+  if (!name) throw new Error(`Mes inválido para buscar UF en SII (${monthNumber})`);
+  const lower = String(html || '').toLowerCase();
+  const idMarkers = [`id='mes_${name}'`, `id="mes_${name}"`];
+  const idStart = idMarkers.map((marker) => lower.indexOf(marker)).find((index) => index >= 0);
+  if (idStart !== undefined) {
+    const nextContainers = ["<div class='meses'", '<div class="meses"']
+      .map((marker) => lower.indexOf(marker, idStart + 1))
+      .filter((index) => index > idStart);
+    return String(html).slice(idStart, nextContainers.length ? Math.min(...nextContainers) : undefined);
+  }
 
-  const markerRegex = /(UF|UNIDAD DE FOMENTO)[^0-9]{0,40}(\d{1,3}(?:[.\s]\d{3})+(?:,\d+)?|\d{4,6}(?:,\d+)?)/gi;
-  const markerCandidates = [];
-  let markerMatch = markerRegex.exec(cleaned);
-  while (markerMatch) {
-    const parsed = parseFlexibleNumeric(markerMatch[2]);
-    if (Number.isFinite(parsed) && parsed >= 20000 && parsed <= 60000) {
-      markerCandidates.push(parsed);
+  const headingMarkers = [`<h2>${name}</h2>`, `<h3>${name}</h3>`];
+  const heading = headingMarkers
+    .map((marker) => ({ marker, index: lower.indexOf(marker) }))
+    .find((item) => item.index >= 0);
+  if (!heading) throw new Error(`No encontré ${name} en la fuente oficial SII`);
+  const tag = heading.marker.slice(0, 3);
+  const nextHeading = lower.indexOf(tag, heading.index + heading.marker.length);
+  return String(html).slice(heading.index, nextHeading > heading.index ? nextHeading : undefined);
+};
+
+const extractSiiDayValues = (section) => {
+  const values = [];
+  const pattern = /<th[^>]*>\s*<strong>\s*(\d{1,2})\s*<\/strong>\s*<\/th>\s*<td[^>]*>\s*([^<]*)\s*<\/td>/gi;
+  let match = pattern.exec(section);
+  while (match) {
+    const day = Number(match[1]);
+    const value = parseFlexibleNumeric(match[2]);
+    if (Number.isInteger(day) && day >= 1 && day <= 31 && Number.isFinite(value) && value > 0) {
+      values.push({ day, value });
     }
-    markerMatch = markerRegex.exec(cleaned);
+    match = pattern.exec(section);
   }
-  if (markerCandidates.length) {
-    return markerCandidates.sort((a, b) => Math.abs(a - 39000) - Math.abs(b - 39000))[0];
-  }
+  return values.sort((left, right) => left.day - right.day);
+};
 
-  const genericRegex = /\d{1,3}(?:[.\s]\d{3})+(?:,\d+)?|\d{4,6}(?:,\d+)?/g;
-  const genericMatches = cleaned.match(genericRegex) || [];
-  const genericCandidates = genericMatches
-    .map((candidate) => parseFlexibleNumeric(candidate))
-    .filter((n) => Number.isFinite(n) && n >= 20000 && n <= 60000);
+const fetchUfFromSii = async (now = new Date()) => {
+  const [yearText, monthText, dayText] = canonicalChileTodayYmd(now).split('-');
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const url = `https://www.sii.cl/valores_y_fechas/uf/uf${year}.htm`;
+  const html = await withTimeout(url, 'text', 8000);
+  const values = extractSiiDayValues(extractSiiMonthSection(html, month));
+  const selected = [...values].reverse().find((item) => item.day <= day);
+  if (!selected) throw new Error(`UF sin valor oficial en SII hasta ${yearText}-${monthText}-${dayText}`);
 
-  if (!genericCandidates.length) return Number.NaN;
-  return genericCandidates.sort((a, b) => Math.abs(a - 39000) - Math.abs(b - 39000))[0];
+  return {
+    uf: clampRate(selected.value, 20000, 60000, 'UF/CLP'),
+    ufDate: `${yearText}-${monthText}-${String(selected.day).padStart(2, '0')}`,
+    source: `sii.cl:${yearText}-${monthText}-${String(selected.day).padStart(2, '0')}`,
+  };
 };
 
 const fetchUsdEurFromFrankfurter = async () => {
@@ -262,39 +303,29 @@ const resolveUsdEur = async () => {
       }
       return result;
     } catch (error) {
-      errors.push(`${strategy.name}: ${String(error?.message || error || 'error')}`);
+      const detail = safeDiagnosticMessage(error);
+      errors.push(`${strategy.name}: ${detail}`);
+      console.warn('[api/fx/live] USD/EUR source strategy failed', {
+        strategy: strategy.name,
+        detail,
+      });
     }
   }
 
   throw new Error(`USD/EUR sin respuesta válida (${errors.join(' | ')})`);
 };
 
-const fetchUfFromWebPage = async (url) => {
-  const html = await withTimeout(url, 'text');
-  const uf = findUfCandidate(html);
-  if (!Number.isFinite(uf)) {
-    throw new Error('UF no encontrada en HTML');
-  }
-  return {
-    uf,
-    ufDate: '',
-    source: `scraping:${url}`,
-  };
-};
-
 const resolveUf = async () => {
-  const strategies = [() => fetchUfFromWebPage('https://www.valoruf.cl')];
-  const errors = [];
-
-  for (const strategy of strategies) {
-    try {
-      return await strategy();
-    } catch (error) {
-      errors.push(String(error?.message || error || 'error'));
-    }
+  try {
+    return await fetchUfFromSii();
+  } catch (error) {
+    const detail = safeDiagnosticMessage(error);
+    console.warn('[api/fx/live] UF source failed', {
+      source: 'sii.cl',
+      detail,
+    });
+    throw new Error(`UF sin respuesta válida (sii.cl: ${detail})`);
   }
-
-  throw new Error(`UF sin respuesta válida (${errors.join(' | ')})`);
 };
 
 export default async function handler(req, res) {
@@ -324,10 +355,16 @@ export default async function handler(req, res) {
       fetchedAt: new Date().toISOString(),
       ufDate: ufData.ufDate || '',
     });
-  } catch {
+  } catch (error) {
+    console.error('[api/fx/live] request failed', {
+      requestId: String(req.headers?.['x-vercel-id'] || '').slice(0, 120),
+      detail: safeDiagnosticMessage(error),
+    });
     return res.status(502).json({
       ok: false,
       error: 'No pude obtener TC/UF online en backend.',
     });
   }
 }
+
+export { canonicalChileTodayYmd, extractSiiDayValues, extractSiiMonthSection, fetchUfFromSii };
