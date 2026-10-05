@@ -25,11 +25,20 @@ export const FinancialPerformanceResultView: React.FC<{
     (result.quality === 'RECONSTRUIDO' || result.quality === 'EXACTO') && result.returnPct !== null;
   const method = result.returnMethod === 'simple' ? 'Método simple' : result.returnMethod === 'simple_adjusted' ? 'Método simple ajustado' : result.returnMethod === 'modified_dietz' ? 'Modified Dietz' : 'Método pendiente';
   const flowCount = confirmation?.flows.length ?? 0;
-  const flowLabel = result.flowListComplete ? `Lista completa${hasSavedConfirmation ? '' : ' · supuesto'} · ${flowCount} ${flowCount === 1 ? 'movimiento' : 'movimientos'}` : 'Lista pendiente';
+  const automaticConsumptionWithdrawalClp = result.automaticConsumptionWithdrawalClp;
+  const hasAutomaticConsumption = automaticConsumptionWithdrawalClp !== null && automaticConsumptionWithdrawalClp > 0;
+  const hasAnyFlow = flowCount > 0 || hasAutomaticConsumption;
+  const flowLabel = result.flowListComplete
+    ? hasAutomaticConsumption
+      ? `GastApp automático · ${flowCount} ${flowCount === 1 ? 'otro movimiento' : 'otros movimientos'}${hasSavedConfirmation ? '' : ' · supuesto'}`
+      : `Lista completa${hasSavedConfirmation ? '' : ' · supuesto'} · ${flowCount} ${flowCount === 1 ? 'movimiento' : 'movimientos'}`
+    : automaticConsumptionWithdrawalClp === null ? 'GastApp pendiente' : 'Lista pendiente';
   const explanation = result.attributionComplete
-    ? hasSavedConfirmation
-      ? 'Cambio completamente explicado: resultado de inversiones, tipo de cambio e indexación UF.'
-      : 'Cambio completamente explicado bajo los supuestos iniciales de esta pantalla.'
+    ? hasAutomaticConsumption
+      ? 'Resultado generado completamente explicado: se neutraliza el retiro de consumo de GastApp y se atribuye el retorno entre inversiones, tipo de cambio e indexación UF.'
+      : hasSavedConfirmation
+        ? 'Cambio completamente explicado: resultado de inversiones, tipo de cambio e indexación UF.'
+        : 'Cambio completamente explicado bajo los supuestos iniciales de esta pantalla.'
     : result.flowListComplete && flowCount > 0
       ? hasSavedConfirmation
         ? 'La rentabilidad usa los flujos confirmados. Sin movimientos de capital por posición, el resultado permanece sin desglose por causa.'
@@ -51,7 +60,9 @@ export const FinancialPerformanceResultView: React.FC<{
   ];
   const auditValues = [
     ['Saldo inicial', result.initialValue], ['Saldo final', result.finalValue], ['Cambio observado', result.observedChange],
-    ['Flujos conocidos', result.confirmedFlowsNetClp], ...causes.map(cause => [cause.label, cause.value]),
+    ['Flujos conocidos', result.confirmedFlowsNetClp],
+    ...(hasAutomaticConsumption ? [['Retiro automático GastApp', -Number(automaticConsumptionWithdrawalClp)]] as Array<[string, number | null]> : []),
+    ...causes.map(cause => [cause.label, cause.value] as [string, number | null]),
   ] as Array<[string, number | null]>;
 
   return <>
@@ -77,13 +88,17 @@ export const FinancialPerformanceResultView: React.FC<{
       </div>
       <p className="mt-2 text-xs text-slate-300">{canPublish
         ? hasSavedConfirmation
-          ? `${method} · resultado de cartera ${money(result.portfolioResult)}`
-          : flowCount === 0
-            ? `Supuesto inicial sin guardar · ${method} · la lista vacía se interpreta como cero aportes/retiros.`
-            : `Borrador sin guardar · ${method} · se usan los ${flowCount} aportes/retiros ingresados.`
+          ? `${method} · resultado generado antes del consumo ${money(result.portfolioResult)}`
+          : hasAutomaticConsumption
+            ? `Supuesto inicial sin guardar · ${method} · GastApp se incorpora como retiro automático del portafolio.`
+            : flowCount === 0
+              ? `Supuesto inicial sin guardar · ${method} · la lista vacía se interpreta como cero aportes/retiros.`
+              : `Borrador sin guardar · ${method} · se usan los ${flowCount} aportes/retiros ingresados.`
         : storageError ? 'No pudimos comprobar la confirmación guardada.' : 'Se muestra la variación de saldos, no una rentabilidad confirmada.'}</p>
-      {canPublish && <p className="mt-1 text-xs text-slate-300">{flowCount > 0
-        ? `Rentabilidad en CLP ajustada por los aportes y retiros${hasSavedConfirmation ? ' confirmados' : ' ingresados en el borrador'}.`
+      {canPublish && <p className="mt-1 text-xs text-slate-300">{hasAnyFlow
+        ? hasAutomaticConsumption
+          ? 'Rentabilidad en CLP antes del consumo: el gasto oficial de GastApp se trata como retiro automático del portafolio.'
+          : `Rentabilidad en CLP ajustada por los aportes y retiros${hasSavedConfirmation ? ' confirmados' : ' ingresados en el borrador'}.`
         : 'Rentabilidad total observada en CLP, incluidos tipo de cambio e indexación cuando existe exposición.'}</p>}
     </div>
     {canPublish && result.returnWithoutFxPct !== null && <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
