@@ -1,5 +1,11 @@
 const FETCH_TIMEOUT_MS = 5000;
 const BCCH_SERIES_ENDPOINT = 'https://si3.bcentral.cl/SieteRestWS/SieteRestWS.ashx';
+const safeDiagnosticMessage = (error) =>
+  String(error?.message || error || 'error')
+    .replace(/([?&](?:user|pass|password|token|api[_-]?key)=)[^&\s]*/gi, '$1[redacted]')
+    .replace(/(authorization\s*:\s*bearer\s+)[^\s,;]+/gi, '$1[redacted]')
+    .slice(0, 500);
+
 const setSharedHeaders = (res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -262,7 +268,12 @@ const resolveUsdEur = async () => {
       }
       return result;
     } catch (error) {
-      errors.push(`${strategy.name}: ${String(error?.message || error || 'error')}`);
+      const detail = safeDiagnosticMessage(error);
+      errors.push(`${strategy.name}: ${detail}`);
+      console.warn('[api/fx/live] USD/EUR source strategy failed', {
+        strategy: strategy.name,
+        detail,
+      });
     }
   }
 
@@ -290,7 +301,12 @@ const resolveUf = async () => {
     try {
       return await strategy();
     } catch (error) {
-      errors.push(String(error?.message || error || 'error'));
+      const detail = safeDiagnosticMessage(error);
+      errors.push(detail);
+      console.warn('[api/fx/live] UF source failed', {
+        source: 'valoruf.cl',
+        detail,
+      });
     }
   }
 
@@ -324,7 +340,11 @@ export default async function handler(req, res) {
       fetchedAt: new Date().toISOString(),
       ufDate: ufData.ufDate || '',
     });
-  } catch {
+  } catch (error) {
+    console.error('[api/fx/live] request failed', {
+      requestId: String(req.headers?.['x-vercel-id'] || '').slice(0, 120),
+      detail: safeDiagnosticMessage(error),
+    });
     return res.status(502).json({
       ok: false,
       error: 'No pude obtener TC/UF online en backend.',
