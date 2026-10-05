@@ -551,182 +551,176 @@ export const reconcileFinancialPerformanceForPeriod = (
   let eurFxAttributable: number | null = null;
   let fxAttributable: number | null = null;
   let ufAttributable: number | null = null;
-  let fxCoveredClp = 0;
-  let fxTotalClp = 0;
-  let usdCoveredClp = 0;
-  let eurCoveredClp = 0;
-  let attributedPositions = 0;
-  let usdTotalClp = 0;
-  let eurTotalClp = 0;
-  let ufCoveredClp = 0;
-  let ufTotalClp = 0;
-  const allKeys = new Set([...start.positions.keys(), ...end.positions.keys()]);
-  for (const key of allKeys) {
-    const initial = start.positions.get(key);
-    const final = end.positions.get(key);
-    const currency = initial?.currency || final?.currency;
-    if (!currency) continue;
-    const averageExposure = (Math.abs(initial?.clpValue || 0) + Math.abs(final?.clpValue || 0)) / 2;
-    if (currency === 'USD') {
-      fxTotalClp += averageExposure;
-      usdTotalClp += averageExposure;
-    }
-    if (currency === 'EUR') {
-      fxTotalClp += averageExposure;
-      eurTotalClp += averageExposure;
-    }
-    if (currency === 'UF') ufTotalClp += averageExposure;
+
+  type CurrencyAggregate = { startNative: number; endNative: number; startClp: number; endClp: number };
+  const currencyAggregates: Record<WealthCurrency, CurrencyAggregate> = {
+    CLP: { startNative: 0, endNative: 0, startClp: 0, endClp: 0 },
+    USD: { startNative: 0, endNative: 0, startClp: 0, endClp: 0 },
+    EUR: { startNative: 0, endNative: 0, startClp: 0, endClp: 0 },
+    UF: { startNative: 0, endNative: 0, startClp: 0, endClp: 0 },
+  };
+
+  for (const position of start.positions.values()) {
+    const aggregate = currencyAggregates[position.currency];
+    aggregate.startNative += position.nativeValue;
+    aggregate.startClp += position.clpValue;
+  }
+  for (const position of end.positions.values()) {
+    const aggregate = currencyAggregates[position.currency];
+    aggregate.endNative += position.nativeValue;
+    aggregate.endClp += position.clpValue;
   }
 
-  // GastApp is an automatic month-end withdrawal from USD-funded investments.
-  // It must not block attribution; only additional/manual capital flows do.
-  const canAttributePositions =
-    flowListComplete &&
-    manualFlows.length === 0 &&
-    input.confirmation?.positionMovementCompleteness === 'no_unrecorded_movements';
+  const hasCurrencyExposure = (currency: WealthCurrency) => {
+    const aggregate = currencyAggregates[currency];
+    return Math.abs(aggregate.startClp) > 0.01 || Math.abs(aggregate.endClp) > 0.01;
+  };
+  const validStoredRate = (closure: WealthMonthlyClosure, currency: Exclude<WealthCurrency, 'CLP'>) => {
+    const rate = Number(closure.fxRates?.[currencyRateField[currency]]);
+    return Number.isFinite(rate) && rate > 0 ? rate : null;
+  };
 
-  if (canAttributePositions) {
-    let investmentTotal = 0;
-    let fxTotal = 0;
+  // Aggregate-by-currency attribution is deliberately independent of product IDs.
+  // Transfers between two accounts in the same currency cancel at aggregate level,
+  // so a renamed/moved product does not make FX disappear from the month.
+  const canEstimateAttribution = flowListComplete && manualFlows.length === 0;
+  if (canEstimateAttribution) {
+    let investmentTotal = currencyAggregates.CLP.endNative - currencyAggregates.CLP.startNative;
     let usdFxTotal = 0;
     let eurFxTotal = 0;
     let ufTotal = 0;
-    let hasInvestmentCoverage = false;
-    let hasFxCoverage = false;
-    let hasUsdFxCoverage = false;
-    let hasEurFxCoverage = false;
-    let hasUfCoverage = false;
-    for (const key of allKeys) {
-      const initial = start.positions.get(key);
-      const final = end.positions.get(key);
-      const currency = initial?.currency || final?.currency;
-      if (!currency) continue;
+    let fxTotal = 0;
+    let attributionAvailable = true;
 
-      if (currency === 'USD' || currency === 'EUR') {
-        const averageExposure = (Math.abs(initial?.clpValue || 0) + Math.abs(final?.clpValue || 0)) / 2;
-        if (!initial || !final || initial.currency !== currency || final.currency !== currency) continue;
-        const startRate = Number(start.closure.fxRates?.[currencyRateField[currency]]);
-        const endRate = Number(end.closure.fxRates?.[currencyRateField[currency]]);
-        if (
-          !hasReliableRateProvenance(start.closure, currency) ||
-          !hasReliableRateProvenance(end.closure, currency) ||
-          !Number.isFinite(startRate) ||
-          !Number.isFinite(endRate)
-        ) continue;
-        investmentTotal += (final.nativeValue - initial.nativeValue) * startRate;
-        const fxContribution = final.nativeValue * (endRate - startRate);
-        fxTotal += fxContribution;
-        if (currency === 'USD') {
-          usdFxTotal += fxContribution;
-          hasUsdFxCoverage = true;
-          usdCoveredClp += averageExposure;
-        } else {
-          eurFxTotal += fxContribution;
-          hasEurFxCoverage = true;
-          eurCoveredClp += averageExposure;
-        }
-        fxCoveredClp += averageExposure;
-        attributedPositions += 1;
-        hasInvestmentCoverage = true;
-        hasFxCoverage = true;
-      } else if (currency === 'UF') {
-        const averageExposure = (Math.abs(initial?.clpValue || 0) + Math.abs(final?.clpValue || 0)) / 2;
-        if (!initial || !final || initial.currency !== 'UF' || final.currency !== 'UF') continue;
-        const startRate = Number(start.closure.fxRates?.ufClp);
-        const endRate = Number(end.closure.fxRates?.ufClp);
-        if (
-          !hasReliableRateProvenance(start.closure, 'UF') ||
-          !hasReliableRateProvenance(end.closure, 'UF') ||
-          !Number.isFinite(startRate) ||
-          !Number.isFinite(endRate)
-        ) continue;
-        investmentTotal += (final.nativeValue - initial.nativeValue) * startRate;
-        ufTotal += final.nativeValue * (endRate - startRate);
-        ufCoveredClp += averageExposure;
-        attributedPositions += 1;
-        hasInvestmentCoverage = true;
-        hasUfCoverage = true;
-      } else if (initial && final && initial.currency === 'CLP' && final.currency === 'CLP') {
-        investmentTotal += final.nativeValue - initial.nativeValue;
-        attributedPositions += 1;
-        hasInvestmentCoverage = true;
+    const startUsdRate = validStoredRate(start.closure, 'USD');
+    const endUsdRate = validStoredRate(end.closure, 'USD');
+    if (hasCurrencyExposure('USD') || automaticConsumptionFlow) {
+      if (startUsdRate === null || endUsdRate === null) {
+        attributionAvailable = false;
+      } else {
+        const withdrawnUsd = automaticConsumptionFlow
+          ? automaticConsumptionFlow.amountClp / endUsdRate
+          : 0;
+        const adjustedEndUsd = currencyAggregates.USD.endNative + withdrawnUsd;
+        investmentTotal += (adjustedEndUsd - currencyAggregates.USD.startNative) * startUsdRate;
+        usdFxTotal = adjustedEndUsd * (endUsdRate - startUsdRate);
+        fxTotal += usdFxTotal;
       }
     }
 
-    // The monthly consumption withdrawal is funded from USD investments. Under
-    // the canonical simplifying convention it leaves at month-end. Rebuild the
-    // pre-consumption USD exposure so the attribution explains generated return,
-    // not only the balance left after spending.
-    if (automaticConsumptionFlow) {
-      const startUsdRate = Number(start.closure.fxRates?.usdClp);
-      const endUsdRate = Number(end.closure.fxRates?.usdClp);
-      if (
-        usdTotalClp > 0 &&
-        hasReliableRateProvenance(start.closure, 'USD') &&
-        hasReliableRateProvenance(end.closure, 'USD') &&
-        Number.isFinite(startUsdRate) && startUsdRate > 0 &&
-        Number.isFinite(endUsdRate) && endUsdRate > 0
-      ) {
-        const withdrawnUsd = automaticConsumptionFlow.amountClp / endUsdRate;
-        const nativeContribution = withdrawnUsd * startUsdRate;
-        const fxContribution = withdrawnUsd * (endUsdRate - startUsdRate);
-        investmentTotal += nativeContribution;
-        fxTotal += fxContribution;
-        usdFxTotal += fxContribution;
-        hasInvestmentCoverage = true;
-        hasFxCoverage = true;
-        hasUsdFxCoverage = true;
+    const startEurRate = validStoredRate(start.closure, 'EUR');
+    const endEurRate = validStoredRate(end.closure, 'EUR');
+    if (hasCurrencyExposure('EUR')) {
+      if (startEurRate === null || endEurRate === null) {
+        attributionAvailable = false;
+      } else {
+        investmentTotal += (currencyAggregates.EUR.endNative - currencyAggregates.EUR.startNative) * startEurRate;
+        eurFxTotal = currencyAggregates.EUR.endNative * (endEurRate - startEurRate);
+        fxTotal += eurFxTotal;
       }
     }
 
-    investmentAttributable = hasInvestmentCoverage ? investmentTotal : null;
-    fxAttributable = hasFxCoverage ? fxTotal : (fxTotalClp === 0 ? 0 : null);
-    usdFxAttributable = hasUsdFxCoverage ? usdFxTotal : (usdTotalClp === 0 ? 0 : null);
-    eurFxAttributable = hasEurFxCoverage ? eurFxTotal : (eurTotalClp === 0 ? 0 : null);
-    ufAttributable = hasUfCoverage ? ufTotal : (ufTotalClp === 0 ? 0 : null);
+    const startUfRate = validStoredRate(start.closure, 'UF');
+    const endUfRate = validStoredRate(end.closure, 'UF');
+    if (hasCurrencyExposure('UF')) {
+      if (startUfRate === null || endUfRate === null) {
+        attributionAvailable = false;
+      } else {
+        investmentTotal += (currencyAggregates.UF.endNative - currencyAggregates.UF.startNative) * startUfRate;
+        ufTotal = currencyAggregates.UF.endNative * (endUfRate - startUfRate);
+      }
+    }
+
+    if (attributionAvailable) {
+      investmentAttributable = investmentTotal;
+      usdFxAttributable = hasCurrencyExposure('USD') || automaticConsumptionFlow ? usdFxTotal : 0;
+      eurFxAttributable = hasCurrencyExposure('EUR') ? eurFxTotal : 0;
+      fxAttributable = fxTotal;
+      ufAttributable = hasCurrencyExposure('UF') ? ufTotal : 0;
+    }
   }
 
-  if (fxTotalClp === 0) fxAttributable = 0;
-  if (usdTotalClp === 0) usdFxAttributable = 0;
-  if (eurTotalClp === 0) eurFxAttributable = 0;
-  if (ufTotalClp === 0) ufAttributable = 0;
+  const fxTotalClp =
+    (hasCurrencyExposure('USD') ? Math.max(Math.abs(currencyAggregates.USD.startClp), Math.abs(currencyAggregates.USD.endClp)) : 0) +
+    (hasCurrencyExposure('EUR') ? Math.max(Math.abs(currencyAggregates.EUR.startClp), Math.abs(currencyAggregates.EUR.endClp)) : 0);
+  const usdTotalClp = hasCurrencyExposure('USD')
+    ? Math.max(Math.abs(currencyAggregates.USD.startClp), Math.abs(currencyAggregates.USD.endClp))
+    : 0;
+  const eurTotalClp = hasCurrencyExposure('EUR')
+    ? Math.max(Math.abs(currencyAggregates.EUR.startClp), Math.abs(currencyAggregates.EUR.endClp))
+    : 0;
+  const ufTotalClp = hasCurrencyExposure('UF')
+    ? Math.max(Math.abs(currencyAggregates.UF.startClp), Math.abs(currencyAggregates.UF.endClp))
+    : 0;
+
   const fxCoverageStatus: AttributionCoverageStatus = fxTotalClp === 0
     ? 'no_exposure'
-    : canAttributePositions
+    : canEstimateAttribution && fxAttributable !== null
       ? 'evaluated'
       : 'not_evaluated';
   const ufCoverageStatus: AttributionCoverageStatus = ufTotalClp === 0
     ? 'no_exposure'
-    : canAttributePositions
+    : canEstimateAttribution && ufAttributable !== null
       ? 'evaluated'
       : 'not_evaluated';
-  const fxCoveragePct = fxCoverageStatus === 'evaluated' && fxTotalClp > 0
-    ? Math.min(100, (fxCoveredClp / fxTotalClp) * 100)
-    : null;
-  const ufCoveragePct = ufCoverageStatus === 'evaluated' && ufTotalClp > 0
-    ? Math.min(100, (ufCoveredClp / ufTotalClp) * 100)
-    : null;
-  const currencyCoverageStatus = (exposure: number): AttributionCoverageStatus =>
-    exposure === 0 ? 'no_exposure' : canAttributePositions ? 'evaluated' : 'not_evaluated';
-  const usdFxCoverageStatus = currencyCoverageStatus(usdTotalClp);
-  const eurFxCoverageStatus = currencyCoverageStatus(eurTotalClp);
-  const usdFxCoveragePct = usdFxCoverageStatus === 'evaluated' ? Math.min(100, usdCoveredClp / usdTotalClp * 100) : null;
-  const eurFxCoveragePct = eurFxCoverageStatus === 'evaluated' ? Math.min(100, eurCoveredClp / eurTotalClp * 100) : null;
-  const unexplainedResidual =
-    observedChange -
-    confirmedFlowsNetClp -
-    (investmentAttributable ?? 0) -
-    (fxAttributable ?? 0) -
-    (ufAttributable ?? 0);
+  const usdFxCoverageStatus: AttributionCoverageStatus = usdTotalClp === 0 && !automaticConsumptionFlow
+    ? 'no_exposure'
+    : canEstimateAttribution && usdFxAttributable !== null
+      ? 'evaluated'
+      : 'not_evaluated';
+  const eurFxCoverageStatus: AttributionCoverageStatus = eurTotalClp === 0
+    ? 'no_exposure'
+    : canEstimateAttribution && eurFxAttributable !== null
+      ? 'evaluated'
+      : 'not_evaluated';
 
-  // One cent of CLP is a numerical tolerance, never the rounded value shown by the UI.
-  // A zero residue alone is insufficient: unmatched positions can cancel each other.
-  const attributionComplete = canAttributePositions && attributedPositions === allKeys.size &&
-    Number.isFinite(unexplainedResidual) && Math.abs(unexplainedResidual) <= 0.01;
-  const returnWithoutFxPct = attributionComplete && start.totalClp > 0
-    ? ((investmentAttributable ?? 0) + (ufAttributable ?? 0)) / start.totalClp : null;
-  const fxContributionPct = attributionComplete && start.totalClp > 0
-    ? (fxAttributable ?? 0) / start.totalClp : null;
+  // Aggregate currency coverage is 100% whenever both stored month-end rates exist;
+  // individual product matching is intentionally not required.
+  const fxCoveragePct = fxCoverageStatus === 'evaluated' ? 100 : null;
+  const ufCoveragePct = ufCoverageStatus === 'evaluated' ? 100 : null;
+  const usdFxCoveragePct = usdFxCoverageStatus === 'evaluated' ? 100 : null;
+  const eurFxCoveragePct = eurFxCoverageStatus === 'evaluated' ? 100 : null;
+
+  const unexplainedResidual =
+    portfolioResult === null
+      ? null
+      : portfolioResult -
+        (investmentAttributable ?? 0) -
+        (fxAttributable ?? 0) -
+        (ufAttributable ?? 0);
+
+  const positionMovementsConfirmed =
+    input.confirmation?.positionMovementCompleteness === 'no_unrecorded_movements';
+  // Full attribution remains a strict audit flag. The cards below no longer
+  // depend on it: they use all stored currency balances and expose any residual.
+  const attributionComplete =
+    canEstimateAttribution &&
+    positionMovementsConfirmed &&
+    investmentAttributable !== null &&
+    fxAttributable !== null &&
+    ufAttributable !== null &&
+    unexplainedResidual !== null &&
+    Number.isFinite(unexplainedResidual) &&
+    Math.abs(unexplainedResidual) <= 0.01;
+
+  const performanceDenominator =
+    portfolioResult !== null &&
+    returnData.returnPct !== null &&
+    Number.isFinite(returnData.returnPct) &&
+    Math.abs(returnData.returnPct) > 1e-12
+      ? portfolioResult / returnData.returnPct
+      : start.totalClp;
+  const fxContributionPct =
+    returnData.returnPct !== null &&
+    fxAttributable !== null &&
+    Number.isFinite(performanceDenominator) &&
+    performanceDenominator > 0
+      ? fxAttributable / performanceDenominator
+      : null;
+  const returnWithoutFxPct =
+    returnData.returnPct !== null && fxContributionPct !== null
+      ? returnData.returnPct - fxContributionPct
+      : null;
 
   const positionMovementsComplete = Boolean(
     flowListComplete &&
