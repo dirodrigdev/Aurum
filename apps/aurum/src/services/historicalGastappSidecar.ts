@@ -27,8 +27,103 @@ export type HistoricalGastappSidecarDocument = {
   snapshotsByMonth: Record<string, HistoricalGastappSidecarEntry>;
 };
 
-let activeUid: string | null = null;
-let analysisEntries: Record<string, HistoricalGastappSidecarEntry> = {};
+export type HistoricalGastappSidecarAnalysisState = {
+  uid: string | null;
+  status: 'loading' | 'ready' | 'error';
+  document: HistoricalGastappSidecarDocument | null;
+  hasAuthoritativeSnapshot: boolean;
+  dataRevision: number;
+  revision: number;
+  error: string | null;
+};
+
+const initialAnalysisState = (): HistoricalGastappSidecarAnalysisState => ({
+  uid: null,
+  status: 'loading',
+  document: null,
+  hasAuthoritativeSnapshot: false,
+  dataRevision: 0,
+  revision: 0,
+  error: null,
+});
+
+let analysisState = initialAnalysisState();
+const analysisStateSubscribers = new Set<() => void>();
+
+const publishAnalysisState = (
+  next: Omit<HistoricalGastappSidecarAnalysisState, 'revision'>,
+  historicalDataChanged = false,
+) => {
+  analysisState = { ...next, revision: analysisState.revision + 1 };
+  analysisStateSubscribers.forEach((subscriber) => subscriber());
+  if (historicalDataChanged && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(WEALTH_DATA_UPDATED_EVENT));
+  }
+};
+
+export const getHistoricalGastappSidecarAnalysisState = () => analysisState;
+
+export const subscribeHistoricalGastappSidecarAnalysisState = (subscriber: () => void) => {
+  analysisStateSubscribers.add(subscriber);
+  return () => analysisStateSubscribers.delete(subscriber);
+};
+
+export const canUseHistoricalGastappSidecarForAnalysis = (
+  state: HistoricalGastappSidecarAnalysisState,
+  uid: string | null,
+) => Boolean(uid && state.uid === uid && state.hasAuthoritativeSnapshot);
+
+const publishLoading = (uid: string) => {
+  const sameAccount = analysisState.uid === uid;
+  publishAnalysisState({
+    uid,
+    status: 'loading',
+    document: sameAccount ? analysisState.document : null,
+    hasAuthoritativeSnapshot: sameAccount && analysisState.hasAuthoritativeSnapshot,
+    dataRevision: analysisState.dataRevision,
+    error: null,
+  });
+};
+
+const publishReady = (uid: string, document: HistoricalGastappSidecarDocument | null) => {
+  const sameAccount = analysisState.uid === uid;
+  const changed = !sameAccount || !analysisState.hasAuthoritativeSnapshot ||
+    JSON.stringify(analysisState.document) !== JSON.stringify(document);
+  publishAnalysisState({
+    uid,
+    status: 'ready',
+    document,
+    hasAuthoritativeSnapshot: true,
+    dataRevision: analysisState.dataRevision + (changed ? 1 : 0),
+    error: null,
+  }, changed);
+};
+
+const errorText = (error: unknown) => String((error as { message?: unknown })?.message || error || 'Error de lectura.');
+
+const publishError = (uid: string, error: unknown) => {
+  const sameAccount = analysisState.uid === uid;
+  publishAnalysisState({
+    uid,
+    status: 'error',
+    document: sameAccount ? analysisState.document : null,
+    hasAuthoritativeSnapshot: sameAccount && analysisState.hasAuthoritativeSnapshot,
+    dataRevision: analysisState.dataRevision,
+    error: errorText(error),
+  });
+};
+
+export const clearHistoricalGastappSidecarForAnalysis = (uid?: string | null) => {
+  if (uid && analysisState.uid !== uid) return;
+  publishAnalysisState({
+    uid: null,
+    status: 'loading',
+    document: null,
+    hasAuthoritativeSnapshot: false,
+    dataRevision: analysisState.dataRevision,
+    error: null,
+  });
+};
 
 export const parseHistoricalGastappSidecar = (raw: unknown): HistoricalGastappSidecarDocument | null => {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -54,7 +149,7 @@ export const getHistoricalGastappSnapshotForAnalysis = (
   monthKey: string,
   closureId: string,
 ): GastappMonthlyExpenseCloseSnapshot | undefined => {
-  const entry = analysisEntries[monthKey];
+  const entry = analysisState.document?.snapshotsByMonth[monthKey];
   return entry?.closureId === closureId ? entry.snapshot : undefined;
 };
 
@@ -62,9 +157,11 @@ export const setHistoricalGastappSidecarForAnalysis = (
   uid: string | null,
   document: HistoricalGastappSidecarDocument | null,
 ) => {
-  activeUid = uid;
-  analysisEntries = document?.snapshotsByMonth || {};
-  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(WEALTH_DATA_UPDATED_EVENT));
+  if (!uid) {
+    clearHistoricalGastappSidecarForAnalysis();
+    return;
+  }
+  publishReady(uid, document);
 };
 
 export const historicalGastappSidecarRef = (uid: string) =>
@@ -81,14 +178,75 @@ export const readHistoricalGastappSidecarFromServer = async () => {
   return { uid, exists: snap.exists(), document: parsed, raw: snap.exists() ? snap.data() : null };
 };
 
-/** Separate analysis-only subscription. No sidecar data enters loadClosures or cloud sync. */
-export const subscribeHistoricalGastappSidecarForAnalysis = async (): Promise<() => void> => {
-  await ensureAuthPersistence();
-  const uid = getCurrentUid();
-  if (!uid) return () => {};
-  if (activeUid !== uid) setHistoricalGastappSidecarForAnalysis(uid, null);
-  return onSnapshot(historicalGastappSidecarRef(uid), (snap) => {
+const readAndPublishAuthoritativeSidecar = async (uid: string, isActive: () => boolean) => {
+  try {
+    await ensureAuthPersistence();
+    if (!isActive() || getCurrentUid() !== uid) return false;
+    const snap = await getDocFromServer(historicalGastappSidecarRef(uid));
+    if (!isActive() || getCurrentUid() !== uid) return false;
     const parsed = snap.exists() ? parseHistoricalGastappSidecar(snap.data()) : null;
-    setHistoricalGastappSidecarForAnalysis(uid, parsed);
-  }, () => setHistoricalGastappSidecarForAnalysis(uid, null));
+    if (snap.exists() && !parsed) throw new Error('Sidecar histórico incompatible.');
+    publishReady(uid, parsed);
+    return true;
+  } catch (error) {
+    if (isActive() && getCurrentUid() === uid) publishError(uid, error);
+    return false;
+  }
+};
+
+/** Retries an authoritative server read without clearing the last valid analysis overlay. */
+export const retryHistoricalGastappSidecarRead = async () => {
+  const uid = getCurrentUid();
+  if (!uid) return false;
+  return readAndPublishAuthoritativeSidecar(uid, () => getCurrentUid() === uid);
+};
+
+/**
+ * Analysis-only subscription. It publishes a server read before accepting listener data,
+ * and never feeds the overlay into closure hydration or cloud sync.
+ */
+export const subscribeHistoricalGastappSidecarForAnalysis = (): (() => void) => {
+  const uid = getCurrentUid();
+  if (!uid) {
+    clearHistoricalGastappSidecarForAnalysis();
+    return () => {};
+  }
+
+  publishLoading(uid);
+  let disposed = false;
+  let unsubscribe = () => {};
+  const isActive = () => !disposed && getCurrentUid() === uid;
+
+  void (async () => {
+    await readAndPublishAuthoritativeSidecar(uid, isActive);
+    if (!isActive()) return;
+
+    try {
+      unsubscribe = onSnapshot(
+        historicalGastappSidecarRef(uid),
+        { includeMetadataChanges: true },
+        (snap) => {
+          if (!isActive() || snap.metadata?.fromCache) return;
+          try {
+            const parsed = snap.exists() ? parseHistoricalGastappSidecar(snap.data()) : null;
+            if (snap.exists() && !parsed) throw new Error('Sidecar histórico incompatible.');
+            publishReady(uid, parsed);
+          } catch (error) {
+            publishError(uid, error);
+          }
+        },
+        (error) => {
+          if (isActive()) publishError(uid, error);
+        },
+      );
+    } catch (error) {
+      if (isActive()) publishError(uid, error);
+    }
+  })();
+
+  return () => {
+    disposed = true;
+    unsubscribe();
+    clearHistoricalGastappSidecarForAnalysis(uid);
+  };
 };
