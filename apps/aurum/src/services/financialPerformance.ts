@@ -222,12 +222,6 @@ const currencyRateField: Record<Exclude<WealthCurrency, 'CLP'>, 'usdClp' | 'eurC
   UF: 'ufClp',
 };
 
-const rateOriginKey: Record<Exclude<WealthCurrency, 'CLP'>, 'usd' | 'eur' | 'uf'> = {
-  USD: 'usd',
-  EUR: 'eur',
-  UF: 'uf',
-};
-
 const amountSign = (flow: FinancialPerformanceFlow) =>
   flow.direction === 'aporte' ? Number(flow.amountClp) : -Number(flow.amountClp);
 
@@ -249,48 +243,6 @@ const selectClosure = (closures: WealthMonthlyClosure[], monthKey: string): Weal
   [...closures]
     .filter((closure) => closure.monthKey === monthKey && !closure.analysisProvisionalReason)
     .sort((left, right) => String(right.closedAt || '').localeCompare(String(left.closedAt || '')))[0] || null;
-
-const hasReliableRateProvenance = (
-  closure: WealthMonthlyClosure,
-  currency: Exclude<WealthCurrency, 'CLP'>,
-): boolean => {
-  const key = rateOriginKey[currency];
-  const field = currencyRateField[currency];
-  const metadata = closure.fxMetadata;
-  const origin = metadata?.rateOrigin?.[key];
-  const source = String(metadata?.source?.[key] || '').trim();
-  if (!metadata || metadata.economicMonthKey !== closure.monthKey || !source) return false;
-
-  // Keep the existing acceptance rule for automatic rates unchanged.
-  if (origin === 'automatic' || origin === 'automatic-final') return true;
-  if (origin !== 'manual') return false;
-
-  const rate = closure.fxRates?.[field];
-  const recordedRate = metadata.usedFxRates?.[field];
-  const reconciliation = metadata.reconciliation;
-  const manualReason = String(metadata.manualOverrideReason || '').trim();
-  return Boolean(
-    source === 'manual_user_input' &&
-      typeof closure.id === 'string' &&
-      closure.id.trim() &&
-      typeof closure.closedAt === 'string' &&
-      closure.closedAt.trim() &&
-      typeof metadata.economicDate === 'string' &&
-      metadata.economicDate.startsWith(`${closure.monthKey}-`) &&
-      typeof rate === 'number' &&
-      Number.isFinite(rate) &&
-      rate > 0 &&
-      !closure.fxMissing?.includes(field) &&
-      typeof recordedRate === 'number' &&
-      Number.isFinite(recordedRate) &&
-      recordedRate > 0 &&
-      Math.abs(rate - recordedRate) <= 1e-9 &&
-      manualReason &&
-      reconciliation?.status === 'reconciled' &&
-      typeof reconciliation.checkedAt === 'string' &&
-      reconciliation.checkedAt.trim(),
-  );
-};
 
 const readClosurePositions = (
   closure: WealthMonthlyClosure | null,
