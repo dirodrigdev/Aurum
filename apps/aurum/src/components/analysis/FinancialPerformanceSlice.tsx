@@ -178,6 +178,43 @@ export const FinancialPerformanceSlice: React.FC<{
     }),
     [automaticConsumptionWithdrawalClp, calculationConfirmation, finalClosure, includeRiskCapital, initialClosure, period],
   );
+  const economicBridge = useMemo(() => {
+    const readNetClp = (closure: WealthMonthlyClosure | null) => {
+      if (!closure) return null;
+      const preferred = includeRiskCapital ? closure.summary?.netClpWithRisk : closure.summary?.netClp;
+      if (Number.isFinite(preferred)) return Number(preferred);
+      return Number.isFinite(closure.summary?.netConsolidatedClp) ? Number(closure.summary.netConsolidatedClp) : null;
+    };
+    const delta = (startValue: unknown, endValue: unknown) =>
+      Number.isFinite(Number(startValue)) && Number.isFinite(Number(endValue))
+        ? Number(endValue) - Number(startValue)
+        : null;
+    const startNet = readNetClp(initialClosure);
+    const endNet = readNetClp(finalClosure);
+    const patrimonyChangeClp = startNet !== null && endNet !== null ? endNet - startNet : null;
+    const economicReturnClp = patrimonyChangeClp !== null && automaticConsumptionWithdrawalClp !== null
+      ? patrimonyChangeClp + automaticConsumptionWithdrawalClp
+      : null;
+    const realEstateNetChangeClp = delta(initialClosure?.summary?.realEstateNetClp, finalClosure?.summary?.realEstateNetClp);
+    const bankChangeClp = delta(initialClosure?.summary?.bankClp, finalClosure?.summary?.bankClp);
+    const debtDelta = delta(initialClosure?.summary?.nonMortgageDebtClp, finalClosure?.summary?.nonMortgageDebtClp);
+    const nonMortgageDebtImpactClp = debtDelta === null ? null : -debtDelta;
+    const investmentGeneratedClp = result.portfolioResult;
+    const knownParts = [investmentGeneratedClp, realEstateNetChangeClp, bankChangeClp, nonMortgageDebtImpactClp];
+    const otherClp = economicReturnClp !== null && knownParts.every((value) => value !== null)
+      ? economicReturnClp - knownParts.reduce((sum, value) => sum + Number(value), 0)
+      : null;
+    return {
+      economicReturnClp,
+      patrimonyChangeClp,
+      consumptionClp: automaticConsumptionWithdrawalClp,
+      investmentGeneratedClp,
+      realEstateNetChangeClp,
+      bankChangeClp,
+      nonMortgageDebtImpactClp,
+      otherClp,
+    };
+  }, [automaticConsumptionWithdrawalClp, finalClosure, includeRiskCapital, initialClosure, result.portfolioResult]);
 
   const persistDraft = async (nextDraft: ConfirmationDraft) => {
     if (!storageReady || isLoading || savingRef.current || !uid || getCurrentUid() !== uid) return;
@@ -311,6 +348,7 @@ export const FinancialPerformanceSlice: React.FC<{
         result={result} confirmation={calculationConfirmation} hasSavedConfirmation={Boolean(confirmation)} isLoading={isLoading}
         storageReady={storageReady} storageError={Boolean(storageError)}
         closures={closures} includeRiskCapital={includeRiskCapital}
+        economicBridge={economicBridge}
       />
       <p role="status" className="mt-4 text-xs text-slate-300">
         {isDraftDirty ? confirmation
