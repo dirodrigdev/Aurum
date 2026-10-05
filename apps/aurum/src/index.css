@@ -30,9 +30,15 @@
 }
 
 body {
-  -webkit-tap-highlight-color: transparent;
   overscroll-behavior-y: none;
   background-color: #f8fafc;
+}
+
+button,
+a,
+[role='button'] {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: rgba(37, 99, 235, 0.14);
 }
 
 .no-scrollbar::-webkit-scrollbar {

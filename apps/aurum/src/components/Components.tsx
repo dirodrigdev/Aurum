@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import * as LucideIcons from 'lucide-react';
@@ -77,7 +77,7 @@ export const Button = React.forwardRef<
     <button
       ref={ref}
       className={cn(
-        'inline-flex items-center justify-center rounded-xl font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:pointer-events-none disabled:opacity-50',
+        'inline-flex items-center justify-center rounded-xl font-medium transition-all touch-manipulation select-none cursor-pointer active:scale-95 active:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50',
         variants[variant],
         sizes[size],
         className,
@@ -94,8 +94,8 @@ export const Input = React.forwardRef<
 >(({ className, type, onChange, onFocus, onBlur, ...props }, ref) => {
   const [syncState, setSyncState] = useState<WealthSyncUiState>(() => loadWealthSyncUiState());
   const [isFocused, setIsFocused] = useState(false);
-  const [recentlyModifiedAt, setRecentlyModifiedAt] = useState<number | null>(null);
-  const [nowTs, setNowTs] = useState(() => Date.now());
+  const [recentlyModified, setRecentlyModified] = useState(false);
+  const recentlyModifiedTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const refresh = () => setSyncState(loadWealthSyncUiState());
@@ -110,17 +110,18 @@ export const Input = React.forwardRef<
   }, []);
 
   useEffect(() => {
-    if (!recentlyModifiedAt) return;
-    const timer = window.setInterval(() => setNowTs(Date.now()), 300);
-    return () => window.clearInterval(timer);
-  }, [recentlyModifiedAt]);
+    return () => {
+      if (recentlyModifiedTimerRef.current !== null) {
+        window.clearTimeout(recentlyModifiedTimerRef.current);
+      }
+    };
+  }, []);
 
   const showSyncHint = useMemo(() => {
     if (syncState.status === 'synced') return false;
     if (isFocused) return true;
-    if (!recentlyModifiedAt) return false;
-    return nowTs - recentlyModifiedAt <= 6000;
-  }, [syncState.status, isFocused, recentlyModifiedAt, nowTs]);
+    return recentlyModified;
+  }, [syncState.status, isFocused, recentlyModified]);
 
   const syncHint = useMemo(() => {
     if (syncState.status === 'dirty') return { icon: '🟡', text: 'Sin guardar', retry: false };
@@ -154,7 +155,14 @@ export const Input = React.forwardRef<
           onBlur?.(event);
         }}
         onChange={(event) => {
-          setRecentlyModifiedAt(Date.now());
+          setRecentlyModified(true);
+          if (recentlyModifiedTimerRef.current !== null) {
+            window.clearTimeout(recentlyModifiedTimerRef.current);
+          }
+          recentlyModifiedTimerRef.current = window.setTimeout(() => {
+            recentlyModifiedTimerRef.current = null;
+            setRecentlyModified(false);
+          }, 6000);
           onChange?.(event);
         }}
         {...props}
