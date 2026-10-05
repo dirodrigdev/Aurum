@@ -4863,6 +4863,7 @@ export const Patrimonio: React.FC = () => {
   const [startMonthActionStatus, setStartMonthActionStatus] = useState<StartMonthActionStatus>(
     START_MONTH_ACTION_STATUS_INITIAL,
   );
+  const startMonthActionStatusRef = useRef<StartMonthActionStatus>(START_MONTH_ACTION_STATUS_INITIAL);
   const [startMonthConfirmOpen, setStartMonthConfirmOpen] = useState(false);
   const [startMonthCompletedNoticeVisible, setStartMonthCompletedNoticeVisible] = useState(false);
   const [nextMonthStartReminderModalOpen, setNextMonthStartReminderModalOpen] = useState(false);
@@ -4874,6 +4875,9 @@ export const Patrimonio: React.FC = () => {
   const startMonthCompletedNoticeTimerRef = useRef<number | null>(null);
   const startMonthCompletionShownForMonthRef = useRef<string | null>(null);
   const startMonthManualBankAttemptedRef = useRef(false);
+  const startMonthInitializeInFlightRef = useRef(false);
+  const startMonthFxInFlightRef = useRef(false);
+  const startMonthRealEstateInFlightRef = useRef(false);
   const monthStatusCardRef = useRef<HTMLDivElement | null>(null);
 
   const [hideSensitiveAmountsEnabled, setHideSensitiveAmountsEnabled] = useState(() =>
@@ -5254,17 +5258,20 @@ export const Patrimonio: React.FC = () => {
 
   useEffect(() => {
     if (activeClosure) {
+      startMonthActionStatusRef.current = START_MONTH_ACTION_STATUS_INITIAL;
       setStartMonthActionStatus(START_MONTH_ACTION_STATUS_INITIAL);
       setStartMonthFailedStep(null);
       setStartMonthFlowError('');
       return;
     }
     if (startMonthCheckpoint && startMonthCheckpoint.monthKey === monthKey) {
+      startMonthActionStatusRef.current = startMonthCheckpoint.actions;
       setStartMonthActionStatus(startMonthCheckpoint.actions);
       setStartMonthFailedStep(startMonthCheckpoint.failedStep);
       setStartMonthFlowError(startMonthCheckpoint.lastError || '');
       return;
     }
+    startMonthActionStatusRef.current = START_MONTH_ACTION_STATUS_INITIAL;
     setStartMonthActionStatus(START_MONTH_ACTION_STATUS_INITIAL);
     setStartMonthFailedStep(null);
     setStartMonthFlowError('');
@@ -5273,6 +5280,7 @@ export const Patrimonio: React.FC = () => {
   useEffect(() => {
     if (activeClosure) return;
     if (monthRecords.length > 0) return;
+    startMonthActionStatusRef.current = START_MONTH_ACTION_STATUS_INITIAL;
     setStartMonthActionStatus(START_MONTH_ACTION_STATUS_INITIAL);
     setStartMonthFailedStep(null);
     setStartMonthFlowError('');
@@ -6031,13 +6039,12 @@ export const Patrimonio: React.FC = () => {
   ) => {
     setStartMonthFailedStep(null);
     setStartMonthFlowError('');
-    setStartMonthActionStatus((prev) => {
-      const next = { ...prev, [step]: 'applied' as const };
-      persistStartMonthCheckpoint(targetMonthKey, next, null, '', {
-        explicitMonthStarted:
-          options?.explicitMonthStarted ?? startMonthCheckpoint?.explicitMonthStarted ?? false,
-      });
-      return next;
+    const next = { ...startMonthActionStatusRef.current, [step]: 'applied' as const };
+    startMonthActionStatusRef.current = next;
+    setStartMonthActionStatus(next);
+    persistStartMonthCheckpoint(targetMonthKey, next, null, '', {
+      explicitMonthStarted:
+        options?.explicitMonthStarted ?? startMonthCheckpoint?.explicitMonthStarted ?? false,
     });
   };
 
@@ -6045,14 +6052,15 @@ export const Patrimonio: React.FC = () => {
     targetMonthKey: string,
     step: StartMonthActionKey,
     message: string,
+    options?: { explicitMonthStarted?: boolean },
   ) => {
     setStartMonthFailedStep(step);
-    setStartMonthFlowError((prev) => (prev ? `${prev} · ${message}` : message));
-    setStartMonthActionStatus((prev) => {
-      persistStartMonthCheckpoint(targetMonthKey, prev, step, message, {
-        explicitMonthStarted: startMonthCheckpoint?.explicitMonthStarted ?? false,
-      });
-      return prev;
+    setStartMonthFlowError(message);
+    const actions = startMonthActionStatusRef.current;
+    setStartMonthActionStatus(actions);
+    persistStartMonthCheckpoint(targetMonthKey, actions, step, message, {
+      explicitMonthStarted:
+        options?.explicitMonthStarted ?? startMonthCheckpoint?.explicitMonthStarted ?? false,
     });
   };
 
@@ -6230,9 +6238,16 @@ export const Patrimonio: React.FC = () => {
     }
   };
 
-  const runStartMonthFxUpdate = async (): Promise<boolean> => {
-    if (startMonthRunning) return false;
+  const runStartMonthFxUpdate = async (
+    options?: { explicitMonthStarted?: boolean },
+  ): Promise<boolean> => {
+    if (startMonthRunning || startMonthFxInFlightRef.current) return false;
+    startMonthFxInFlightRef.current = true;
     const monthToStart = monthKey;
+    const explicitMonthStarted =
+      options?.explicitMonthStarted ??
+      (startMonthCheckpoint?.explicitMonthStarted === true ||
+        evaluateMonthStartRuntimeState(monthToStart).mortgageAudit.status === 'applied');
     setStartMonthFlowError('');
     setStartMonthFailedStep(null);
     setStartMonthRunning(true);
@@ -6240,14 +6255,22 @@ export const Patrimonio: React.FC = () => {
       const result = await refreshFxRatesFromLive({ force: true });
       refreshAllWealthState();
       setCarryMessage(result.updated ? 'TC/UF actualizados ✓' : 'TC/UF sin cambios.');
-      markStartMonthStepApplied(monthToStart, 'fx');
+      markStartMonthStepApplied(monthToStart, 'fx', { explicitMonthStarted });
+      if (!(await syncWealthNow())) {
+        throw new Error('TC/UF quedó actualizado localmente, pero no pude confirmarlo en Firestore.');
+      }
       return true;
     } catch (error: any) {
       const message = String(error?.message || 'No pude actualizar TC/UF.');
-      markStartMonthStepFailed(monthToStart, 'fx', message);
+      const visibleMessage = explicitMonthStarted
+        ? `El mes de ${monthLabel(monthToStart).toLowerCase()} quedó iniciado con la hipoteca aplicada. TC/UF sigue pendiente: ${message}`
+        : message;
+      markStartMonthStepFailed(monthToStart, 'fx', visibleMessage, { explicitMonthStarted });
       setCarryMessage(`Error al actualizar TC/UF: ${message}`);
+      await syncWealthNow();
       return false;
     } finally {
+      startMonthFxInFlightRef.current = false;
       setStartMonthRunning(false);
     }
   };
@@ -6305,41 +6328,69 @@ export const Patrimonio: React.FC = () => {
     }
   };
 
-  const runStartMonthRealEstateUpdate = (targetMonthKey = monthKey) => {
-    if (startMonthRunning) return;
+  const runStartMonthRealEstateUpdate = async (targetMonthKey = monthKey): Promise<boolean> => {
+    if (startMonthRunning || startMonthRealEstateInFlightRef.current) return false;
+    startMonthRealEstateInFlightRef.current = true;
     const monthToStart = targetMonthKey;
-    const runtime = evaluateMonthStartRuntimeState(monthToStart);
-    if (runtime.mortgageAudit.status === 'applied') {
-      const message = 'La hipoteca de este mes ya fue aplicada. No la volveré a iniciar.';
-      setStartMonthFailedStep('realEstate');
-      setStartMonthFlowError(message);
-      setCarryMessage(message);
-      return;
-    }
-    if (runtime.mortgageAudit.status === 'review') {
-      const message = 'La hipoteca de este mes no cuadra completamente con la amortización esperada. Revisa antes de volver a iniciarla.';
-      setStartMonthFailedStep('realEstate');
-      setStartMonthFlowError(message);
-      setCarryMessage(message);
-      return;
-    }
-    setStartMonthFailedStep(null);
-    const beforeNet = computeMonthNetSnapshot(monthToStart);
-    const auto = applyMortgageAutoCalculation(monthToStart, visualMonthSnapshotDate(monthToStart));
-    refreshAllWealthState();
-    if (auto.changed > 0) {
-      setCarryMessage(`Bienes raíces recalculados ✓ (${auto.changed} ajuste(s)).`);
+    setStartMonthRunning(true);
+    try {
+      const runtime = evaluateMonthStartRuntimeState(monthToStart);
+      if (runtime.mortgageAudit.status === 'applied') {
+        setCarryMessage('La hipoteca de este mes ya fue aplicada. No la volveré a calcular.');
+        markStartMonthStepApplied(monthToStart, 'realEstate', { explicitMonthStarted: true });
+        if (!(await syncWealthNow())) {
+          const message = 'La hipoteca ya está aplicada localmente, pero no pude confirmarla en Firestore.';
+          markStartMonthStepFailed(monthToStart, 'realEstate', message, { explicitMonthStarted: true });
+          setCarryMessage(message);
+          return false;
+        }
+        return true;
+      }
+      if (runtime.mortgageAudit.status === 'review') {
+        const message = 'La hipoteca de este mes no cuadra completamente con la amortización esperada. Revisa antes de volver a iniciarla.';
+        markStartMonthStepFailed(monthToStart, 'realEstate', message);
+        setCarryMessage(message);
+        return false;
+      }
+      setStartMonthFailedStep(null);
+      const auto = applyMortgageAutoCalculation(monthToStart, visualMonthSnapshotDate(monthToStart));
+      refreshAllWealthState();
+      if (auto.reason === 'missing_base_debt') {
+        const message = 'No pude recalcular bienes raíces: falta saldo de deuda hipotecaria base.';
+        markStartMonthStepFailed(monthToStart, 'realEstate', message);
+        setCarryMessage(message);
+        return false;
+      }
+      setCarryMessage(
+        auto.changed > 0
+          ? `Bienes raíces recalculados ✓ (${auto.changed} ajuste(s)).`
+          : 'Bienes raíces sin cambios.',
+      );
       markStartMonthStepApplied(monthToStart, 'realEstate', { explicitMonthStarted: true });
-      return;
-    }
-    if (auto.reason === 'missing_base_debt') {
-      const message = 'No pude recalcular bienes raíces: falta saldo de deuda hipotecaria base.';
-      markStartMonthStepFailed(monthToStart, 'realEstate', message);
+      if (!(await syncWealthNow())) {
+        const message = 'La hipoteca quedó aplicada localmente, pero no pude confirmarla en Firestore.';
+        markStartMonthStepFailed(monthToStart, 'realEstate', message, { explicitMonthStarted: true });
+        setCarryMessage(message);
+        return false;
+      }
+      return true;
+    } catch (error: any) {
+      const message = String(error?.message || 'No pude aplicar el roll-forward hipotecario.');
+      let mortgageApplied = false;
+      try {
+        mortgageApplied = evaluateMonthStartRuntimeState(monthToStart).mortgageAudit.status === 'applied';
+      } catch {
+        // Keep the failure visible if the audit itself cannot be evaluated.
+      }
+      markStartMonthStepFailed(monthToStart, 'realEstate', message, {
+        explicitMonthStarted: mortgageApplied,
+      });
       setCarryMessage(message);
-      return;
+      return false;
+    } finally {
+      startMonthRealEstateInFlightRef.current = false;
+      setStartMonthRunning(false);
     }
-    setCarryMessage('Bienes raíces sin cambios.');
-    markStartMonthStepApplied(monthToStart, 'realEstate', { explicitMonthStarted: true });
   };
 
   const runStartMonthInitialize = () => {
@@ -6368,16 +6419,25 @@ export const Patrimonio: React.FC = () => {
   };
 
   const confirmStartMonthInitialize = async () => {
-    const runtime = evaluateMonthStartRuntimeState(monthKey);
-    if (!runtime.eligibility.canStart) {
+    if (startMonthInitializeInFlightRef.current) return;
+    startMonthInitializeInFlightRef.current = true;
+    try {
+      const runtime = evaluateMonthStartRuntimeState(monthKey);
+      if (!runtime.eligibility.canStart) {
+        setStartMonthConfirmOpen(false);
+        runStartMonthInitialize();
+        return;
+      }
       setStartMonthConfirmOpen(false);
-      runStartMonthInitialize();
-      return;
+      // The mortgage roll-forward defines whether the live month is started.
+      // Live FX can be retried independently and must not block this transition.
+      markStartMonthStepApplied(monthKey, 'carry');
+      const mortgageApplied = await runStartMonthRealEstateUpdate(monthKey);
+      if (!mortgageApplied) return;
+      await runStartMonthFxUpdate({ explicitMonthStarted: true });
+    } finally {
+      startMonthInitializeInFlightRef.current = false;
     }
-    setStartMonthConfirmOpen(false);
-    const fxReady = await runStartMonthFxUpdate();
-    if (!fxReady) return;
-    runStartMonthRealEstateUpdate(monthKey);
   };
 
   const completeMonthlyClose = async (
