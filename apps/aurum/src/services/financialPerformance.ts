@@ -199,6 +199,8 @@ export interface FinancialPerformanceResult {
   quality: PerformanceQuality;
   qualityReason: string;
   flowValidationError: string | null;
+  /** Consumo oficial del mes, tratado como retiro automático del perímetro de inversiones. */
+  automaticConsumptionWithdrawalClp: number | null;
 }
 
 interface PositionValue {
@@ -446,6 +448,7 @@ const emptyResult = (period: FinancialPerformancePeriod, reason: string): Financ
   quality: 'INSUFICIENTE',
   qualityReason: reason,
   flowValidationError: null,
+  automaticConsumptionWithdrawalClp: null,
 });
 
 export interface FinancialPerformancePeriodInput {
@@ -454,6 +457,13 @@ export interface FinancialPerformancePeriodInput {
   finalClosure: WealthMonthlyClosure | null;
   confirmation: FinancialPerformanceConfirmation | null;
   includeRiskCapital: boolean;
+  /**
+   * Gasto oficial de GastApp del mes final. En Aurum se modela como retiro del
+   * portafolio porque el consumo se financia con capital USD de inversiones.
+   * null = GastApp todavía no está resuelto para ese mes; undefined conserva
+   * compatibilidad con callers legacy que no aplican esta regla.
+   */
+  automaticConsumptionWithdrawalClp?: number | null;
 }
 
 interface LegacyFinancialPerformanceInput {
@@ -493,14 +503,39 @@ export const reconcileFinancialPerformanceForPeriod = (
 
   const perimeterMatches = !input.confirmation ||
     (input.confirmation.perimeter ?? 'investment') === financialPerformancePerimeter(input.includeRiskCapital);
-  const flows = perimeterMatches && Array.isArray(input.confirmation?.flows) ? input.confirmation.flows : [];
+  const manualFlows = perimeterMatches && Array.isArray(input.confirmation?.flows) ? input.confirmation.flows : [];
   const invalidFlow = Boolean(
     input.confirmation && (!perimeterMatches || !isFinancialPerformanceConfirmationValid(input.confirmation, period)),
   );
+  const automaticConsumptionConfigured = Object.prototype.hasOwnProperty.call(
+    input,
+    'automaticConsumptionWithdrawalClp',
+  );
+  const automaticConsumptionWithdrawalClp =
+    typeof input.automaticConsumptionWithdrawalClp === 'number' &&
+    Number.isFinite(input.automaticConsumptionWithdrawalClp) &&
+    input.automaticConsumptionWithdrawalClp >= 0
+      ? input.automaticConsumptionWithdrawalClp
+      : null;
+  const automaticConsumptionResolved =
+    !automaticConsumptionConfigured || automaticConsumptionWithdrawalClp !== null;
+  const automaticConsumptionFlow: FinancialPerformanceFlow | null =
+    automaticConsumptionWithdrawalClp !== null && automaticConsumptionWithdrawalClp > 0
+      ? {
+          id: `gastapp-consumption-${period.endMonth}`,
+          direction: 'retiro',
+          effectiveDate: endDate,
+          amountClp: automaticConsumptionWithdrawalClp,
+          note: 'Consumo oficial GastApp imputado al mes económico',
+          reference: 'gastapp:auto-consumption',
+        }
+      : null;
+  const flows = automaticConsumptionFlow ? [...manualFlows, automaticConsumptionFlow] : manualFlows;
   const flowListComplete =
     Boolean(input.confirmation) &&
     input.confirmation?.flowCompleteness === 'complete' &&
-    !invalidFlow;
+    !invalidFlow &&
+    automaticConsumptionResolved;
   const confirmedFlowsNetClp = flows.reduce(
     (sum, flow) => sum + (isFinancialPerformanceFlowValid(flow, period) ? amountSign(flow) : 0),
     0,
@@ -543,9 +578,11 @@ export const reconcileFinancialPerformanceForPeriod = (
     if (currency === 'UF') ufTotalClp += averageExposure;
   }
 
+  // GastApp is an automatic month-end withdrawal from USD-funded investments.
+  // It must not block attribution; only additional/manual capital flows do.
   const canAttributePositions =
     flowListComplete &&
-    flows.length === 0 &&
+    manualFlows.length === 0 &&
     input.confirmation?.positionMovementCompleteness === 'no_unrecorded_movements';
 
   if (canAttributePositions) {
@@ -616,6 +653,32 @@ export const reconcileFinancialPerformanceForPeriod = (
       }
     }
 
+    // The monthly consumption withdrawal is funded from USD investments. Under
+    // the canonical simplifying convention it leaves at month-end. Rebuild the
+    // pre-consumption USD exposure so the attribution explains generated return,
+    // not only the balance left after spending.
+    if (automaticConsumptionFlow) {
+      const startUsdRate = Number(start.closure.fxRates?.usdClp);
+      const endUsdRate = Number(end.closure.fxRates?.usdClp);
+      if (
+        usdTotalClp > 0 &&
+        hasReliableRateProvenance(start.closure, 'USD') &&
+        hasReliableRateProvenance(end.closure, 'USD') &&
+        Number.isFinite(startUsdRate) && startUsdRate > 0 &&
+        Number.isFinite(endUsdRate) && endUsdRate > 0
+      ) {
+        const withdrawnUsd = automaticConsumptionFlow.amountClp / endUsdRate;
+        const nativeContribution = withdrawnUsd * startUsdRate;
+        const fxContribution = withdrawnUsd * (endUsdRate - startUsdRate);
+        investmentTotal += nativeContribution;
+        fxTotal += fxContribution;
+        usdFxTotal += fxContribution;
+        hasInvestmentCoverage = true;
+        hasFxCoverage = true;
+        hasUsdFxCoverage = true;
+      }
+    }
+
     investmentAttributable = hasInvestmentCoverage ? investmentTotal : null;
     fxAttributable = hasFxCoverage ? fxTotal : (fxTotalClp === 0 ? 0 : null);
     usdFxAttributable = hasUsdFxCoverage ? usdFxTotal : (usdTotalClp === 0 ? 0 : null);
@@ -673,6 +736,8 @@ export const reconcileFinancialPerformanceForPeriod = (
     flowListComplete && positionMovementsComplete ? 'RECONSTRUIDO' : 'INDICATIVO';
   const qualityReason = invalidFlow
     ? 'La confirmación contiene datos inválidos o fuera del intervalo; no se publica retorno.'
+    : automaticConsumptionConfigured && !automaticConsumptionResolved
+      ? `GastApp todavía no entrega un gasto oficial utilizable para ${period.endMonth}; no se publica retorno.`
     : !flowListComplete
       ? `Los cierres ${period.startMonth} → ${period.endMonth} son comparables, pero la lista de flujos externos no está confirmada como completa.`
       : !positionMovementsComplete
@@ -710,7 +775,12 @@ export const reconcileFinancialPerformanceForPeriod = (
     ufCoverageStatus,
     quality,
     qualityReason,
-    flowValidationError: invalidFlow ? 'Revisa la fecha, el monto y los datos de cada flujo.' : null,
+    flowValidationError: invalidFlow
+      ? 'Revisa la fecha, el monto y los datos de cada flujo.'
+      : automaticConsumptionConfigured && !automaticConsumptionResolved
+        ? 'Falta el gasto oficial de GastApp para reconstruir el retiro de consumo.'
+        : null,
+    automaticConsumptionWithdrawalClp,
   };
 };
 
