@@ -429,7 +429,7 @@ test('September close seals its own GastApp snapshot and prepares October withou
 
 for (const viewport of [
   { name: 'desktop', width: 1280, height: 800, rejectFx: true },
-  { name: 'mobile', width: 390, height: 844, rejectFx: false },
+  { name: 'mobile', width: 390, height: 844, rejectFx: true },
 ]) {
   test(`next month start preserves history and applies mortgage once on ${viewport.name}`, async ({ page }, testInfo) => {
     await seedMortgageStart();
@@ -477,9 +477,15 @@ for (const viewport of [
     await confirmation.getByRole('button', { name: 'Cancelar', exact: true }).click();
     expect(await monthStartState(page)).toEqual(beforeAccept);
 
+    const expected = nativeAmounts(beforeAccept.records, '2026-08').map((record) => ({
+      ...record, amount: record.label === mortgagePrincipalLabel ? 2990 : record.amount,
+    }));
+    const ref = emulatorDb().doc(`aurum_wealth/${uid}`);
+    let started: Awaited<ReturnType<typeof monthStartState>>;
+
     if (viewport.rejectFx) {
       // The emulator deliberately has no live FX HTTP request. Reject just the
-      // FX persistence boundary to exercise the real failure/retry path.
+      // FX persistence boundary to prove that it cannot block the mortgage start.
       await page.evaluate(() => {
         const original = Storage.prototype.setItem;
         (window as Window & { restoreAuditFx?: () => void }).restoreAuditFx = () => { Storage.prototype.setItem = original; };
@@ -489,38 +495,56 @@ for (const viewport of [
         };
       });
       await start.first().click();
-      await confirmation.getByRole('button', { name: 'Iniciar agosto de 2026', exact: true }).click();
-      await expect(page.getByText('Fallo ficticio al guardar TC/UF', { exact: true })).toBeVisible();
+      const acceptStart = confirmation.getByRole('button', { name: 'Iniciar agosto de 2026', exact: true });
+      if (viewport.name === 'mobile') {
+        await acceptStart.evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
+      } else {
+        await acceptStart.click();
+      }
+      await expect(page.getByText(/mes de agosto de 2026 quedó iniciado con la hipoteca aplicada.*Fallo ficticio al guardar TC\/UF/i)).toBeVisible();
       const failed = await monthStartState(page);
-      expect(nativeAmounts(failed.records, '2026-08')).toEqual(nativeAmounts(beforeAccept.records, '2026-08'));
+      expect(nativeAmounts(failed.records, '2026-08')).toEqual(expected);
       expect(failed.fx).toEqual(beforeAccept.fx);
       expect(failed.checkpoint.failedStep).toBe('fx');
-      expect(failed.checkpoint.explicitMonthStarted).toBe(false);
-      await page.screenshot({ path: testInfo.outputPath('month-start-fx-failure-desktop.png') });
+      expect(failed.checkpoint.explicitMonthStarted).toBe(true);
+      expect(failed.checkpoint.actions.carry).toBe('applied');
+      expect(failed.checkpoint.actions.realEstate).toBe('applied');
+      await expect(start).toHaveCount(0);
+      await page.screenshot({ path: testInfo.outputPath(`month-start-fx-failure-${viewport.name}.png`) });
+      if (viewport.name === 'desktop') {
+        await page.setViewportSize({ width: 768, height: 1024 });
+        await page.screenshot({ path: testInfo.outputPath('month-start-fx-failure-tablet.png') });
+        await page.setViewportSize(viewport);
+      }
+      await expect.poll(async () => nativeAmounts((await ref.get()).get('records'), '2026-08')).toEqual(expected);
+      const afterFailedStart = (await ref.get()).data()!;
+      expect(afterFailedStart.closures.find((closure: { monthKey: string }) => closure.monthKey === '2026-07')).toEqual(closed);
+      expect(afterFailedStart.closures.some((closure: { monthKey: string }) => closure.monthKey === '2026-08')).toBe(false);
+
       await page.evaluate(() => (window as Window & { restoreAuditFx?: () => void }).restoreAuditFx?.());
       await page.getByRole('button', { name: 'Reintentar paso: TC/UF', exact: true }).click();
       await expect.poll(async () => (await monthStartState(page)).checkpoint?.actions.fx).toBe('applied');
-      const retriedFx = await monthStartState(page);
-      expect(retriedFx.checkpoint.explicitMonthStarted).toBe(false);
-      expect(nativeAmounts(retriedFx.records, '2026-08')).toEqual(nativeAmounts(beforeAccept.records, '2026-08'));
+      started = await monthStartState(page);
+      expect(started.fx).toEqual(liveRates);
+      expect(started.checkpoint.explicitMonthStarted).toBe(true);
+      expect(nativeAmounts(started.records, '2026-08')).toEqual(expected);
+      await expect(start).toHaveCount(0);
+    } else {
+      await start.first().click();
+      const acceptStart = confirmation.getByRole('button', { name: 'Iniciar agosto de 2026', exact: true });
+      await expect(acceptStart).toBeEnabled();
+      await acceptStart.evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
+      await expect.poll(async () => (await monthStartState(page)).checkpoint?.explicitMonthStarted).toBe(true);
+      started = await monthStartState(page);
+      expect(started.fx).toEqual(liveRates);
+      expect(nativeAmounts(started.records, '2026-08')).toEqual(expected);
+      expect(started.checkpoint.actions.fx).toBe('applied');
+      expect(started.checkpoint.actions.realEstate).toBe('applied');
+      await expect(start).toHaveCount(0);
     }
 
-    await start.first().click();
-    const acceptStart = confirmation.getByRole('button', { name: 'Iniciar agosto de 2026', exact: true });
-    await expect(acceptStart).toBeEnabled();
-    await acceptStart.evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
-    await expect.poll(async () => (await monthStartState(page)).checkpoint?.explicitMonthStarted).toBe(true);
-    const started = await monthStartState(page);
-    expect(started.fx).toEqual(liveRates);
-    const expected = nativeAmounts(beforeAccept.records, '2026-08').map((record) => ({
-      ...record, amount: record.label === mortgagePrincipalLabel ? 2990 : record.amount,
-    }));
-    expect(nativeAmounts(started.records, '2026-08')).toEqual(expected);
-    expect(started.checkpoint.actions.fx).toBe('applied');
-    expect(started.checkpoint.actions.realEstate).toBe('applied');
     await expect(start).toHaveCount(0);
     await page.screenshot({ path: testInfo.outputPath(`month-start-success-${viewport.name}.png`) });
-    const ref = emulatorDb().doc(`aurum_wealth/${uid}`);
     await expect.poll(async () => nativeAmounts((await ref.get()).get('records'), '2026-08')).toEqual(expected);
     await expect.poll(async () => {
       const checkpoint = (await ref.get()).get('records').find((record: AuditRecord) =>
