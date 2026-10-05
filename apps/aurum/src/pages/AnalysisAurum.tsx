@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3, ChevronDown } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { Button, Card } from '../components/Components';
@@ -119,6 +119,8 @@ export const AnalysisAurum: React.FC = () => {
   const [tab, setTab] = useState<AnalysisTab>('returns');
   const [isSectionMenuOpen, setIsSectionMenuOpen] = useState(false);
   const [currency, setCurrency] = useState<WealthCurrency>('CLP');
+  const analysisCurrency = useDeferredValue(currency);
+  const isCurrencyUpdating = analysisCurrency !== currency;
   const [includeRiskCapitalInTotals, setIncludeRiskCapitalInTotals] = useState(() =>
     loadIncludeRiskCapitalInTotals(),
   );
@@ -214,13 +216,29 @@ export const AnalysisAurum: React.FC = () => {
     });
   }, [gastosSourceVersion]);
   const gastappRuntimeDiagnostic = useMemo(() => getGastappMonthlyRuntimeDiagnostic(), [gastosSourceVersion]);
+  const analysisClosures = useMemo(
+    () => buildAnalysisClosures(closures),
+    [closures, gastosSourceVersion, wealthSourceVersion],
+  );
+  const calculationClosures = useMemo(
+    () => (includeEstimatedMonth ? analysisClosures : closures),
+    [analysisClosures, closures, includeEstimatedMonth],
+  );
+  const wealthEvolutionModel = useMemo(
+    () => buildWealthEvolutionComparisonModel(calculationClosures, includeRiskCapitalInTotals),
+    [calculationClosures, includeRiskCapitalInTotals],
+  );
+  const wealthLabModel = useMemo(
+    () => buildWealthLabModel(calculationClosures, includeRiskCapitalInTotals),
+    [calculationClosures, includeRiskCapitalInTotals],
+  );
   const historicalSidecarState = getHistoricalGastappSidecarAnalysisState();
   const analysisFingerprint = useMemo(
     () =>
       buildAnalysisFingerprint({
         closuresFingerprint,
         includeRiskCapitalInTotals,
-        currency,
+        currency: analysisCurrency,
         includeEstimatedMonth,
         gastappSourceFingerprint,
         wealthSourceVersion,
@@ -230,7 +248,7 @@ export const AnalysisAurum: React.FC = () => {
     [
       closuresFingerprint,
       includeRiskCapitalInTotals,
-      currency,
+      analysisCurrency,
       includeEstimatedMonth,
       gastappSourceFingerprint,
       wealthSourceVersion,
@@ -241,10 +259,8 @@ export const AnalysisAurum: React.FC = () => {
   const analysisEntry = useMemo(
     () =>
       getOrBuildAnalysisSessionValue(analysisFingerprint, () => {
-        const analysisClosures = buildAnalysisClosures(closures);
-        const calculationClosures = includeEstimatedMonth ? analysisClosures : closures;
-        const officialMonthlyRowsAsc = computeMonthlyRows(analysisClosures, includeRiskCapitalInTotals, currency);
-        const monthlyRowsAscWithoutCrp = computeMonthlyRows(analysisClosures, false, currency);
+        const officialMonthlyRowsAsc = computeMonthlyRows(analysisClosures, includeRiskCapitalInTotals, analysisCurrency);
+        const monthlyRowsAscWithoutCrp = computeMonthlyRows(analysisClosures, false, analysisCurrency);
         const returnsSeriesView = buildReturnsSeriesView(officialMonthlyRowsAsc);
         const monthlyRowsAsc =
           includeEstimatedMonth && returnsSeriesView.hasEstimatedMonth
@@ -256,9 +272,8 @@ export const AnalysisAurum: React.FC = () => {
           currentOperationalMonthKey(closures),
           includeEstimatedMonth && returnsSeriesView.hasEstimatedMonth,
         );
-        const wealthEvolutionModel = buildWealthEvolutionComparisonModel(calculationClosures, includeRiskCapitalInTotals);
         const crpContributionInsight = includeRiskCapitalInTotals
-          ? buildCrpContributionInsight(monthlyRowsForAggregates, monthlyRowsAscWithoutCrp, currency)
+          ? buildCrpContributionInsight(monthlyRowsForAggregates, monthlyRowsAscWithoutCrp, analysisCurrency)
           : null;
         const analysisDiagnostics = (() => {
           const eurScaleOutliers = officialMonthlyRowsAsc.filter((row) => row.rawEurClp > 10000);
@@ -344,8 +359,6 @@ export const AnalysisAurum: React.FC = () => {
           [...monthlyRowsForAggregates].reverse().find((item) => item.retornoRealDisplay !== null)?.pct ?? null;
         const heroLastMonthPctMonthlyReal =
           [...monthlyRowsForAggregates].reverse().find((item) => item.retornoRealDisplay !== null)?.pctReal ?? null;
-        const wealthLabModel = buildWealthLabModel(calculationClosures, includeRiskCapitalInTotals);
-
         return {
           officialMonthlyRowsAsc,
           monthlyRowsAscWithoutCrp,
@@ -353,7 +366,6 @@ export const AnalysisAurum: React.FC = () => {
           monthlyRowsAsc,
           monthlyRowsDesc,
           monthlyRowsForAggregates,
-          wealthEvolutionModel,
           crpContributionInsight,
           analysisDiagnostics,
           periodSummaries,
@@ -364,29 +376,24 @@ export const AnalysisAurum: React.FC = () => {
           heroLastMonth,
           heroLastMonthPctMonthly,
           heroLastMonthPctMonthlyReal,
-          wealthLabModel,
         };
       }, (value) => {
         const candidate = value as {
           returnsSeriesView?: unknown;
-          wealthEvolutionModel?: unknown;
           periodSummaries?: unknown;
           yearlySummaries?: unknown;
-          wealthLabModel?: unknown;
           officialMonthlyRowsAsc?: unknown;
         } | null;
 
         return Boolean(
           candidate &&
           candidate.returnsSeriesView &&
-          candidate.wealthEvolutionModel &&
           Array.isArray(candidate.periodSummaries) &&
           Array.isArray(candidate.yearlySummaries) &&
-          candidate.wealthLabModel &&
           Array.isArray(candidate.officialMonthlyRowsAsc),
         );
       }),
-    [analysisFingerprint, analysisRefreshTick, closures, includeRiskCapitalInTotals, currency, includeEstimatedMonth, gastosSourceVersion, wealthSourceVersion],
+    [analysisFingerprint, analysisRefreshTick, analysisClosures, includeRiskCapitalInTotals, analysisCurrency, includeEstimatedMonth],
   );
   const {
     officialMonthlyRowsAsc,
@@ -395,7 +402,6 @@ export const AnalysisAurum: React.FC = () => {
     monthlyRowsAsc,
     monthlyRowsDesc,
     monthlyRowsForAggregates,
-    wealthEvolutionModel,
     crpContributionInsight,
     analysisDiagnostics,
     periodSummaries,
@@ -406,10 +412,8 @@ export const AnalysisAurum: React.FC = () => {
     heroLastMonth,
     heroLastMonthPctMonthly,
     heroLastMonthPctMonthlyReal,
-    wealthLabModel,
   } = analysisEntry.value;
   const monthlyRowsByCurrencyForCopy = useMemo(() => {
-    const analysisClosures = buildAnalysisClosures(closures);
     return ANALYSIS_CURRENCIES.reduce<Record<WealthCurrency, MonthlyReturnRow[]>>(
       (result, targetCurrency) => {
         const officialRowsAsc = computeMonthlyRows(analysisClosures, includeRiskCapitalInTotals, targetCurrency);
@@ -422,7 +426,7 @@ export const AnalysisAurum: React.FC = () => {
       },
       { CLP: [], USD: [], EUR: [], UF: [] },
     );
-  }, [closures, includeEstimatedMonth, includeRiskCapitalInTotals, gastosSourceVersion, wealthSourceVersion]);
+  }, [analysisClosures, closures, includeEstimatedMonth, includeRiskCapitalInTotals]);
   useEffect(() => {
     if (!returnsSeriesView.hasEstimatedMonth) {
       setIncludeEstimatedMonth(false);
@@ -528,7 +532,7 @@ export const AnalysisAurum: React.FC = () => {
     heroLastMonth,
     heroLastMonthPctMonthly,
     heroLastMonthPctMonthlyReal,
-    currency,
+    currency: analysisCurrency,
     includeEstimatedMonth: includeEstimatedMonth && returnsSeriesView.hasEstimatedMonth,
     hasEstimatedMonth: returnsSeriesView.hasEstimatedMonth,
     estimatedMonthMeta: returnsSeriesView.pendingEstimate,
@@ -583,7 +587,7 @@ export const AnalysisAurum: React.FC = () => {
           </div>
         </div>
         {tab === 'returns' || tab === 'gastapp-validation' ? (
-          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5" aria-label="Moneda">
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5" aria-label="Moneda" aria-busy={isCurrencyUpdating}>
             {(['CLP', 'USD', 'EUR', 'UF'] as WealthCurrency[]).map((item) => (
               <button
                 key={item}
@@ -598,6 +602,11 @@ export const AnalysisAurum: React.FC = () => {
                 {item}
               </button>
             ))}
+            {isCurrencyUpdating ? (
+              <span className="ml-1 text-[11px] font-medium text-slate-500" role="status" aria-live="polite">
+                Actualizando a {currency}…
+              </span>
+            ) : null}
           </div>
         ) : null}
         {isSectionMenuOpen ? (
