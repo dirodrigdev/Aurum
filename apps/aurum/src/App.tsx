@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import { Layout } from './components/Layout';
@@ -15,6 +15,7 @@ import {
   consumeRedirectAuthResult,
   ensureAuthPersistence,
   ensureE2EEmulatorAuthentication,
+  getCurrentUid,
   signInWithGoogle,
 } from './services/firebase';
 import {
@@ -43,7 +44,14 @@ import {
   type WealthFxRates,
 } from './services/wealthStorage';
 import { hydrateWealthFromCloudShared } from './services/wealthHydration';
-import { subscribeHistoricalGastappSidecarForAnalysis, setHistoricalGastappSidecarForAnalysis } from './services/historicalGastappSidecar';
+import {
+  canUseHistoricalGastappSidecarForAnalysis,
+  clearHistoricalGastappSidecarForAnalysis,
+  getHistoricalGastappSidecarAnalysisState,
+  retryHistoricalGastappSidecarRead,
+  subscribeHistoricalGastappSidecarAnalysisState,
+  subscribeHistoricalGastappSidecarForAnalysis,
+} from './services/historicalGastappSidecar';
 import { GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT } from './services/gastosMonthly';
 import { applyCertifiedGastappRevisions } from './services/acceptReviewedGastappRevision';
 
@@ -394,6 +402,14 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   }, [user?.uid, user?.isAnonymous]);
 
   useEffect(() => {
+    if (!user || user.isAnonymous) {
+      clearHistoricalGastappSidecarForAnalysis();
+      return;
+    }
+    return subscribeHistoricalGastappSidecarForAnalysis();
+  }, [user?.uid, user?.isAnonymous]);
+
+  useEffect(() => {
     if (!user || user.isAnonymous) return;
     let cancelled = false;
     let hydrated = false;
@@ -442,13 +458,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         unsub();
         return;
       }
-      const unsubSidecar = await subscribeHistoricalGastappSidecarForAnalysis();
-      if (cancelled) {
-        unsub();
-        unsubSidecar();
-        return;
-      }
-      cleanup = () => { unsub(); unsubSidecar(); setHistoricalGastappSidecarForAnalysis(null, null); };
+      cleanup = unsub;
     })().catch(() => {
       // handled by storage/firestore status banners
     });
@@ -625,6 +635,53 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   );
 };
 
+const HistoricalGastappAnalysisGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const state = useSyncExternalStore(
+    subscribeHistoricalGastappSidecarAnalysisState,
+    getHistoricalGastappSidecarAnalysisState,
+    getHistoricalGastappSidecarAnalysisState,
+  );
+  const uid = getCurrentUid();
+  const canUseLastAuthoritativeSnapshot = canUseHistoricalGastappSidecarForAnalysis(state, uid);
+
+  if (!canUseLastAuthoritativeSnapshot) {
+    return (
+      <section
+        aria-live="polite"
+        className="mx-auto max-w-3xl rounded-2xl border border-slate-200 bg-white p-5 text-slate-700 shadow-sm"
+        data-testid="historical-gastapp-sidecar-state"
+      >
+        {state.status === 'error' && state.uid === uid ? (
+          <div role="alert" className="space-y-3">
+            <p className="font-semibold text-slate-900">No pude confirmar el histórico de GastApp.</p>
+            <p className="text-sm">Retornos y los resúmenes históricos están pausados para no mostrar meses como faltantes.</p>
+            <button
+              type="button"
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              onClick={() => void retryHistoricalGastappSidecarRead()}
+            >
+              Reintentar lectura
+            </button>
+          </div>
+        ) : (
+          <p role="status" className="font-medium">Cargando histórico de GastApp para el análisis…</p>
+        )}
+      </section>
+    );
+  }
+
+  return (
+    <>
+      {state.status === 'error' && (
+        <div role="status" className="mx-auto mb-4 max-w-5xl rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          No pude actualizar el histórico de GastApp. Se mantienen los últimos datos válidos.
+        </div>
+      )}
+      {children}
+    </>
+  );
+};
+
 const App: React.FC = () => {
   return (
     <AuthGate>
@@ -632,12 +689,12 @@ const App: React.FC = () => {
         <Routes>
           <Route element={<Layout />}>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/dashboard" element={<DashboardAurum />} />
-            <Route path="/presentation" element={<PresentationAurum />} />
+            <Route path="/dashboard" element={<HistoricalGastappAnalysisGate><DashboardAurum /></HistoricalGastappAnalysisGate>} />
+            <Route path="/presentation" element={<HistoricalGastappAnalysisGate><PresentationAurum /></HistoricalGastappAnalysisGate>} />
             <Route path="/ecosystem" element={<EcosystemAurum />} />
             <Route path="/patrimonio" element={<Patrimonio />} />
             <Route path="/closing" element={<ClosingAurum />} />
-            <Route path="/analysis" element={<AnalysisAurum />} />
+            <Route path="/analysis" element={<HistoricalGastappAnalysisGate><AnalysisAurum /></HistoricalGastappAnalysisGate>} />
             <Route path="/settings" element={<SettingsAurum />} />
           </Route>
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

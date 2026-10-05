@@ -240,8 +240,34 @@ describe('historical GastApp snapshot audit and in-memory simulation', () => {
     expect(after.coverage.current.ytd).toEqual({ valid: 8, expected: 8 });
     expect(buildHistoricalGastappSidecarPlan(after, sidecar)).toEqual(sidecar);
 
+    // The embedded snapshot remains authoritative even if a conflicting historical entry appears.
+    const conflictingCandidate = makeCandidate(existingMonth, { partialEur: 999 });
+    const conflictingSnapshot = buildGastappMonthlyExpenseCloseSnapshot(
+      conflictingCandidate.snapshot!,
+      closures[existingIndex].fxRates!,
+      '2026-10-04T10:00:00.000Z',
+    );
+    const sidecarWithConflict = structuredClone(sidecar);
+    sidecarWithConflict.snapshotsByMonth[existingMonth] = {
+      closureId: closures[existingIndex].id,
+      snapshot: conflictingSnapshot,
+      repairAudit: {
+        reason: 'historical_schema_compatibility_reconstruction',
+        reconstructedAt: '2026-10-04T12:00:00.000Z',
+        originalClosureAt: closures[existingIndex].closedAt,
+        preFingerprint: sha('f'),
+        postFingerprint: sha('f'),
+        sourceContractHash: conflictingSnapshot.contractHash,
+      },
+    };
+    setHistoricalGastappSidecarForAnalysis('synthetic-owner', sidecarWithConflict);
+    const embeddedRow = computeMonthlyRows([closures[existingIndex]], false, 'CLP')[0];
+    expect(embeddedRow.gastosClp).toBeCloseTo(
+      closures[existingIndex].gastappExpenseClose!.totalEur * closures[existingIndex].fxRates!.eurClp,
+    );
+    expect(getHistoricalGastappSnapshotForAnalysis(existingMonth, 'different-closure')).toBeUndefined();
+
     // A stale client still has root closures without sidecars. Cloud merging must never embed the overlay.
-    setHistoricalGastappSidecarForAnalysis('synthetic-owner', sidecar);
     expect(getHistoricalGastappSnapshotForAnalysis('2023-07', 'closure-2023-07')).toBeDefined();
     expect(computeMonthlyRows(closures, false, 'CLP').find((row) => row.monthKey === '2023-07')?.gastosClp).toBeGreaterThan(0);
     const staleMerge = mergeClosuresForSync(structuredClone(closures), structuredClone(closures), true);

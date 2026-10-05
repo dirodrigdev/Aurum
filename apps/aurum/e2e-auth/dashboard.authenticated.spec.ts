@@ -98,6 +98,9 @@ test('local emulator session loads Dashboard without external traffic', async ({
   await expect(page.getByText('Entrar con Google', { exact: true })).toHaveCount(0);
   await expect(page.getByText('Evolución patrimonial', { exact: true })).toBeVisible();
 
+  const dismissIncompleteClosure = page.getByRole('button', { name: 'Omitir', exact: true });
+  if (await dismissIncompleteClosure.isVisible()) await dismissIncompleteClosure.click();
+
   await page.getByRole('link', { name: 'Patrimonio', exact: true }).click();
   await expect(page.getByRole('link', { name: 'Patrimonio', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Dashboard', exact: true }).click();

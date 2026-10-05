@@ -38,6 +38,7 @@ import {
   selectReturnAggregateRows,
 } from '../services/returnsAnalysis';
 import { buildCrpContributionInsight } from '../services/returnsCrpInsight';
+import { getHistoricalGastappSidecarAnalysisState } from '../services/historicalGastappSidecar';
 import {
   buildClosuresFingerprint,
   clearAnalysisSessionCache,
@@ -75,6 +76,8 @@ const buildAnalysisFingerprint = ({
   includeEstimatedMonth,
   gastappSourceFingerprint,
   wealthSourceVersion,
+  sidecarUid,
+  sidecarDataRevision,
 }: {
   closuresFingerprint: string;
   includeRiskCapitalInTotals: boolean;
@@ -82,6 +85,8 @@ const buildAnalysisFingerprint = ({
   includeEstimatedMonth: boolean;
   gastappSourceFingerprint: string;
   wealthSourceVersion: number;
+  sidecarUid: string | null;
+  sidecarDataRevision: number;
 }) =>
   JSON.stringify({
     closuresFingerprint,
@@ -90,6 +95,8 @@ const buildAnalysisFingerprint = ({
     includeEstimatedMonth,
     gastappSourceFingerprint,
     wealthSourceVersion,
+    sidecarUid,
+    sidecarDataRevision,
   });
 
 const formatAnalysisUpdatedAt = (iso: string) => {
@@ -204,6 +211,7 @@ export const AnalysisAurum: React.FC = () => {
     });
   }, [gastosSourceVersion]);
   const gastappRuntimeDiagnostic = useMemo(() => getGastappMonthlyRuntimeDiagnostic(), [gastosSourceVersion]);
+  const historicalSidecarState = getHistoricalGastappSidecarAnalysisState();
   const analysisFingerprint = useMemo(
     () =>
       buildAnalysisFingerprint({
@@ -213,8 +221,19 @@ export const AnalysisAurum: React.FC = () => {
         includeEstimatedMonth,
         gastappSourceFingerprint,
         wealthSourceVersion,
+        sidecarUid: historicalSidecarState.uid,
+        sidecarDataRevision: historicalSidecarState.dataRevision,
       }),
-    [closuresFingerprint, includeRiskCapitalInTotals, currency, includeEstimatedMonth, gastappSourceFingerprint, wealthSourceVersion],
+    [
+      closuresFingerprint,
+      includeRiskCapitalInTotals,
+      currency,
+      includeEstimatedMonth,
+      gastappSourceFingerprint,
+      wealthSourceVersion,
+      historicalSidecarState.uid,
+      historicalSidecarState.dataRevision,
+    ],
   );
   const analysisEntry = useMemo(
     () =>
