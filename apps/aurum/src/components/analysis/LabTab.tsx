@@ -48,70 +48,6 @@ type LabTabProps = {
   onToggleRiskMode: () => void;
 };
 
-const LabCompositionBar: React.FC<{
-  totalClp: number;
-  resultadoSinFxClp: number;
-  efectoFxClp: number;
-}> = ({ totalClp, resultadoSinFxClp, efectoFxClp }) => {
-  const scale = Math.max(Math.abs(totalClp), Math.abs(resultadoSinFxClp), Math.abs(efectoFxClp), 1);
-  const toPct = (value: number) => 50 + (value / scale) * 45;
-  const zero = toPct(0);
-  const sinFxEnd = toPct(resultadoSinFxClp);
-  const totalEnd = toPct(totalClp);
-
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
-      <div className="text-xs font-medium text-slate-300">Serie FX heredada del Lab</div>
-      <div className="mt-1 text-xs text-slate-300/80">Indicador combinado = indicador sin FX + componente FX</div>
-      <div className="relative mt-3 h-8 rounded-full bg-white/5">
-        <div className="absolute inset-y-1/2 left-1/2 w-px -translate-y-1/2 bg-white/15" />
-        <div
-          className="absolute top-1/2 h-3 -translate-y-1/2 rounded-full bg-emerald-400/90"
-          style={{
-            left: `${Math.min(zero, sinFxEnd)}%`,
-            width: `${Math.max(0, Math.abs(sinFxEnd - zero))}%`,
-          }}
-        />
-        <div
-          className={cn(
-            'absolute top-1/2 h-3 -translate-y-1/2 rounded-full',
-            efectoFxClp >= 0 ? 'bg-sky-400/90' : 'bg-rose-400/90',
-          )}
-          style={{
-            left: `${Math.min(sinFxEnd, totalEnd)}%`,
-            width: `${Math.max(0, Math.abs(totalEnd - sinFxEnd))}%`,
-          }}
-        />
-        <div
-          className={cn(
-            'absolute top-1/2 h-4 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full border',
-            totalClp >= 0 ? 'border-white/80 bg-white' : 'border-rose-200 bg-rose-300',
-          )}
-          style={{ left: `${totalEnd}%` }}
-        />
-      </div>
-      <div className="mt-3 grid gap-2 text-[11px] text-slate-300 sm:grid-cols-3">
-        <div>
-          <div className="text-slate-400">Indicador sin FX</div>
-          <div className="font-medium text-emerald-300">{formatFreedomCompactClp(resultadoSinFxClp)}</div>
-        </div>
-        <div>
-          <div className="text-slate-400">Componente FX heredado</div>
-          <div className={cn('font-medium', efectoFxClp >= 0 ? 'text-sky-300' : 'text-rose-300')}>
-            {formatFreedomCompactClp(efectoFxClp)}
-          </div>
-        </div>
-        <div>
-          <div className="text-slate-400">Indicador combinado</div>
-          <div className={cn('font-medium', totalClp >= 0 ? 'text-white' : 'text-rose-300')}>
-            {formatFreedomCompactClp(totalClp)}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 export const LabTab: React.FC<LabTabProps> = ({ model, closures, includeRiskCapitalInTotals, onToggleRiskMode }) => {
   const uid = getCurrentUid();
   const [editingState, setEditingState] = useState({ dirty: false, saving: false });
@@ -187,10 +123,6 @@ export const LabTab: React.FC<LabTabProps> = ({ model, closures, includeRiskCapi
     return selectWealthLabPeriod({ ...model, points: boundedPoints }, window);
   }, [model, selectedEndMonth, selectedWindow]);
   const hasHistoricalPeriod = Boolean(selectedEndMonth && selectedPeriod.points.length);
-  const labValue = hasHistoricalPeriod ? selectedPeriod.headlineMetrics?.real.totalClp ?? null : null;
-  const sinFxValue = hasHistoricalPeriod ? selectedPeriod.headlineMetrics?.resultadoSinFx.totalClp ?? null : null;
-  const fxValue = hasHistoricalPeriod ? selectedPeriod.headlineMetrics?.aporteFx.totalClp ?? null : null;
-  const comparableMonths = selectedPeriod.headlineMetrics?.real.months ?? 0;
   const trendPoints = hasHistoricalPeriod
     ? selectedPeriod.points.filter((point) => point.varPatrimonioClp !== null)
     : [];
@@ -198,14 +130,6 @@ export const LabTab: React.FC<LabTabProps> = ({ model, closures, includeRiskCapi
     ? trendPoints.reduce((sum, point) => sum + Number(point.varPatrimonioClp), 0)
     : null;
   const trendScale = Math.max(1, ...trendPoints.map((point) => Math.abs(point.varPatrimonioClp || 0)));
-  const coverageNote =
-    !hasHistoricalPeriod || selectedPeriod.realMonths === 0
-      ? 'No hay cierres comparables para este período.'
-      : selectedPeriod.fxComparableMonths === 0
-        ? 'Este período no tiene base CLP/USD suficiente para separar el efecto cambiario patrimonial.'
-        : selectedPeriod.fxComparableMonths < selectedPeriod.realMonths
-          ? `El desglose cambiario cubre ${selectedPeriod.fxComparableMonths} de ${selectedPeriod.realMonths} meses.`
-          : 'El desglose patrimonial usa los meses con base CLP/USD comparable.';
   const endMonthLabel = selectedEndMonth ? monthLabel(selectedEndMonth) : 'Sin cierres';
   const globalPeriodLabel = selectedWindow === 'monthly'
     ? selectedFinancialPeriod
@@ -353,19 +277,7 @@ export const LabTab: React.FC<LabTabProps> = ({ model, closures, includeRiskCapi
             </div>
           </div>
         )}
-        <details className="mt-4 border-t border-slate-100 pt-4 text-xs text-slate-600">
-          <summary className="cursor-pointer font-semibold text-slate-700">Explorar la serie FX histórica del Lab</summary>
-          <p className="mt-2">
-            Esta serie experimental no concilia necesariamente con el cambio patrimonial observado y no mide rentabilidad de inversiones.
-            {comparableMonths > 0 && ` Cubre ${comparableMonths} meses con base FX comparable.`}
-          </p>
-          {labValue !== null && sinFxValue !== null && fxValue !== null && (
-            <div className="mt-3 rounded-xl bg-[#10203a] p-1 text-slate-100">
-              <LabCompositionBar totalClp={labValue} resultadoSinFxClp={sinFxValue} efectoFxClp={fxValue} />
-            </div>
-          )}
-          <p className="mt-2">{coverageNote}</p>
-        </details>
+
       </Card>
     </>
   );
