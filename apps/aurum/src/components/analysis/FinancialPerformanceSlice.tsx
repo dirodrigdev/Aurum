@@ -32,8 +32,9 @@ type ConfirmationDraft = Omit<FinancialPerformanceConfirmation, 'flows' | 'revis
 const emptyConfirmationDraft = (monthKey: string): ConfirmationDraft => ({
   schemaVersion: 1,
   monthKey,
-  flowCompleteness: 'incomplete',
-  positionMovementCompleteness: 'unconfirmed',
+  // New periods use the user's source-of-truth assumption locally; saving remains an explicit action.
+  flowCompleteness: 'complete',
+  positionMovementCompleteness: 'no_unrecorded_movements',
   flows: [],
 });
 
@@ -135,15 +136,26 @@ export const FinancialPerformanceSlice: React.FC<{
     window.addEventListener('beforeunload', warnBeforeUnload);
     return () => window.removeEventListener('beforeunload', warnBeforeUnload);
   }, [isDraftDirty, isSaving]);
+  const draftConfirmation = useMemo<FinancialPerformanceConfirmation>(() => ({
+    schemaVersion: 1,
+    monthKey: period.endMonth,
+    perimeter,
+    flowCompleteness: draft.flowCompleteness,
+    positionMovementCompleteness: draft.positionMovementCompleteness,
+    flows: draft.flows.map((flow) => ({ ...flow, amountClp: Number(flow.amountClp) })),
+  }), [draft, perimeter, period.endMonth]);
+  // A missing saved revision may use the initial draft after Firestore confirms that no revision exists.
+  // This is an in-memory assumption only; it is persisted only after an explicit user action.
+  const calculationConfirmation = confirmation ?? (storageReady && !isLoading ? draftConfirmation : null);
   const result = useMemo(
     () => reconcileFinancialPerformanceForPeriod({
       period,
       initialClosure: selectFinancialPerformanceClosure(closures, period.startMonth, includeRiskCapital),
       finalClosure: selectFinancialPerformanceClosure(closures, period.endMonth, includeRiskCapital),
-      confirmation,
+      confirmation: calculationConfirmation,
       includeRiskCapital,
     }),
-    [closures, confirmation, includeRiskCapital, period],
+    [calculationConfirmation, closures, includeRiskCapital, period],
   );
 
   const persistDraft = async (nextDraft: ConfirmationDraft) => {
@@ -275,14 +287,19 @@ export const FinancialPerformanceSlice: React.FC<{
       )}
 
       <FinancialPerformanceResultView
-        result={result} confirmation={confirmation} isLoading={isLoading}
+        result={result} confirmation={calculationConfirmation} hasSavedConfirmation={Boolean(confirmation)} isLoading={isLoading}
         storageReady={storageReady} storageError={Boolean(storageError)}
         closures={closures} includeRiskCapital={includeRiskCapital}
       />
       <p role="status" className="mt-4 text-xs text-slate-300">
-        {isDraftDirty ? 'Cambios sin guardar: el resultado publicado conserva la última confirmación guardada.' : confirmation?.revision
+        {isDraftDirty ? confirmation
+          ? 'Cambios sin guardar: el resultado publicado conserva la última confirmación guardada.'
+          : 'Borrador sin guardar: el resultado refleja los datos y supuestos de esta pantalla.'
+          : confirmation?.revision
           ? `Confirmación guardada · revisión ${confirmation.revision} · ${includeRiskCapital ? 'inversiones con CapRiesgo' : 'inversiones sin CapRiesgo'}.`
-          : 'Falta confirmar los movimientos de este período para publicar rentabilidad.'}
+          : storageReady && result.quality === 'RECONSTRUIDO'
+            ? 'Supuesto inicial sin guardar: lista completa, cero aportes/retiros y movimientos reflejados en Aurum.'
+            : 'Falta completar la validación de este período para reconstruir la rentabilidad.'}
       </p>
 
       <details className="mt-5 border-t border-white/10 pt-4">
@@ -300,8 +317,8 @@ export const FinancialPerformanceSlice: React.FC<{
               {isDraftDirty ? ' · cambios sin guardar' : ''}
             </div>
             <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-300/80">
-              <span>Flujos: {confirmation?.flowCompleteness === 'complete' ? 'lista completa' : 'pendiente'}</span>
-              <span>Movimientos de posiciones: {confirmation?.positionMovementCompleteness === 'no_unrecorded_movements' ? 'confirmados' : 'pendientes'}</span>
+              <span>Flujos: {calculationConfirmation?.flowCompleteness === 'complete' ? `lista completa${confirmation ? '' : ' · supuesto'}` : 'pendiente'}</span>
+              <span>Movimientos de posiciones: {calculationConfirmation?.positionMovementCompleteness === 'no_unrecorded_movements' ? `reflejados${confirmation ? '' : ' · supuesto'}` : 'pendientes'}</span>
             </div>
           </div>
           {isLoading && <span className="text-[11px] text-slate-300">Cargando confirmación…</span>}
@@ -455,10 +472,10 @@ export const FinancialPerformanceSlice: React.FC<{
                 }))}
                 className="mt-0.5 accent-emerald-400"
               />
-              Confirmo que no hubo compras, ventas ni traslados de posición sin registrar durante el período.
+              Confirmo que Aurum registra todas las compras, ventas y traslados de posición de este período.
             </label>
-            <p className="text-[10px] text-slate-400">
-              Esta confirmación es independiente de la lista de aportes y retiros. Si hubo compras, ventas o traslados no registrados, déjala sin marcar.
+            <p className="text-xs leading-relaxed text-slate-300">
+              Déjala marcada si Aurum ya registra todas esas operaciones. Si falta una o tienes dudas, desmárcala: el cálculo pasa a INDICATIVO y oculta la rentabilidad. Aplica a compras, ventas o traslados entre cuentas de inversión. Los cambios de precio y gastos personales de GastApp no cuentan aquí; los aportes y retiros se indican arriba.
             </p>
           </div>
           <button

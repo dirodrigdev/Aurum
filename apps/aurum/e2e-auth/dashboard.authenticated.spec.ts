@@ -214,7 +214,7 @@ test('authenticated Settings exposes the GastApp Canonical V2 read-only panel re
   expect(consoleErrors, `console errors: ${consoleErrors.join(' | ')}`).toEqual([]);
 });
 
-test('authenticated Analysis keeps monthly validation audit-only and responsive', async ({ page }, testInfo) => {
+test('authenticated Analysis reconstructs new periods from stated defaults and stays responsive', async ({ page }, testInfo) => {
   // La auditoría se captura completa en escritorio, tablet y móvil; en emuladores limpios supera los 30 s antes del teardown.
   test.setTimeout(60_000);
   const pageErrors: string[] = [];
@@ -277,20 +277,29 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
   await expect(page.getByRole('button', { name: 'Mostrar secciones de Análisis', exact: true })).toContainText('Rendimiento');
   await expect(page.getByRole('heading', { name: 'Cómo rindieron mis inversiones y por qué' })).toBeVisible();
   await expect(page.getByText('Variación observada', { exact: true })).toBeVisible();
-  await expect(page.getByText('INDICATIVO', { exact: true })).toBeVisible();
+  await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
   await page.getByLabel('Mes de cierre').selectOption('2023-06');
   await expect(page.getByRole('heading', { name: 'No hay dos cierres detallados consecutivos para Junio de 2023' })).toBeVisible();
   await expect(page.getByText(/sin cierre inicial comparable/).first()).toBeVisible();
   await page.getByLabel('Mes de cierre').selectOption('2026-08');
-  await expect(page.getByText('INDICATIVO', { exact: true })).toBeVisible();
-  await page.getByText('Completar validación del período', { exact: true }).click();
-  await expect(page.getByText('No hubo flujos este mes', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'No hubo flujos este mes', exact: true }).click();
-  await expect(page.getByText('INDICATIVO', { exact: true })).toBeVisible();
-  await expect(page.getByText(/^Guardado como revisión 1\./)).toBeVisible();
-  await page.getByLabel('Confirmo que no hubo compras, ventas ni traslados de posición sin registrar durante el período.').check();
-  await page.getByRole('button', { name: 'Guardar confirmación', exact: true }).click();
   await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Supuesto inicial sin guardar' })).toBeVisible();
+  await expect(page.getByTestId('financial-performance-published-value')).not.toHaveText('—');
+  await page.getByText('Revisar validación del período', { exact: true }).click();
+  await expect(page.getByRole('checkbox', { name: 'Confirmo que Aurum registra todas las compras, ventas y traslados de posición de este período.' })).toBeChecked();
+  await expect(page.getByRole('button', { name: 'Lista completa', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText(/la lista vacía se interpreta como cero aportes\/retiros/)).toBeVisible();
+  await expect(page.getByText('No hubo flujos este mes', { exact: true })).toBeVisible();
+  for (const [name, width, height] of [['desktop', 1280, 800], ['tablet', 768, 1024], ['mobile', 390, 844]] as const) {
+    await page.setViewportSize({ width, height });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: testInfo.outputPath(`aurum-rendimiento-assumed-${name}.png`), fullPage: true });
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.getByRole('button', { name: 'No hubo flujos este mes', exact: true }).click();
+  await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
+  await expect(page.getByText(/^Guardado como revisión 1\./)).toBeVisible();
   await expect(page.getByText(/Método simple · resultado de cartera/)).toBeVisible();
   await expect(page.getByText('Lista completa · 0 movimientos', { exact: true })).toBeVisible();
   const publishedPerformanceValue = page.getByTestId('financial-performance-published-value');
@@ -303,7 +312,7 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
   await expect(publishedPerformanceValue).toHaveText(simpleReturnValue);
   await expect(page.getByRole('status').filter({ hasText: 'Cambios sin guardar' })).toBeVisible();
   await page.getByRole('button', { name: 'Guardar confirmación', exact: true }).click();
-  await expect(page.getByText(/^Guardado como revisión 3\./)).toBeVisible();
+  await expect(page.getByText(/^Guardado como revisión 2\./)).toBeVisible();
   await expect(page.getByText('INDICATIVO', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Lista completa', exact: true }).click();
   await page.getByRole('button', { name: 'Guardar confirmación', exact: true }).click();
@@ -317,7 +326,7 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
   await page.getByRole('button', { name: 'Mostrar secciones de Análisis', exact: true }).click();
   await page.getByRole('button', { name: 'Rendimiento', exact: true }).click();
   await page.getByText('Revisar validación del período', { exact: true }).click();
-  await expect(page.getByText(/^Guardado como revisión 4\./)).toBeVisible();
+  await expect(page.getByText(/^Guardado como revisión 3\./)).toBeVisible();
   await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
   await expect(page.getByText(/Modified Dietz · resultado de cartera/)).toBeVisible();
   await expect(publishedPerformanceValue).toHaveText(modifiedDietzReturnValue);
@@ -342,30 +351,25 @@ test('authenticated Analysis keeps monthly validation audit-only and responsive'
   await expect(page.getByText('Cargando confirmación…', { exact: true })).toHaveCount(0);
   await expect(page.getByLabel('Mes de cierre')).toHaveValue('2026-07');
   await expect(page.getByRole('heading', { name: 'Qué cambió entre Junio de 2026 y Julio de 2026' })).toBeVisible();
-  await expect(page.getByText('INDICATIVO', { exact: true })).toBeVisible();
-  await page.getByText('Completar validación del período', { exact: true }).click();
+  await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
+  await page.getByText('Revisar validación del período', { exact: true }).click();
   await page.getByRole('button', { name: 'No hubo flujos este mes', exact: true }).click();
   await expect(page.getByText(/^Guardado como revisión 1\./)).toBeVisible();
-  await page.getByLabel('Confirmo que no hubo compras, ventas ni traslados de posición sin registrar durante el período.').check();
-  await page.getByRole('button', { name: 'Guardar confirmación', exact: true }).click();
   await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
-  await expect(page.getByText(/^Guardado como revisión 2\./)).toBeVisible();
   await page.getByLabel('Mes de cierre').selectOption('2026-08');
   await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
   await page.getByText('Revisar validación del período', { exact: true }).click();
-  await expect(page.getByText(/^Guardado como revisión 4\./)).toBeVisible();
+  await expect(page.getByText(/^Guardado como revisión 3\./)).toBeVisible();
   await expect(page.getByTestId('financial-performance-published-value')).toHaveText(modifiedDietzReturnValue);
   await Promise.all(persistedAttributionTestIds.map((testId, index) =>
     expect(page.getByTestId(testId)).toHaveText(modifiedDietzAttributions[index]),
   ));
   await page.getByRole('button', { name: 'Incluir CapRiesgo', exact: true }).click();
-  await expect(page.getByText('INDICATIVO', { exact: true })).toBeVisible();
-  await expect(publishedPerformanceValue).toHaveText('—');
-  await page.getByText('Completar validación del período', { exact: true }).click();
+  await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
+  await expect(publishedPerformanceValue).not.toHaveText('—');
+  await page.getByText('Revisar validación del período', { exact: true }).click();
   await page.getByRole('button', { name: 'No hubo flujos este mes', exact: true }).click();
   await expect(page.getByText(/^Guardado como revisión 1\./)).toBeVisible();
-  await page.getByLabel('Confirmo que no hubo compras, ventas ni traslados de posición sin registrar durante el período.').check();
-  await page.getByRole('button', { name: 'Guardar confirmación', exact: true }).click();
   await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
   await expect(page.getByText('Rentabilidad sin efecto cambiario', { exact: true })).toBeVisible();
   const riskReturn = await publishedPerformanceValue.innerText();

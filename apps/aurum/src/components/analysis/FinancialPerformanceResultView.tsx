@@ -14,26 +14,34 @@ const coverage = (status: AttributionCoverageStatus, value: number | null) =>
 export const FinancialPerformanceResultView: React.FC<{
   result: FinancialPerformanceResult;
   confirmation: FinancialPerformanceConfirmation | null;
+  hasSavedConfirmation: boolean;
   isLoading: boolean;
   storageReady: boolean;
   storageError: boolean;
   closures: WealthMonthlyClosure[];
   includeRiskCapital: boolean;
-}> = ({ result, confirmation, isLoading, storageReady, storageError, closures, includeRiskCapital }) => {
+}> = ({ result, confirmation, hasSavedConfirmation, isLoading, storageReady, storageError, closures, includeRiskCapital }) => {
   const canPublish = storageReady && !isLoading &&
     (result.quality === 'RECONSTRUIDO' || result.quality === 'EXACTO') && result.returnPct !== null;
   const method = result.returnMethod === 'simple' ? 'Método simple' : result.returnMethod === 'simple_adjusted' ? 'Método simple ajustado' : result.returnMethod === 'modified_dietz' ? 'Modified Dietz' : 'Método pendiente';
   const flowCount = confirmation?.flows.length ?? 0;
-  const flowLabel = result.flowListComplete ? `Lista completa · ${flowCount} ${flowCount === 1 ? 'movimiento' : 'movimientos'}` : 'Lista pendiente';
+  const flowLabel = result.flowListComplete ? `Lista completa${hasSavedConfirmation ? '' : ' · supuesto'} · ${flowCount} ${flowCount === 1 ? 'movimiento' : 'movimientos'}` : 'Lista pendiente';
   const explanation = result.attributionComplete
-    ? 'Cambio completamente explicado: resultado de inversiones, tipo de cambio e indexación UF.'
+    ? hasSavedConfirmation
+      ? 'Cambio completamente explicado: resultado de inversiones, tipo de cambio e indexación UF.'
+      : 'Cambio completamente explicado bajo los supuestos iniciales de esta pantalla.'
     : result.flowListComplete && flowCount > 0
-      ? 'La rentabilidad usa los flujos confirmados. Sin movimientos de capital por posición, el resultado permanece sin desglose por causa.'
+      ? hasSavedConfirmation
+        ? 'La rentabilidad usa los flujos confirmados. Sin movimientos de capital por posición, el resultado permanece sin desglose por causa.'
+        : 'La rentabilidad provisional usa los flujos ingresados en el borrador, que aún no está guardado.'
       : !result.flowListComplete
         ? 'Falta confirmar la lista completa de aportes y retiros. El cambio de saldo todavía no es rentabilidad.'
         : confirmation?.positionMovementCompleteness !== 'no_unrecorded_movements'
           ? 'Falta confirmar que no hubo compras, ventas ni traslados de posiciones sin registrar.'
           : 'Explicación parcial: faltan posiciones comparables o tasas confiables para completar el desglose.';
+  const qualityReason = !hasSavedConfirmation && storageReady
+    ? `Supuesto local sin guardar. ${result.qualityReason}`
+    : result.qualityReason;
   const causes = [
     { label: 'Resultado de inversiones', value: result.investmentAttributable, id: 'instruments', note: result.investmentAttributable === null ? 'Pendiente de atribución' : result.attributionComplete ? 'Posiciones conciliadas' : 'Atribución parcial' },
     { label: 'Efecto tipo de cambio · USD', value: result.usdFxAttributable, id: 'usd', note: coverage(result.usdFxCoverageStatus, result.usdFxCoveragePct) },
@@ -67,8 +75,16 @@ export const FinancialPerformanceResultView: React.FC<{
       <div className="mt-1 break-words text-3xl font-semibold tracking-tight text-white sm:text-4xl">
         <span data-testid="financial-performance-published-value">{isLoading ? 'Cargando…' : canPublish ? pct(result.returnPct) : '—'}</span>
       </div>
-      <p className="mt-2 text-xs text-slate-300">{canPublish ? `${method} · resultado de cartera ${money(result.portfolioResult)}` : storageError ? 'No pudimos comprobar la confirmación guardada.' : 'Se muestra la variación de saldos, no una rentabilidad confirmada.'}</p>
-      {canPublish && <p className="mt-1 text-xs text-slate-300">{flowCount > 0 ? 'Rentabilidad en CLP ajustada por los aportes y retiros confirmados.' : 'Rentabilidad total observada en CLP, incluidos tipo de cambio e indexación cuando existe exposición.'}</p>}
+      <p className="mt-2 text-xs text-slate-300">{canPublish
+        ? hasSavedConfirmation
+          ? `${method} · resultado de cartera ${money(result.portfolioResult)}`
+          : flowCount === 0
+            ? `Supuesto inicial sin guardar · ${method} · la lista vacía se interpreta como cero aportes/retiros.`
+            : `Borrador sin guardar · ${method} · se usan los ${flowCount} aportes/retiros ingresados.`
+        : storageError ? 'No pudimos comprobar la confirmación guardada.' : 'Se muestra la variación de saldos, no una rentabilidad confirmada.'}</p>
+      {canPublish && <p className="mt-1 text-xs text-slate-300">{flowCount > 0
+        ? `Rentabilidad en CLP ajustada por los aportes y retiros${hasSavedConfirmation ? ' confirmados' : ' ingresados en el borrador'}.`
+        : 'Rentabilidad total observada en CLP, incluidos tipo de cambio e indexación cuando existe exposición.'}</p>}
     </div>
     {canPublish && result.returnWithoutFxPct !== null && <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
       <div className="rounded-lg border border-white/10 p-3"><span>Rentabilidad sin efecto cambiario</span><strong className="mt-1 block text-base text-white">{pct(result.returnWithoutFxPct)}</strong><span>Resultado de inversiones e indexación UF.</span></div>
@@ -88,7 +104,7 @@ export const FinancialPerformanceResultView: React.FC<{
       <summary className="min-h-6 cursor-pointer font-semibold text-white">Ver cómo se concilia el cálculo</summary>
       <p className="mt-2 leading-relaxed">Variación = flujos conocidos + resultado de inversiones + USD + EUR + UF + no explicado. Los componentes pendientes siguen dentro de lo no explicado.</p>
       <dl className="mt-2 space-y-2">{auditValues.map(([label, value]) => <div key={label} className="flex flex-wrap justify-between gap-2"><dt>{label}</dt><dd className="break-all font-semibold text-white">{exactMoney(value)}</dd></div>)}</dl>
-      <p className="mt-3">{result.qualityReason}</p>
+      <p className="mt-3">{qualityReason}</p>
       <p className="mt-2">{result.attributionComplete ? 'Todas las posiciones conciliadas; tolerancia de $0,01 CLP. No se utiliza el redondeo de la pantalla como prueba de cobertura.' : 'Desglose por causa pendiente o parcial; un residuo redondeado a cero no confirma la cobertura.'}</p>
       {[result.period.startMonth, result.period.endMonth].map(monthKey => {
         const closure = selectFinancialPerformanceClosure(closures, monthKey, includeRiskCapital);

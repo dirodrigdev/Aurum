@@ -116,11 +116,46 @@ describe('financial performance confirmation read errors', () => {
       includeRiskCapital: true, period,
     })));
     expect(storageMock.load).toHaveBeenCalledWith(period, { expectedUid: 'performance-test-user', perimeter: 'investment_with_risk' });
+    expect((container.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true);
+    expect(Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Lista completa')?.getAttribute('aria-pressed')).toBe('true');
+    expect(container.textContent).toContain('RECONSTRUIDO');
+    expect(container.textContent).toContain('lista vacía se interpreta como cero aportes/retiros');
+    expect(storageMock.append).not.toHaveBeenCalled();
     const noFlows = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'No hubo flujos este mes');
     await act(async () => noFlows?.click());
     expect(storageMock.append).toHaveBeenCalledWith(expect.objectContaining({ perimeter: 'investment_with_risk' }), period,
       { expectedUid: 'performance-test-user', perimeter: 'investment_with_risk' });
+    expect(storageMock.append.mock.calls[0][0].positionMovementCompleteness).toBe('no_unrecorded_movements');
+    expect(container.textContent).toContain('RECONSTRUIDO');
+    expect(container.querySelector('[data-testid="financial-performance-published-value"]')?.textContent).not.toBe('—');
+  });
+
+  it('keeps the interval indicative when the user unchecks incomplete position movements', async () => {
+    storageMock.load.mockResolvedValue(null);
+    storageMock.append.mockImplementation(async (value) => ({ ...value, revision: 1 }));
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => root?.render(React.createElement(FinancialPerformanceSlice, {
+      closures: [makeClosure('2024-07', 100), makeClosure('2024-08', 110)],
+      includeRiskCapital: false, period: { startMonth: '2024-07', endMonth: '2024-08' },
+    })));
+
+    const movements = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    expect(movements.checked).toBe(true);
+    const completeFlows = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Lista completa');
+    expect(completeFlows?.getAttribute('aria-pressed')).toBe('true');
+    await act(async () => movements.click());
+    const save = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Guardar confirmación');
+    await act(async () => save?.click());
+
+    expect(storageMock.append).toHaveBeenCalledWith(
+      expect.objectContaining({ flowCompleteness: 'complete', positionMovementCompleteness: 'unconfirmed', flows: [] }),
+      { startMonth: '2024-07', endMonth: '2024-08' },
+      { expectedUid: 'performance-test-user', perimeter: 'investment' },
+    );
     expect(container.textContent).toContain('INDICATIVO');
+    expect(container.textContent).not.toContain('Rentabilidad financiera');
   });
 
   it('requires confirmation before replacing entered flows with zero and can discard a draft without writing', async () => {
@@ -171,7 +206,7 @@ describe('financial performance confirmation read errors', () => {
     expect(storageMock.append).not.toHaveBeenCalled();
   });
 
-  it('recovers a failed read without publishing or writing a confirmation on its own', async () => {
+  it('recovers a failed read and shows the reconstructed initial assumption without writing it', async () => {
     const closures = [makeClosure('2024-07', 1000000), makeClosure('2024-08', 1100000)];
     storageMock.load.mockRejectedValueOnce(new Error('permission-denied')).mockResolvedValueOnce(null);
     container = document.createElement('div');
@@ -184,7 +219,7 @@ describe('financial performance confirmation read errors', () => {
     expect(retry).toBeDefined();
     await act(async () => retry?.click());
     expect(storageMock.load).toHaveBeenCalledTimes(2);
-    expect(container.textContent).toContain('INDICATIVO');
+    expect(container.textContent).toContain('RECONSTRUIDO');
     expect(container.textContent).not.toContain('No verificable');
     expect(storageMock.append).not.toHaveBeenCalled();
   });
@@ -219,14 +254,17 @@ describe('financial performance confirmation read errors', () => {
     await act(async () => root?.render(React.createElement(LabTab, {
       model: buildWealthLabModel(closures), closures, includeRiskCapitalInTotals: false, onToggleRiskMode: vi.fn(),
     })));
-    const zeroFlows = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'No hubo flujos este mes');
-    await act(async () => zeroFlows?.click());
+    const movements = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    await act(async () => movements.click());
+    const save = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Guardar confirmación');
+    await act(async () => save?.click());
+    expect(storageMock.append).toHaveBeenCalledTimes(1);
     expect(container.textContent).toContain('cambios sin guardar');
     const retry = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Reintentar lectura');
     await act(async () => retry?.click());
     expect(container.textContent).toContain('cambios sin guardar');
-    const save = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Guardar confirmación');
-    expect(save?.disabled).toBe(false);
+    const retrySave = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Guardar confirmación');
+    expect(retrySave?.disabled).toBe(false);
     expect(storageMock.append).toHaveBeenCalledTimes(1);
   });
 
