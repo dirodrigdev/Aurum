@@ -18,7 +18,7 @@ const gastappMonthlyMock = vi.hoisted(() => ({
 }));
 
 const revisionSyncMock = vi.hoisted(() => ({
-  apply: vi.fn(async () => ({
+  apply: vi.fn(async (): Promise<any> => ({
     applied: [],
     pendingUncertified: [],
     failed: [],
