@@ -1,5 +1,5 @@
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, ChevronDown } from 'lucide-react';
+import { BarChart3, ChevronDown, RefreshCw } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { Button, Card } from '../components/Components';
 import { LabTab } from '../components/analysis/LabTab';
@@ -555,60 +555,65 @@ export const AnalysisAurum: React.FC = () => {
 
   return (
     <div className="space-y-3 p-3">
-      <Card className="sticky top-[68px] z-20 border-slate-200 bg-white/95 p-2 backdrop-blur">
-        <div className="flex flex-wrap items-center gap-2">
+      <Card className="sticky top-[41px] z-20 border-slate-200 bg-white/95 p-1.5 backdrop-blur">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <button
             type="button"
             aria-expanded={isSectionMenuOpen}
             aria-controls="analysis-section-menu"
             aria-label={`${isSectionMenuOpen ? 'Ocultar' : 'Mostrar'} secciones de Análisis`}
             onClick={() => setIsSectionMenuOpen((open) => !open)}
-            className="flex min-h-11 min-w-[150px] flex-1 items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left text-xs font-semibold text-slate-700 touch-manipulation"
+            className="flex min-h-10 min-w-[118px] max-w-[180px] flex-[1_1_135px] items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 touch-manipulation"
           >
-            <span className="min-w-0 leading-tight">
-              <span className="block text-[10px] font-medium uppercase tracking-wide text-slate-400">Sección</span>
-              <span className="block truncate">{analysisTabLabel(tab)}</span>
-            </span>
+            <span className="truncate">{analysisTabLabel(tab)}</span>
             <ChevronDown
-              size={16}
+              size={15}
               aria-hidden="true"
               className={`shrink-0 transition-transform ${isSectionMenuOpen ? 'rotate-180' : ''}`}
             />
           </button>
-          <div className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] text-slate-500">
-            <span className="whitespace-nowrap">{`Act. ${formatAnalysisUpdatedAt(analysisEntry.builtAt)}`}</span>
+
+          {tab === 'returns' || tab === 'gastapp-validation' ? (
+            <div
+              className="inline-flex min-h-10 items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5"
+              aria-label="Moneda"
+              aria-busy={isCurrencyUpdating}
+            >
+              {(['CLP', 'USD', 'EUR', 'UF'] as WealthCurrency[]).map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setCurrency(item)}
+                  className={`min-h-9 min-w-[42px] rounded-md px-2 text-[10px] font-semibold transition touch-manipulation ${
+                    currency === item
+                      ? 'bg-slate-800 text-white shadow-sm'
+                      : 'text-slate-600'
+                  }`}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="ml-auto inline-flex min-h-10 items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 pl-2 pr-1 text-[9px] text-slate-500">
+            <span className="whitespace-nowrap">{formatAnalysisUpdatedAt(analysisEntry.builtAt)}</span>
             <button
               type="button"
               onClick={refreshAnalysisModels}
-              className="min-h-9 min-w-[84px] rounded-full border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-600 transition hover:bg-slate-50 touch-manipulation"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50 touch-manipulation"
+              aria-label="Actualizar análisis"
+              title="Actualizar análisis"
             >
-              Actualizar
+              <RefreshCw size={14} aria-hidden="true" />
             </button>
           </div>
+          {isCurrencyUpdating ? (
+            <span className="sr-only" role="status" aria-live="polite">
+              Actualizando a {currency}…
+            </span>
+          ) : null}
         </div>
-        {tab === 'returns' || tab === 'gastapp-validation' ? (
-          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5" aria-label="Moneda" aria-busy={isCurrencyUpdating}>
-            {(['CLP', 'USD', 'EUR', 'UF'] as WealthCurrency[]).map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => setCurrency(item)}
-                className={`min-h-11 min-w-[52px] rounded-lg border px-3 py-2 text-[11px] font-semibold transition touch-manipulation ${
-                  currency === item
-                    ? 'border-slate-800 bg-slate-800 text-white'
-                    : 'border-slate-300 bg-white text-slate-600'
-                }`}
-              >
-                {item}
-              </button>
-            ))}
-            {isCurrencyUpdating ? (
-              <span className="ml-1 text-[11px] font-medium text-slate-500" role="status" aria-live="polite">
-                Actualizando a {currency}…
-              </span>
-            ) : null}
-          </div>
-        ) : null}
         {isSectionMenuOpen ? (
           <div id="analysis-section-menu" className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-3">
             <Button
