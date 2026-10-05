@@ -17,6 +17,14 @@ const gastappMonthlyMock = vi.hoisted(() => ({
   },
 }));
 
+const revisionSyncMock = vi.hoisted(() => ({
+  apply: vi.fn(async () => ({
+    applied: [],
+    pendingUncertified: [],
+    failed: [],
+  })),
+}));
+
 vi.mock('../src/components/analysis/ReturnsTab', () => ({
   ReturnsTab: () => React.createElement('div', null, 'ReturnsTab mock'),
 }));
@@ -160,6 +168,10 @@ vi.mock('../src/services/gastosMonthly', () => ({
   warmGastappMonthlyContable: vi.fn(async () => undefined),
 }));
 
+vi.mock('../src/services/acceptReviewedGastappRevision', () => ({
+  applyCertifiedGastappRevisions: revisionSyncMock.apply,
+}));
+
 vi.mock('../src/services/dataRoom/gastappAccessGuidance', () => ({
   describeGastappAnalysisAccessIssue: () => null,
 }));
@@ -183,6 +195,12 @@ describe('AnalysisAurum returns toolbar', () => {
     container = null;
     document.body.innerHTML = '';
     gastappMonthlyMock.refresh.mockClear();
+    revisionSyncMock.apply.mockReset();
+    revisionSyncMock.apply.mockResolvedValue({
+      applied: [],
+      pendingUncertified: [],
+      failed: [],
+    });
     gastappMonthlyMock.diagnostic = {
       status: 'idle',
       mode: null,
@@ -209,7 +227,7 @@ describe('AnalysisAurum returns toolbar', () => {
     expect(container.textContent).not.toContain('Última actualización:');
   });
 
-  it('reloads the official GastApp monthly contract before rebuilding returns', async () => {
+  it('applies certified GastApp revisions before rebuilding returns', async () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -228,7 +246,34 @@ describe('AnalysisAurum returns toolbar', () => {
       updateButton?.click();
     });
 
-    expect(gastappMonthlyMock.refresh).toHaveBeenCalledTimes(1);
+    expect(revisionSyncMock.apply).toHaveBeenCalledTimes(1);
+    expect(gastappMonthlyMock.refresh).not.toHaveBeenCalled();
+  });
+
+  it('shows an explicit warning when a certified GastApp revision cannot be applied', async () => {
+    revisionSyncMock.apply.mockResolvedValueOnce({
+      applied: [],
+      pendingUncertified: [],
+      failed: [{ monthKey: '2026-09', message: 'write failed' }],
+    });
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        React.createElement(MemoryRouter, null, React.createElement(AnalysisAurum)),
+      );
+    });
+
+    const updateButton = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Actualizar');
+
+    await act(async () => {
+      updateButton?.click();
+    });
+
+    expect(container.textContent).toContain('No pude aplicar la revisión certificada de GastApp en: 2026-09');
   });
 
   it('keeps the return-attribution lab and removes the financial-freedom tab', async () => {
