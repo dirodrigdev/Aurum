@@ -4,6 +4,7 @@ import { Gauge, Landmark, CalendarRange, Settings as SettingsIcon, LineChart } f
 import { cn, ConnectionBanner, FirestoreStatusBanner, FxSyncStatusBanner } from './Components';
 import { WealthDeltaToast } from './ui/WealthDeltaToast';
 import { useWealthDelta } from '../hooks/useWealthDelta';
+import { AurumWordmark } from './AurumWordmark';
 
 const NAVIGATE_PATRIMONIO_HOME_EVENT = 'aurum:navigate-patrimonio-home';
 export const BOTTOM_NAV_RETAP_EVENT = 'aurum:bottom-nav-retap';
@@ -34,12 +35,7 @@ export const Layout: React.FC = () => {
 
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-xl items-baseline gap-2 px-4 py-2">
-          <div
-            className="text-base text-slate-900"
-            style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 600 }}
-          >
-            aurum
-          </div>
+          <AurumWordmark className="text-base text-slate-900" />
           <div className="truncate text-[11px] text-slate-500">Gestor de patrimonio neto</div>
         </div>
       </header>
