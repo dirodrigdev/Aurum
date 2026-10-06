@@ -92,7 +92,7 @@ test('local emulator session loads Dashboard without external traffic', async ({
 
   const response = await page.goto('/#/dashboard');
   expect(response?.ok()).toBe(true);
-  await expect(page.getByText('Aurum', { exact: true })).toBeVisible();
+  await expect(page.getByText('aurum', { exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Dashboard', exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Patrimonio', exact: true })).toBeVisible();
   await expect(page.getByText('Entrar con Google', { exact: true })).toHaveCount(0);
@@ -286,7 +286,7 @@ test('authenticated Analysis reconstructs new periods from stated defaults and s
   await expect(page.getByRole('status').filter({ hasText: 'Supuesto inicial sin guardar' })).toBeVisible();
   await expect(page.getByTestId('financial-performance-published-value')).not.toHaveText('—');
   await page.getByText('Revisar validación del período', { exact: true }).click();
-  await expect(page.getByRole('checkbox', { name: 'Confirmo que Aurum registra todas las compras, ventas y traslados de posición de este período.' })).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'Confirmo que aurum registra todas las compras, ventas y traslados de posición de este período.' })).toBeChecked();
   await expect(page.getByRole('button', { name: 'Lista completa', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByText(/la lista vacía se interpreta como cero aportes\/retiros/)).toBeVisible();
   await expect(page.getByText('No hubo flujos este mes', { exact: true })).toBeVisible();
@@ -460,8 +460,8 @@ test('authenticated Analysis keeps GastApp-closed month visible as Aurum P and s
 
   await expect(page.getByText('Retorno económico', { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole('checkbox', { name: 'Incluir parcial actual (P) en cálculos' })).toHaveCount(1);
-  await expect(page.getByText(/GastApp cerrado oficialmente · cierre Aurum pendiente/)).toBeVisible();
-  await expect(page.getByRole('button', { name: /Mes provisional de Aurum/ })).toBeVisible();
+  await expect(page.getByText(/GastApp cerrado oficialmente · cierre aurum pendiente/)).toBeVisible();
+  await expect(page.getByRole('button', { name: /Mes provisional de aurum/ })).toBeVisible();
   const breakdownTrigger = page.getByRole('button', { name: /Ver desglose de GastApp de/ }).first();
   await expect(breakdownTrigger).toBeVisible();
   await breakdownTrigger.click();
@@ -594,10 +594,10 @@ test('Ecosystem presents the product map without private navigation and works re
   await expect(ecosystem).toBeVisible();
   await expect(page.getByText('Cierre mensual incompleto', { exact: true })).toHaveCount(0);
   await expect(ecosystem).toContainText('GastApp');
-  await expect(ecosystem).toContainText('Aurum');
+  await expect(ecosystem).toContainText('aurum');
   await expect(ecosystem).toContainText('MIDAS');
-  await expect(ecosystem).toContainText('La información mensual de GastApp alimenta análisis en Aurum.');
-  await expect(ecosystem).toContainText('La base patrimonial de Aurum sirve de partida para MIDAS.');
+  await expect(ecosystem).toContainText('La información mensual de GastApp alimenta análisis en aurum.');
+  await expect(ecosystem).toContainText('La base patrimonial de aurum sirve de partida para MIDAS.');
   await expect(ecosystem).toContainText('Las decisiones futuras pueden modificar los hábitos presentes.');
   await expect(ecosystem).toContainText('Es una relación entre decisiones y comportamiento, no un envío automático de datos de vuelta.');
   await expect(ecosystem.getByRole('link', { name: 'Volver a GastApp' })).toHaveAttribute('href', 'https://gastapp-chi.vercel.app/#/presentation');
