@@ -44,7 +44,7 @@ const AuditCard: React.FC<{ result: GastappCanonicalV2AuditResult }> = ({ result
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <div className="text-sm font-semibold text-slate-900">Auditoría de conservación V2</div>
-          <div className="mt-0.5 text-[11px] text-slate-600">Períodos reales para trazabilidad; meses calendario como única serie oficial de Aurum.</div>
+          <div className="mt-0.5 text-[11px] text-slate-600">Períodos reales para trazabilidad; meses calendario como única serie oficial de aurum.</div>
         </div>
         <div className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-800">
           {concordance.status === 'ok' ? 'Concordancia correcta' : 'Concordancia con límites explícitos'}
