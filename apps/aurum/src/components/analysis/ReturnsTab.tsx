@@ -203,7 +203,7 @@ const GastappBreakdownDialog: React.FC<{
         </div>
 
         <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-900">
-          GastApp ya publicó este cierre calendario. El mes sigue como <strong>P</strong> porque Aurum aún no ha formalizado su cierre patrimonial.
+          GastApp ya publicó este cierre calendario. El mes sigue como <strong>P</strong> porque aurum aún no ha formalizado su cierre patrimonial.
         </div>
       </div>
     </div>
@@ -1274,7 +1274,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       return {
         severity: 'alert' as SpendTrustSeverity,
         title: 'Gasto no confirmado en el cierre',
-        body: `Meses cerrados sin una versión de GastApp confirmada y guardada en Aurum: ${missingSpendMonths.map((m) => monthLabel(m)).join(', ')}. No se incluyen en agregados cerrados. Requieren una revisión explícita; no se sustituyen por el gasto actual ni se reconstruye el histórico automáticamente.`,
+        body: `Meses cerrados sin una versión de GastApp confirmada y guardada en aurum: ${missingSpendMonths.map((m) => monthLabel(m)).join(', ')}. No se incluyen en agregados cerrados. Requieren una revisión explícita; no se sustituyen por el gasto actual ni se reconstruye el histórico automáticamente.`,
       };
     }
     if (legacySpendMonths.length > 0) {
@@ -1314,8 +1314,8 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     }
     return {
       severity: 'ok' as SpendTrustSeverity,
-      title: 'Gasto confirmado en el cierre de Aurum',
-      body: 'Cada cierre utiliza la versión de GastApp aceptada en Aurum. Una nueva revisión requiere comparar y aceptar su impacto antes de actualizar las cifras.',
+      title: 'Gasto confirmado en el cierre de aurum',
+      body: 'Cada cierre utiliza la versión de GastApp aceptada en aurum. Una nueva revisión requiere comparar y aceptar su impacto antes de actualizar las cifras.',
     };
   }, [latestGastappSpendRow, legacySpendMonths.length, missingSpendMonths]);
   const spendTrustDetails = React.useMemo(() => {
@@ -1432,7 +1432,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   const spendTrustCollapsedLine = React.useMemo(() => {
     if (mainPendingOfficial) {
       return mainPendingOfficial.row.gastappOfficialForProvisional
-        ? `${monthLabel(mainPendingOfficial.row.monthKey)} GastApp cerrado · cierre Aurum pendiente`
+        ? `${monthLabel(mainPendingOfficial.row.monthKey)} GastApp cerrado · cierre aurum pendiente`
         : `${monthLabel(mainPendingOfficial.row.monthKey)} pendiente de cierre mensual de GastApp`;
     }
     if (missingSpendMonths.length > 0) {
@@ -1786,8 +1786,8 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
             {mainPendingOfficial && (
               <div className="mt-1">
                 {mainPendingOfficial.row.gastappOfficialForProvisional
-                  ? `${monthLabel(mainPendingOfficial.row.monthKey)} ya tiene el gasto certificado en GastApp; falta formalizar el cierre patrimonial en Aurum. Se muestra como provisional (P).`
-                  : `${monthLabel(mainPendingOfficial.row.monthKey)} sigue provisional (P). El retorno oficial requiere el gasto certificado en GastApp y el cierre confirmado en Aurum.`}
+                  ? `${monthLabel(mainPendingOfficial.row.monthKey)} ya tiene el gasto certificado en GastApp; falta formalizar el cierre patrimonial en aurum. Se muestra como provisional (P).`
+                  : `${monthLabel(mainPendingOfficial.row.monthKey)} sigue provisional (P). El retorno oficial requiere el gasto certificado en GastApp y el cierre confirmado en aurum.`}
               </div>
             )}
             {latestGastappSpendRow?.gastosStaleReason && legacySpendMonths.length === 0 && (
@@ -1981,7 +1981,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold text-slate-900">
-                {gastappOfficialForProvisional ? 'Mes provisional de Aurum' : 'Parcial publicado por GastApp'}
+                {gastappOfficialForProvisional ? 'Mes provisional de aurum' : 'Parcial publicado por GastApp'}
               </span>
               <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800">
                 Parcial (P)
@@ -1989,7 +1989,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
             </div>
             <div className="truncate text-[11px] text-slate-500">
               {gastappOfficialForProvisional
-                ? `${monthLabel(provisionalEstimate.monthKey)} · GastApp cerrado oficialmente · cierre Aurum pendiente`
+                ? `${monthLabel(provisionalEstimate.monthKey)} · GastApp cerrado oficialmente · cierre aurum pendiente`
                 : `${monthLabel(provisionalEstimate.monthKey)} · pendiente de cierre mensual confirmado`}
             </div>
           </div>
@@ -1999,7 +1999,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
           <div className="mt-2 border-t border-slate-200 pt-2">
             <div className="text-[11px] text-slate-500">
               {gastappOfficialForProvisional
-                ? 'El gasto de GastApp ya está cerrado oficialmente. Esta fila sigue como P porque el cierre patrimonial de Aurum aún no está confirmado; no se guarda como cierre.'
+                ? 'El gasto de GastApp ya está cerrado oficialmente. Esta fila sigue como P porque el cierre patrimonial de aurum aún no está confirmado; no se guarda como cierre.'
                 : 'Avance real, no cierre oficial. No se guarda como cierre y será reemplazado por el dato oficial de GastApp.'}
             </div>
             <div className="mt-1 text-[11px] text-slate-500">
@@ -2034,7 +2034,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                   </div>
                   <div className="mt-2 text-[10px] font-medium text-amber-700">
                     {gastappOfficialForProvisional
-                      ? 'P: cierre provisional de Aurum · GastApp ya está cerrado oficialmente.'
+                      ? 'P: cierre provisional de aurum · GastApp ya está cerrado oficialmente.'
                       : 'Parcial (P), no cierre oficial.'}
                   </div>
                 </div>
