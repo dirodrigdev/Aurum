@@ -712,7 +712,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       if (!synced) {
         setMidasPublication({
           status: 'error',
-          message: `Reparé localmente la metadata FX de ${repair.repairedClosureMonthKey}, pero no pude confirmarla en Aurum. Revisa la sincronización antes de publicar hacia MIDAS.`,
+          message: `Reparé localmente la metadata FX de ${repair.repairedClosureMonthKey}, pero no pude confirmarla en aurum. Revisa la sincronización antes de publicar hacia MIDAS.`,
         });
         return;
       }
