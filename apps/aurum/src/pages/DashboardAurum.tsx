@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { CalendarRange, ChevronRight, Home, Landmark, LineChart, Network, RefreshCcw, Settings, Shield, Sparkles, TrendingUp, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, cn } from '../components/Components';
+import { AurumWordmark } from '../components/AurumWordmark';
 import { formatFreedomCompactClp, formatPct } from '../components/analysis/shared';
 import type { ReturnCurvePoint } from '../components/analysis/types';
 import {
@@ -701,7 +702,7 @@ export const DashboardAurum: React.FC = () => {
 
       <section data-testid="dashboard-secondary" className="space-y-2.5">
         <div className="px-1">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-500">Explorar Aurum</div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-500">Explorar <AurumWordmark /></div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <DashboardNavCard
