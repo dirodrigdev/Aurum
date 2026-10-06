@@ -463,7 +463,7 @@ export const AnalysisAurum: React.FC = () => {
         return;
       }
       setErrorMessage(
-        `Faltan gastos confirmados y guardados en los cierres de Aurum: ${analysisDiagnostics.missingSpendMonths.join(', ')}. Esos meses no se incluyen en agregados ni se sustituyen por datos actuales de GastApp.`,
+        `Faltan gastos confirmados y guardados en los cierres de aurum: ${analysisDiagnostics.missingSpendMonths.join(', ')}. Esos meses no se incluyen en agregados ni se sustituyen por datos actuales de GastApp.`,
       );
       return;
     }
