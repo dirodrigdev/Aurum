@@ -705,7 +705,7 @@ export const resolveGastappMonthlyCloseCandidate = (
       partialGastosEur: null,
       partialByFamilyEur: null,
       snapshot: null,
-      message: 'Aurum aún no pudo leer months_current de GastApp.',
+      message: 'aurum aún no pudo leer months_current de GastApp.',
     });
   }
   const entry = gastappMonthlyRuntime.map[monthKey];
