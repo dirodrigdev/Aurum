@@ -1,4 +1,5 @@
 import React from 'react';
+import { AurumWordmark } from '../AurumWordmark';
 import { ChevronDown } from 'lucide-react';
 import { Button, Card } from '../Components';
 import {
@@ -81,7 +82,7 @@ export const SyncStatusSection: React.FC<SyncStatusSectionProps> = ({
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <div className="text-sm font-semibold text-slate-900">Publicación Aurum → MIDAS</div>
+                <div className="text-sm font-semibold text-slate-900">Publicación <AurumWordmark /> → MIDAS</div>
                 <div className="text-[11px] text-slate-500">Último cierre completo y trazable disponible</div>
               </div>
               <Button
