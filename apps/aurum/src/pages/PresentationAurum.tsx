@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { AurumWordmark } from '../components/AurumWordmark';
 import { buildAurumPresentationModel, type AurumPresentationViewModel } from '../services/presentationAurumModel';
 import {
   FX_RATES_UPDATED_EVENT,
@@ -19,7 +20,7 @@ const AurumPresentationView: React.FC<{ model: AurumPresentationViewModel }> = (
   return <div className="min-h-screen bg-[#f7f3eb] text-[#16253a]" data-testid="aurum-presentation">
     <div className="mx-auto max-w-5xl px-5 pb-16 sm:px-8">
       <header className="flex items-center justify-between border-b border-[#233d59]/15 py-5 text-sm">
-        <span className="font-bold text-[#15385d]">Aurum <span className="font-normal text-slate-500">· 02 Patrimonio</span></span>
+        <span className="font-bold text-[#15385d]"><AurumWordmark /> <span className="font-normal text-slate-500">· 02 Patrimonio</span></span>
         <span className="text-xs text-slate-500">Presentación · Datos relativos</span>
       </header>
       <main>
