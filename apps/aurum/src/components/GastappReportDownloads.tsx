@@ -59,7 +59,7 @@ export const GastappReportDownloads: React.FC = () => {
   return (
     <Card className="border border-emerald-200 bg-emerald-50/30 p-3" data-testid="gastapp-reports-block">
       <div className="text-sm font-semibold text-slate-900">Descargas de GastApp</div>
-      <div className="mt-1 text-[11px] text-slate-600">Informes bajo demanda · la descarga se prepara en GastApp y vuelve a Aurum</div>
+      <div className="mt-1 text-[11px] text-slate-600">Informes bajo demanda · la descarga se prepara en GastApp y vuelve a aurum</div>
       <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
         {REPORTS.map(([kind, label]) => {
           const report = downloads[kind];
