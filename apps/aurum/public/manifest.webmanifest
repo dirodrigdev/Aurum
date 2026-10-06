@@ -1,6 +1,6 @@
 {
-  "name": "Aurum",
-  "short_name": "Aurum",
+  "name": "aurum",
+  "short_name": "aurum",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f172a",
