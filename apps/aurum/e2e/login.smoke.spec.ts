@@ -56,7 +56,7 @@ test('unauthenticated login screen mounts safely', async ({ page }, testInfo) =>
 
   const response = await page.goto('/');
   expect(response?.ok()).toBe(true);
-  await expect(page.getByText('Aurum', { exact: true })).toBeVisible();
+  await expect(page.getByText('aurum', { exact: true })).toBeVisible();
   await expect(
     page.getByText('Inicia sesión con tu cuenta Google para sincronizar el mismo patrimonio en todos tus dispositivos.'),
   ).toBeVisible();
