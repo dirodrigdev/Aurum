@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { AurumWordmark } from '../AurumWordmark';
 import { Button } from '../Components';
 import {
   runHistoricalGastappBackfillAudit,
@@ -56,7 +57,7 @@ export const HistoricalGastappBackfillAuditConsole: React.FC<{ authEmail: string
         <div>
           <h3 id="historical-gastapp-audit-title" className="font-semibold text-slate-900">Auditoría histórica GastApp</h3>
           <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-600">
-            Lee desde servidor los cierres de Aurum, el sidecar y el contrato mensual oficial Canonical V2. La auditoría no escribe datos.
+            Lee desde servidor los cierres de aurum, el sidecar y el contrato mensual oficial Canonical V2. La auditoría no escribe datos.
           </p>
         </div>
         <Button className="h-auto min-h-10" variant="outline" disabled={busy} onClick={() => void runAudit()}>
@@ -80,7 +81,7 @@ export const HistoricalGastappBackfillAuditConsole: React.FC<{ authEmail: string
         return (
           <div className="mt-3 space-y-3">
             <div className="rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-600">
-              <div>Aurum: <span className="font-mono">{sources.wealthProjectId || 'proyecto desconocido'}</span> · documento {sources.wealthDocumentExists ? 'encontrado' : 'no encontrado'} · actualizado {sources.wealthUpdatedAt || '—'}</div>
+              <div><AurumWordmark />: <span className="font-mono">{sources.wealthProjectId || 'proyecto desconocido'}</span> · documento {sources.wealthDocumentExists ? 'encontrado' : 'no encontrado'} · actualizado {sources.wealthUpdatedAt || '—'}</div>
               <div>GastApp: <span className="font-mono">{sources.gastappProjectId || 'proyecto desconocido'}</span> · {sources.gastappContractVersion} · publicado {sources.gastappGeneratedAt} · {sources.gastappMonthsRead} meses</div>
               <div>Lectura de servidor: {result.auditedAt} · {sources.readMode}</div>
             </div>
