@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import { Layout } from './components/Layout';
+import { AurumWordmark } from './components/AurumWordmark';
 import { Patrimonio } from './pages/Patrimonio';
 import { SettingsAurum } from './pages/SettingsAurum';
 import { ClosingAurum } from './pages/ClosingAurum';
@@ -477,7 +478,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-100 p-6">
         <div className="w-full max-w-sm rounded-3xl border border-slate-200 bg-white p-6 text-center shadow-sm">
-          <div className="text-lg font-semibold text-slate-900">Aurum</div>
+          <AurumWordmark className="text-lg text-slate-900" />
           <div className="mt-2 text-sm text-slate-500">Cargando sesión segura...</div>
         </div>
       </div>
@@ -488,7 +489,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-[#f6f3eb] to-[#e9efe4] p-6">
         <div className="w-full max-w-md rounded-3xl border border-[#ddd4c6] bg-white/90 p-7 shadow-lg">
-          <div className="text-3xl font-bold text-slate-900">Aurum</div>
+          <AurumWordmark className="text-3xl text-slate-900" />
           <div className="mt-2 text-sm text-slate-600">
             Inicia sesión con tu cuenta Google para sincronizar el mismo patrimonio en todos tus dispositivos.
           </div>
