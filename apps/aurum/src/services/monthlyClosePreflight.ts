@@ -1175,14 +1175,14 @@ export const buildMonthlyClosePreflightDiagnostic = (
         gastappExpenseReady ? 'ok' : 'fail',
         gastappExpenseReady
           ? `GastApp cerró ${targetMonthKey} con ${Number(gastappExpenseClose?.partialGastosEur || 0).toLocaleString('es-ES')} EUR y snapshot conciliado.`
-          : gastappExpenseClose?.message || 'Falta leer el cierre mensual de GastApp antes de cerrar Aurum.',
+          : gastappExpenseClose?.message || 'Falta leer el cierre mensual de GastApp antes de cerrar aurum.',
       ),
     );
     if (gastappExpenseClose?.sourceChangedAfterClosure) {
       checks.unshift(
         buildCheck(
           'gastapp_monthly_source_changed',
-          'cambios de GastApp desde el cierre Aurum guardado',
+          'cambios de GastApp desde el cierre aurum guardado',
           'fail',
           'GastApp publicó una revisión para este mes. Abre «Revisar impacto» y acepta la versión comparada con «Aceptar y actualizar cadena» cuando esté certificada. Después vuelve a simular el cierre. Se conservan los registros y tasas del cierre patrimonial.',
         ),
