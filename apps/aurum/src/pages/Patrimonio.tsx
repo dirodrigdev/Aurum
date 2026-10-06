@@ -15,6 +15,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { Button, Card, cn, Input, Select } from '../components/Components';
+import { AurumWordmark } from '../components/AurumWordmark';
 import { CloseConfirmModal } from '../components/patrimonio/CloseConfirmModal';
 import { NextMonthStartReminder, type NextMonthStartReminderViewModel } from '../components/patrimonio/NextMonthStartReminder';
 import {
@@ -6512,13 +6513,13 @@ export const Patrimonio: React.FC = () => {
     });
     if (selectedClosureForDraft?.gastappExpenseClose && gastappExpenseClose.sourceChangedAfterClosure) {
       const message = gastappExpenseClose.snapshot
-        ? 'GastApp tiene una revisión certificada nueva y Aurum la está aplicando automáticamente. Espera a que termine la sincronización antes de volver a cerrar este mes.'
-        : 'GastApp cambió este mes, pero la nueva versión todavía no está certificada. Aurum conserva el cierre anterior hasta que la publicación quede completa.';
+        ? 'GastApp tiene una revisión certificada nueva y aurum la está aplicando automáticamente. Espera a que termine la sincronización antes de volver a cerrar este mes.'
+        : 'GastApp cambió este mes, pero la nueva versión todavía no está certificada. aurum conserva el cierre anterior hasta que la publicación quede completa.';
       setCloseError(message);
       return { ok: false, errorMessage: message };
     }
     if (!gastappExpenseClose.snapshot) {
-      const message = `No se puede cerrar Aurum: ${gastappExpenseClose.message}`;
+      const message = `No se puede cerrar aurum: ${gastappExpenseClose.message}`;
       setCloseInfo('');
       setCloseError(message);
       return { ok: false, errorMessage: message };
@@ -7943,7 +7944,7 @@ export const Patrimonio: React.FC = () => {
     <div className="p-3 space-y-3">
       {!!unreadGastappRevisionNotices.length && (
         <section className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-950" aria-live="polite">
-          <div className="font-semibold">GastApp actualizó cierres de Aurum</div>
+          <div className="font-semibold">GastApp actualizó cierres de aurum</div>
           <p className="mt-1 text-xs">La corrección ya está aplicada. Este aviso sólo explica el impacto; “OK, leído” no cambia datos.</p>
           <div className="mt-2 space-y-2">
             {unreadGastappRevisionNotices.map((notice) => {
@@ -7973,7 +7974,7 @@ export const Patrimonio: React.FC = () => {
       {!!pendingUncertifiedGastappRevisions.length && (
         <section className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" aria-live="polite">
           <div className="font-semibold">GastApp tiene cambios todavía no certificados</div>
-          <p className="mt-1 text-xs">Aurum conserva la última versión certificada. No se aplicará nada hasta que GastApp publique una revisión completa y trazable.</p>
+          <p className="mt-1 text-xs">aurum conserva la última versión certificada. No se aplicará nada hasta que GastApp publique una revisión completa y trazable.</p>
           <div className="mt-2 space-y-1 text-xs">
             {pendingUncertifiedGastappRevisions.map(({ closure, candidate }) => (
               <div key={closure.monthKey}>
@@ -8036,7 +8037,7 @@ export const Patrimonio: React.FC = () => {
       <Card className="relative overflow-hidden border-0 p-4 bg-gradient-to-br from-[#103c35] via-[#165347] to-[#1f4a3a] text-white shadow-[0_16px_36px_rgba(11,38,34,0.55)]">
         <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_top_right,_#c59a6c_0%,_transparent_46%)]" />
         <div className="relative">
-          <div className="text-xs uppercase tracking-[0.22em] text-[#f3eadb]">Aurum Wealth</div>
+          <div className="text-xs tracking-[0.22em] text-[#f3eadb]"><AurumWordmark /> <span className="uppercase">Wealth</span></div>
           <div className="mt-1 text-sm text-[#e0d6c5]">Resumen estratégico {monthLabel(monthKey).toLowerCase()}</div>
           {isFirstUseOnboarding && (
             <div className="mt-3 rounded-xl border border-[#c59a6c]/35 bg-[#f6efe3]/12 p-3 text-xs text-[#f3eadb]">
@@ -8804,10 +8805,10 @@ export const Patrimonio: React.FC = () => {
                 <div className="font-semibold">Revisión de GastApp · {monthLabel(closeMonthDraft)}</div>
                 {gastappMonthlyCloseCandidate.snapshot ? (
                   <div className="mt-1">
-                    GastApp publicó una revisión certificada. Aurum la aplica automáticamente y conserva la versión anterior para auditoría; no requiere aprobación manual.
+                    GastApp publicó una revisión certificada. aurum la aplica automáticamente y conserva la versión anterior para auditoría; no requiere aprobación manual.
                   </div>
                 ) : (
-                  <div className="mt-1">GastApp cambió este mes, pero su nueva versión aún no está certificada. El cierre Aurum permanece con la versión anterior.</div>
+                  <div className="mt-1">GastApp cambió este mes, pero su nueva versión aún no está certificada. El cierre aurum permanece con la versión anterior.</div>
                 )}
               </div>
             )}
