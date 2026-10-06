@@ -34,7 +34,12 @@ export const Layout: React.FC = () => {
 
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-xl items-baseline gap-2 px-4 py-2">
-          <div className="text-base font-bold text-slate-900">Aurum</div>
+          <div
+            className="text-base text-slate-900"
+            style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 600 }}
+          >
+            aurum
+          </div>
           <div className="truncate text-[11px] text-slate-500">Gestor de patrimonio neto</div>
         </div>
       </header>
