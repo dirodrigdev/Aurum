@@ -34,6 +34,13 @@ body {
   background-color: #f8fafc;
 }
 
+.aurum-wordmark {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 button,
 a,
 [role='button'] {
