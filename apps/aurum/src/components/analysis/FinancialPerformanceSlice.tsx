@@ -531,10 +531,10 @@ export const FinancialPerformanceSlice: React.FC<{
                 }))}
                 className="mt-0.5 accent-emerald-400"
               />
-              Confirmo que Aurum registra todas las compras, ventas y traslados de posición de este período.
+              Confirmo que aurum registra todas las compras, ventas y traslados de posición de este período.
             </label>
             <p className="text-xs leading-relaxed text-slate-300">
-              Déjala marcada si Aurum ya registra todas esas operaciones. Si falta una o tienes dudas, desmárcala: el cálculo pasa a INDICATIVO y oculta la rentabilidad. Aplica a compras, ventas o traslados entre cuentas de inversión. Los cambios de precio y gastos personales de GastApp no cuentan aquí; los aportes y retiros se indican arriba.
+              Déjala marcada si aurum ya registra todas esas operaciones. Si falta una o tienes dudas, desmárcala: el cálculo pasa a INDICATIVO y oculta la rentabilidad. Aplica a compras, ventas o traslados entre cuentas de inversión. Los cambios de precio y gastos personales de GastApp no cuentan aquí; los aportes y retiros se indican arriba.
             </p>
           </div>
           <button
