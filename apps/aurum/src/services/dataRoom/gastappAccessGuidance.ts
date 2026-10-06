@@ -45,7 +45,7 @@ export const isGastappPermissionDenied = (
 };
 
 export const buildGastappAccessGuidanceMessage = (
-  finalStep = '4. Vuelve a Aurum y presiona “Reintentar” o “Actualizar análisis”.',
+  finalStep = '4. Vuelve a aurum y presiona “Reintentar” o “Actualizar análisis”.',
   technicalDetail?: string | null,
 ) => {
   const lines = [
@@ -69,7 +69,7 @@ export const describeGastappDataRoomV2Status = (input: {
   const { status, errorMessage, technicalDetail, retryActionLabel } = input;
   if (isGastappPermissionDenied(status, errorMessage)) {
     return buildGastappAccessGuidanceMessage(
-      `4. Vuelve a Aurum y presiona “${retryActionLabel || 'Reintentar'}”.`,
+      `4. Vuelve a aurum y presiona “${retryActionLabel || 'Reintentar'}”.`,
       technicalDetail || 'permission_denied al leer el Informe completo de GastApp.',
     );
   }
