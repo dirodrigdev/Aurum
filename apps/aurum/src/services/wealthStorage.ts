@@ -8836,3 +8836,45 @@ export const clearWealthDataForFreshStart = async (
 
   return { cloudCleared: true, mode: 'cloud' };
 };
+
+
+// Read-once GastApp correction notices. Acknowledgements are stored in the
+// existing per-user wealth document, outside the sealed financial fields.
+// They synchronize across devices but never modify closures or their history.
+const GASTAPP_REVISION_NOTICE_SEEN_FIELD = 'gastappRevisionNoticeSeenV1';
+const normalizeGastappRevisionSeenHashes = (value: unknown): Record<string, string> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .filter(([month, hash]) =>
+      /^\d{4}-(0[1-9]|1[0-2])$/.test(month)
+      && typeof hash === 'string'
+      && hash.trim().length > 0
+      && hash.length <= 160)
+    .map(([month, hash]) => [month, String(hash)]));
+};
+
+export const readGastappRevisionSeenHashes = async (): Promise<Record<string, string>> => {
+  const ref = await getWealthCloudRef();
+  if (!ref) throw new Error('No se pudo verificar el estado de avisos en la nube.');
+  const snap = await getDocFromServer(ref);
+  return normalizeGastappRevisionSeenHashes(snap.data()?.[GASTAPP_REVISION_NOTICE_SEEN_FIELD]);
+};
+
+export const acknowledgeGastappRevisionNotices = async (
+  updates: Array<{ monthKey: string; contractHash: string }>,
+): Promise<Record<string, string>> => {
+  const ref = await getWealthCloudRef();
+  if (!ref) throw new Error('No se pudieron guardar los avisos leídos en la nube.');
+  const validUpdates = updates.filter((item) =>
+    /^\d{4}-(0[1-9]|1[0-2])$/.test(item.monthKey)
+    && Boolean(item.contractHash?.trim()));
+  if (!validUpdates.length) return readGastappRevisionSeenHashes();
+  return runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(ref);
+    const seen = normalizeGastappRevisionSeenHashes(
+      snap.data()?.[GASTAPP_REVISION_NOTICE_SEEN_FIELD]);
+    for (const item of validUpdates) seen[item.monthKey] = item.contractHash;
+    transaction.set(ref, { [GASTAPP_REVISION_NOTICE_SEEN_FIELD]: seen }, { merge: true });
+    return seen;
+  });
+};
