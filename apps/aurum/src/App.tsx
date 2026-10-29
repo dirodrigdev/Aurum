@@ -542,6 +542,13 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     };
   }, [user?.uid, user?.isAnonymous]);
 
+  const activeRevision = revisionInbox.find((item) => item.monthKey === revisionSelectedMonth) || revisionInbox[0] || null;
+  const activeExpenseDelta = activeRevision
+    ? activeRevision.updatedGastosEur - activeRevision.originalGastosEur : 0;
+  const activeRateDelta = activeRevision && activeRevision.originalReturnPct !== null
+    && activeRevision.updatedReturnPct !== null
+    ? activeRevision.updatedReturnPct - activeRevision.originalReturnPct : null;
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-100 p-6">
@@ -662,7 +669,105 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           </div>
         </div>
       )}
-      {!isPresentationRoute && !fxIndicatorPrompt && !!incompletePrompt && (
+
+      {!isPresentationRoute && !fxIndicatorPrompt && activeRevision && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/45 p-3" role="dialog" aria-modal="true" aria-label="Cambios financieros aplicados">
+          <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl sm:p-6">
+            <div className="flex items-start gap-3">
+              <div className="rounded-xl bg-slate-100 p-2 text-slate-700">
+                <History size={22} aria-hidden="true" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Cambios financieros aplicados</h2>
+                <p className="mt-1 text-xs text-slate-600">
+                  Aurum actualizó {revisionInbox.length} {revisionInbox.length === 1 ? 'mes' : 'meses'} desde tu última revisión. Este aviso se muestra una sola vez.
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 space-y-2" role="group" aria-label="Meses actualizados">
+              {revisionInbox.map((item) => {
+                const selected = item.monthKey === activeRevision.monthKey;
+                const change = item.updatedGastosEur - item.originalGastosEur;
+                return (
+                  <button
+                    type="button"
+                    key={item.monthKey}
+                    onClick={() => setRevisionSelectedMonth(item.monthKey)}
+                    aria-pressed={selected}
+                    className={'flex w-full items-center justify-between rounded-xl border p-3 text-left transition ' + (selected ? 'border-slate-500 bg-slate-100' : 'border-slate-200 bg-white hover:bg-slate-50')}
+                  >
+                    <div>
+                      <div className="text-sm font-semibold text-slate-800">{monthLabelFromKey(item.monthKey)}</div>
+                      <div className="text-[11px] text-slate-500">
+                        {item.revisionCount} {item.revisionCount === 1 ? 'revisión certificada' : 'revisiones certificadas'}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-semibold tabular-nums text-slate-800">
+                        {change > 0 ? '+' : ''}{eurForRevision(change)}
+                      </div>
+                      <div className="text-[11px] text-slate-500">Cambio en gastos</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-3 rounded-xl bg-slate-50 p-4">
+              <h3 className="mb-3 text-sm font-semibold text-slate-800">
+                {monthLabelFromKey(activeRevision.monthKey)} · Antes y ahora
+              </h3>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="text-[11px] text-slate-500">Gastos anteriores</div>
+                  <div className="text-base font-semibold tabular-nums text-slate-900">{eurForRevision(activeRevision.originalGastosEur)}</div>
+                </div>
+                <div>
+                  <div className="text-[11px] text-slate-500">Gastos actualizados</div>
+                  <div className="text-base font-semibold tabular-nums text-slate-900">{eurForRevision(activeRevision.updatedGastosEur)}</div>
+                  <div className="text-[11px] text-slate-500">
+                    Diferencia: {activeExpenseDelta > 0 ? '+' : ''}{eurForRevision(activeExpenseDelta)}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 border-t border-slate-200 pt-3">
+                <p className="mb-2 text-[11px] font-medium text-slate-600">Rentabilidad económica mensual (CLP)</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-[11px] text-slate-500">Antes</div>
+                    <div className="text-base font-semibold tabular-nums text-slate-900">{pctForRevision(activeRevision.originalReturnPct)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-slate-500">Ahora</div>
+                    <div className="text-base font-semibold tabular-nums text-slate-900">{pctForRevision(activeRevision.updatedReturnPct)}</div>
+                    <div className="text-[11px] text-slate-500">
+                      Variación: {activeRateDelta === null ? 'no disponible' :
+                        (activeRateDelta > 0 ? '+' : '') + activeRateDelta.toLocaleString('es-ES', {
+                          minimumFractionDigits: 2, maximumFractionDigits: 2,
+                        }) + ' pp'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 flex items-center gap-2 text-xs text-slate-600">
+              <CheckCircle2 size={16} className="shrink-0 text-emerald-700" aria-hidden="true" />
+              Revisión certificada aplicada. Se conservaron el cierre patrimonial y los tipos de cambio.
+            </div>
+            {revisionNoticeError && <p role="alert" className="mt-3 text-xs text-red-700">{revisionNoticeError}</p>}
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                disabled={revisionNoticeBusy}
+                onClick={() => void acknowledgeRevisionInbox()}
+                className="rounded-xl bg-[#9c6b36] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#8b5f30] disabled:opacity-60"
+              >
+                {revisionNoticeBusy ? 'Guardando…' : 'Entendido'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {!isPresentationRoute && !fxIndicatorPrompt && !activeRevision && !!incompletePrompt && (
         <div className="fixed inset-0 z-[120] bg-black/45 p-4 flex items-center justify-center">
           <div className="w-full max-w-md rounded-2xl border border-amber-200 bg-white p-5 shadow-2xl">
             <div className="text-lg font-semibold text-slate-900">Cierre mensual incompleto</div>
