@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GastappMonthlyCloseCandidate } from '../src/services/gastosMonthly';
 
 const mocks = vi.hoisted(() => ({
-  refresh: vi.fn(), resolve: vi.fn(), load: vi.fn(), accept: vi.fn(),
+  refresh: vi.fn(), resolve: vi.fn(), load: vi.fn(), accept: vi.fn(), returns: vi.fn(),
+}));
+vi.mock('../src/services/returnsAnalysis', () => ({
+  computeMonthlyRows: mocks.returns,
 }));
 vi.mock('../src/services/gastosMonthly', () => ({
   refreshGastappMonthlyContable: mocks.refresh,
@@ -16,6 +19,7 @@ import {
   acceptReviewedGastappRevision,
   applyCertifiedGastappRevisions,
   buildGastappRevisionNotices,
+  buildGastappRevisionInbox,
   gastappRevisionNoticeKey,
 } from '../src/services/acceptReviewedGastappRevision';
 
@@ -119,6 +123,10 @@ describe('automatic certified GastApp revision sync', () => {
 });
 
 describe('post-application GastApp revision notices', () => {
+  beforeEach(() => {
+    mocks.returns.mockImplementation((clos: Array<{monthKey: string; gastappExpenseClose?: {totalEur: number}}>) =>
+      clos.map((row) => ({ monthKey: row.monthKey, pct: (row.gastappExpenseClose?.totalEur || 0) / 100 })));
+  });
   const snapshot = (letter: string, revision: number, totalEur: number) => ({
     ...candidate(letter, revision).snapshot!,
     schemaVersion: 'aurum-gastapp-monthly-close-v2' as const,
@@ -160,6 +168,36 @@ describe('post-application GastApp revision notices', () => {
       previousSnapshot: { totalEur: 2000 },
       currentSnapshot: { totalEur: 2715 },
     });
+  });
+
+
+  it('groups multiple unseen corrections and starts a new notice only after acknowledgement', () => {
+    const first = snapshot('a', 1, 2000);
+    const second = snapshot('b', 2, 2300);
+    const latest = snapshot('c', 3, 2500);
+    const closure = {
+      id: 'apr', monthKey: '2026-04', closedAt: '2026-04-30T23:00:00Z',
+      summary: {} as never,
+      gastappExpenseClose: latest,
+      previousVersions: [
+        { id: 'apr:gastapp:1', monthKey: '2026-04', closedAt: '2026-04-30T23:00:00Z', replacedAt: '2026-05-01T12:00:00Z', summary: {} as never, gastappExpenseClose: first },
+        { id: 'apr:gastapp:2', monthKey: '2026-04', closedAt: '2026-04-30T23:00:00Z', replacedAt: '2026-05-02T12:00:00Z', summary: {} as never, gastappExpenseClose: second },
+      ],
+    };
+    const unseen = buildGastappRevisionInbox([closure], {}, false);
+    expect(unseen).toHaveLength(1);
+    expect(unseen[0]).toMatchObject({
+      monthKey: '2026-04', originalGastosEur: 2000, updatedGastosEur: 2500,
+      originalReturnPct: 20, updatedReturnPct: 25, revisionCount: 2,
+    });
+    // Last acknowledged state is the baseline; older changes do not accumulate.
+    const afterFirstAck = buildGastappRevisionInbox([closure], { '2026-04': second.contractHash }, false);
+    expect(afterFirstAck).toHaveLength(1);
+    expect(afterFirstAck[0]).toMatchObject({
+      originalGastosEur: 2300, updatedGastosEur: 2500,
+      originalReturnPct: 23, updatedReturnPct: 25, revisionCount: 1,
+    });
+    expect(buildGastappRevisionInbox([closure], { '2026-04': latest.contractHash }, false)).toEqual([]);
   });
 
   it('ignores ordinary closure history that was not created by a GastApp revision', () => {
