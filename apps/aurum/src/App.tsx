@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { User, onAuthStateChanged } from 'firebase/auth';
+import { CheckCircle2, History } from 'lucide-react';
 import { Layout } from './components/Layout';
 import { AurumWordmark } from './components/AurumWordmark';
 import { Patrimonio } from './pages/Patrimonio';
@@ -28,6 +29,8 @@ import {
 } from './services/fxIndicatorFlow';
 import {
   WEALTH_DATA_UPDATED_EVENT,
+  acknowledgeGastappRevisionNotices,
+  readGastappRevisionSeenHashes,
   computeWealthHomeSectionAmounts,
   currentMonthKey,
   getIncompleteClosures,
@@ -54,12 +57,24 @@ import {
   subscribeHistoricalGastappSidecarForAnalysis,
 } from './services/historicalGastappSidecar';
 import { GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT } from './services/gastosMonthly';
-import { applyCertifiedGastappRevisions } from './services/acceptReviewedGastappRevision';
+import { applyCertifiedGastappRevisions, buildGastappRevisionInbox, type GastappRevisionInboxItem } from './services/acceptReviewedGastappRevision';
 
 const INCOMPLETE_CLOSURE_PROMPT_DAY_KEY = 'aurum.incomplete-closure.prompt.day.v1';
 const PRESENTATION_ROUTE_EVENT = 'aurum:presentation-route';
 const isPresentationPath = () => ['presentation', 'ecosystem'].includes(window.location.hash.replace(/^#\/?/, '').split('?')[0]);
 const CLOSING_FOCUS_MONTH_KEY = 'aurum.closing.focus.month.v1';
+const monthLabelFromKey = (key: string) => {
+  const [year, month] = key.split('-').map(Number);
+  const label = new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' })
+    .format(new Date(year, month - 1, 1));
+  return label.charAt(0).toUpperCase() + label.slice(1);
+};
+const eurForRevision = (n: number) =>
+  n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+const pctForRevision = (n: number | null) =>
+  n === null ? '—' : n.toLocaleString('es-ES', {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  }) + ' %';
 
 type FxIndicatorSnapshot = {
   usdClp: number;
@@ -222,6 +237,47 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [incompletePrompt, setIncompletePrompt] = useState<IncompletePrompt | null>(null);
   const [fxIndicatorPrompt, setFxIndicatorPrompt] = useState<FxIndicatorPrompt | null>(null);
   const gastappRevisionSyncRef = useRef(false);
+  const revisionNoticeReadSeq = useRef(0);
+  const [revisionInbox, setRevisionInbox] = useState<GastappRevisionInboxItem[]>([]);
+  const [revisionSelectedMonth, setRevisionSelectedMonth] = useState<string | null>(null);
+  const [revisionNoticeBusy, setRevisionNoticeBusy] = useState(false);
+  const [revisionNoticeError, setRevisionNoticeError] = useState<string | null>(null);
+
+  const refreshRevisionInbox = async () => {
+    const sequence = ++revisionNoticeReadSeq.current;
+    try {
+      const seen = await readGastappRevisionSeenHashes();
+      if (sequence !== revisionNoticeReadSeq.current) return;
+      const items = buildGastappRevisionInbox(
+        loadClosures(), seen, loadIncludeRiskCapitalInTotals());
+      setRevisionInbox(items);
+      setRevisionSelectedMonth((current) =>
+        items.some((item) => item.monthKey === current)
+          ? current : items[0]?.monthKey || null);
+    } catch (error) {
+      console.warn('[Aurum][GastApp] no se pudo leer el estado de avisos', error);
+    }
+  };
+  const acknowledgeRevisionInbox = async () => {
+    if (revisionNoticeBusy || !revisionInbox.length) return;
+    setRevisionNoticeBusy(true);
+    setRevisionNoticeError(null);
+    revisionNoticeReadSeq.current += 1;
+    const acknowledged = [...revisionInbox];
+    try {
+      await acknowledgeGastappRevisionNotices(
+        acknowledged.map(({ monthKey, contractHash }) => ({ monthKey, contractHash })));
+      setRevisionInbox([]);
+      setRevisionSelectedMonth(null);
+      void refreshRevisionInbox();
+    } catch (error) {
+      setRevisionNoticeError(
+        'No pude confirmar la lectura en la nube. Reintenta para que el aviso no vuelva a aparecer.');
+      console.warn('[Aurum][GastApp] fallo al confirmar avisos leídos', error);
+    } finally {
+      setRevisionNoticeBusy(false);
+    }
+  };
   const [isPresentationRoute, setIsPresentationRoute] = useState(
     isPresentationPath,
   );
@@ -411,7 +467,11 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   }, [user?.uid, user?.isAnonymous]);
 
   useEffect(() => {
-    if (!user || user.isAnonymous) return;
+    if (!user || user.isAnonymous) {
+      revisionNoticeReadSeq.current += 1;
+      setRevisionInbox([]);
+      return;
+    }
     let cancelled = false;
     let hydrated = false;
     let cleanup: (() => void) | null = null;
@@ -428,6 +488,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         console.warn('[Aurum][GastApp] no se pudo completar la sincronización automática', error);
       } finally {
         gastappRevisionSyncRef.current = false;
+        if (!cancelled) void refreshRevisionInbox();
       }
     };
 
@@ -444,6 +505,10 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       void reconcileGastappRevisions();
     };
 
+    const onFinancialDataUpdated = () => {
+      if (hydrated && !cancelled) void refreshRevisionInbox();
+    };
+    window.addEventListener(WEALTH_DATA_UPDATED_EVENT, onFinancialDataUpdated as EventListener);
     window.addEventListener(GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT, onGastappSourceUpdated as EventListener);
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibilityChange);
@@ -454,6 +519,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       hydrated = true;
       await reconcileGastappRevisions();
       if (cancelled) return;
+      void refreshRevisionInbox();
       const unsub = await subscribeWealthCloud();
       if (cancelled) {
         unsub();
@@ -466,6 +532,8 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
     return () => {
       cancelled = true;
+      revisionNoticeReadSeq.current += 1;
+      window.removeEventListener(WEALTH_DATA_UPDATED_EVENT, onFinancialDataUpdated as EventListener);
       window.removeEventListener(GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT, onGastappSourceUpdated as EventListener);
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibilityChange);
