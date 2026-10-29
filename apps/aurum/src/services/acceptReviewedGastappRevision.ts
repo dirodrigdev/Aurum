@@ -1,4 +1,5 @@
 import { refreshGastappMonthlyContable, resolveGastappMonthlyCloseCandidate } from './gastosMonthly';
+import { computeMonthlyRows } from './returnsAnalysis';
 import {
   acceptGastappMonthlyClosureRevision,
   loadClosures,
@@ -158,3 +159,80 @@ export const buildGastappRevisionNotices = (
       currentSnapshot,
     }];
   }).sort((left, right) => right.monthKey.localeCompare(left.monthKey));
+
+
+/**
+ * Temporary, read-once notification data derived exclusively from sealed
+ * historical GastApp snapshots. Multiple unseen revisions of the same calendar
+ * month produce one entry comparing the last acknowledged state with current.
+ */
+export type GastappRevisionInboxItem = {
+  monthKey: string;
+  contractHash: string;
+  originalGastosEur: number;
+  updatedGastosEur: number;
+  originalReturnPct: number | null;
+  updatedReturnPct: number | null;
+  revisionCount: number;
+  appliedAt: string | null;
+};
+
+export const buildGastappRevisionInbox = (
+  closures: WealthMonthlyClosure[],
+  seenHashes: Record<string, string>,
+  includeRiskCapitalInTotals: boolean,
+): GastappRevisionInboxItem[] => {
+  const currentReturns = new Map(
+    computeMonthlyRows(closures, includeRiskCapitalInTotals, 'CLP')
+      .map((row) => [row.monthKey, row.pct]),
+  );
+
+  return closures.flatMap((closure) => {
+    const current = closure.gastappExpenseClose;
+    if (!current || seenHashes[closure.monthKey] === current.contractHash) return [];
+
+    // Only certified revisions accepted by Aurum archive a :gastapp: version.
+    // Wealth-only corrections must not generate GastApp revision notices.
+    const ordered = [...(closure.previousVersions || [])]
+      .filter((entry) => entry.id.includes(':gastapp:')
+        && entry.gastappExpenseClose
+        && entry.gastappExpenseClose.contractHash !== current.contractHash)
+      .sort((a, b) =>
+        (Date.parse(a.replacedAt || a.closedAt) || 0)
+        - (Date.parse(b.replacedAt || b.closedAt) || 0));
+    const byHash = new Map<string, WealthMonthlyClosureVersion>();
+    for (const version of ordered) {
+      const hash = version.gastappExpenseClose!.contractHash;
+      if (!byHash.has(hash)) byHash.set(hash, version);
+    }
+    const predecessorVersions = [...byHash.values()];
+    if (!predecessorVersions.length) return [];
+
+    // When a previous notification was acknowledged, that exact version is
+    // the baseline. Otherwise the first retained certified version is used.
+    const seenPredecessor = seenHashes[closure.monthKey]
+      ? predecessorVersions.find(
+        (v) => v.gastappExpenseClose?.contractHash === seenHashes[closure.monthKey])
+      : undefined;
+    const baseline = (seenPredecessor || predecessorVersions[0])
+      .gastappExpenseClose as GastappMonthlyExpenseCloseSnapshot;
+    const baselineRows = computeMonthlyRows(
+      closures.map((row) => row.monthKey === closure.monthKey
+        ? { ...row, gastappExpenseClose: baseline } : row),
+      includeRiskCapitalInTotals,
+      'CLP',
+    );
+    const originalReturn = baselineRows.find((row) => row.monthKey === closure.monthKey);
+
+    return [{
+      monthKey: closure.monthKey,
+      contractHash: current.contractHash,
+      originalGastosEur: baseline.totalEur,
+      updatedGastosEur: current.totalEur,
+      originalReturnPct: originalReturn?.pct ?? null,
+      updatedReturnPct: currentReturns.get(closure.monthKey) ?? null,
+      revisionCount: Math.max(1, current.certificationRevision - baseline.certificationRevision),
+      appliedAt: current.capturedAt || null,
+    }];
+  }).sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+};
