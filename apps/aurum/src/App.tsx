@@ -242,6 +242,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [revisionSelectedMonth, setRevisionSelectedMonth] = useState<string | null>(null);
   const [revisionNoticeBusy, setRevisionNoticeBusy] = useState(false);
   const [revisionNoticeError, setRevisionNoticeError] = useState<string | null>(null);
+  const [revisionSyncAlert, setRevisionSyncAlert] = useState<string | null>(null);
 
   const refreshRevisionInbox = async () => {
     const sequence = ++revisionNoticeReadSeq.current;
@@ -470,6 +471,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     if (!user || user.isAnonymous) {
       revisionNoticeReadSeq.current += 1;
       setRevisionInbox([]);
+      setRevisionSyncAlert(null);
       return;
     }
     let cancelled = false;
@@ -483,8 +485,19 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         const result = await applyCertifiedGastappRevisions();
         if (result.failed.length) {
           console.warn('[Aurum][GastApp] revisiones certificadas pendientes de reintento', result.failed);
+          setRevisionSyncAlert('No se pudo incorporar la revisión certificada de GastApp para: '
+            + result.failed.map((row) => monthLabelFromKey(row.monthKey)).join(', ')
+            + '. Aurum conserva los últimos datos confirmados e intentará sincronizar de nuevo.');
+        } else if (result.pendingUncertified.length) {
+          setRevisionSyncAlert('Hay modificaciones de GastApp aún pendientes de certificación para: '
+            + result.pendingUncertified.map(monthLabelFromKey).join(', ')
+            + '. Todavía no se han aplicado al cierre de Aurum.');
+        } else {
+          setRevisionSyncAlert(null);
         }
       } catch (error) {
+        setRevisionSyncAlert('No se pudo comprobar la sincronización de gastos de GastApp. '
+          + 'Aurum conserva los cierres confirmados y volverá a intentarlo.');
         console.warn('[Aurum][GastApp] no se pudo completar la sincronización automática', error);
       } finally {
         gastappRevisionSyncRef.current = false;
@@ -598,6 +611,11 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return (
     <>
       {children}
+      {!isPresentationRoute && revisionSyncAlert && !revisionInbox.length && (
+        <div className="fixed inset-x-3 bottom-20 z-[110] mx-auto max-w-xl rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950 shadow-lg sm:bottom-6" role="status">
+          {revisionSyncAlert}
+        </div>
+      )}
       {!isPresentationRoute && !!fxIndicatorPrompt && (
         <div className="fixed inset-0 z-[121] bg-black/45 p-4 flex items-center justify-center">
           <div className="w-full max-w-xl rounded-2xl border border-blue-200 bg-white p-5 shadow-2xl">
