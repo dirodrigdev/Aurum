@@ -496,7 +496,7 @@ describe('ReturnsTab partial month toggle', () => {
     expect(container.textContent).not.toContain('2026-08-12__2026-09-11');
   });
 
-  it('keeps GastApp-closed August visible as a yellow P while Aurum closure is pending', async () => {
+  it('keeps returns provisional but GastApp-certified spend without P until Aurum closes', async () => {
     const provisionalAugust = makeMonthlyRow('2026-08', {
       gastosStatus: 'pending',
       gastosContractStatus: 'pending',
@@ -560,6 +560,12 @@ describe('ReturnsTab partial month toggle', () => {
           },
           monthlyRowsDesc: [provisionalAugust],
           officialMonthlyRowsAsc: [provisionalAugust],
+          monthlyRowsByCurrencyForCopy: {
+            CLP: [provisionalAugust],
+            USD: [provisionalAugust],
+            EUR: [provisionalAugust],
+            UF: [provisionalAugust],
+          },
         }),
       );
     });
@@ -568,6 +574,40 @@ describe('ReturnsTab partial month toggle', () => {
     expect(container.textContent).toContain('Mes provisional de Aurum');
     expect(container.textContent).toContain('Usado: gasto oficial del cierre calendario de GastApp.');
     expect(container.textContent).toContain('GastApp cerrado');
+
+    // El retorno sigue provisional, pero el gasto certificado no lleva P.
+    const historyRow = Array.from(container.querySelectorAll('tbody tr')).find((row) =>
+      row.querySelector('td')?.textContent?.includes('Ago 2026'),
+    );
+    expect(historyRow).toBeTruthy();
+    const cells = historyRow?.querySelectorAll('td');
+    expect(cells?.[2]?.textContent).toContain('(P)');
+    expect(cells?.[4]?.textContent).toContain('$2.500.000');
+    expect(cells?.[4]?.textContent).not.toContain('(P)');
+
+    const writeText = vi.fn(async (_value: string) => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    const user = userEvent.setup();
+    await act(async () => {
+      await user.click(Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Copiar tabla'))!);
+    });
+    const copiedRow = (writeText.mock.calls[0]?.[0] ?? '').split('\n').find((row) => row.startsWith('2026-08\t'));
+    expect(copiedRow?.split('\t')[3]).toContain('(P)');
+    expect(copiedRow?.split('\t')[5]).not.toContain('(P)');
+
+    await act(async () => {
+      await user.click(container.querySelector('button[aria-label="Copiar análisis completo en cuatro monedas"]')!);
+    });
+    const fourCurrencies = writeText.mock.calls[1]?.[0] ?? '';
+    const currencyRows = fourCurrencies.split('\n').filter((row) => row.startsWith('2026-08\t'));
+    expect(currencyRows).toHaveLength(4);
+    currencyRows.forEach((row) => {
+      expect(row.split('\t')[3]).toContain('(P)');
+      expect(row.split('\t')[5]).not.toContain('(P)');
+    });
 
     const breakdownTrigger = container.querySelector('button[aria-label="Ver desglose de GastApp de Agosto de 2026"]') as HTMLButtonElement | null;
     expect(breakdownTrigger).not.toBeNull();
@@ -594,7 +634,7 @@ describe('ReturnsTab partial month toggle', () => {
     await act(async () => {
       await userEvent.setup().click(provisionalToggle!);
     });
-    expect(container.textContent).toContain('Gasto oficial GastApp usado provisionalmente');
+    expect(container.textContent).toContain('Gasto oficial GastApp · retorno provisional');
     expect(container.textContent).toContain('P: cierre provisional de Aurum · GastApp ya está cerrado oficialmente.');
     expect(container.textContent).not.toMatch(/NaN|Infinity|undefined/);
   });

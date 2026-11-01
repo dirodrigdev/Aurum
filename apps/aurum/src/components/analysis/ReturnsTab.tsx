@@ -88,6 +88,8 @@ const buildHistoryRows = (rows: MonthlyReturnRow[], currency: WealthCurrency): H
     const varDisplay = row.varPatrimonioDisplay;
     const gastosDisplay = isPartial ? row.partialGastosDisplay : row.gastosDisplay;
     const estimatedSuffix = row.isEstimated ? ' (P)' : '';
+    const spendSuffix = row.gastappOfficialForProvisional ? '' : ' (P)';
+    const estimatedSpendSuffix = row.gastappOfficialForProvisional ? '' : estimatedSuffix;
     return {
       monthKey: row.monthKey,
       isEstimated: Boolean(row.isEstimated),
@@ -114,11 +116,11 @@ const buildHistoryRows = (rows: MonthlyReturnRow[], currency: WealthCurrency): H
           ? 'Faltante'
           : row.gastosStatus === 'pending'
             ? isPartial
-              ? `${formatCurrency(gastosDisplay, currency)} (P)`
+              ? `${formatCurrency(gastosDisplay, currency)}${spendSuffix}`
               : 'Pendiente'
             : gastosDisplay === null
               ? '—'
-              : `${formatCurrency(gastosDisplay, currency)}${estimatedSuffix}`,
+              : `${formatCurrency(gastosDisplay, currency)}${estimatedSpendSuffix}`,
     };
   });
 
@@ -1309,7 +1311,9 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       return {
         severity: 'warning' as SpendTrustSeverity,
         title: 'Gasto observado con advertencia',
-        body: 'El gasto de este mes todavía no tiene un cierre mensual confirmado por GastApp.',
+        body: row.gastappOfficialForProvisional
+          ? 'El gasto ya está certificado en GastApp; falta confirmar el cierre patrimonial en aurum.'
+          : 'El gasto de este mes todavía no tiene un cierre mensual confirmado por GastApp.',
       };
     }
     return {
@@ -1786,7 +1790,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
             {mainPendingOfficial && (
               <div className="mt-1">
                 {mainPendingOfficial.row.gastappOfficialForProvisional
-                  ? `${monthLabel(mainPendingOfficial.row.monthKey)} ya tiene el gasto certificado en GastApp; falta formalizar el cierre patrimonial en aurum. Se muestra como provisional (P).`
+                  ? `${monthLabel(mainPendingOfficial.row.monthKey)} ya tiene el gasto certificado en GastApp; falta formalizar el cierre patrimonial en aurum. El gasto es oficial; el retorno sigue provisional (P).`
                   : `${monthLabel(mainPendingOfficial.row.monthKey)} sigue provisional (P). El retorno oficial requiere el gasto certificado en GastApp y el cierre confirmado en aurum.`}
               </div>
             )}
@@ -1936,7 +1940,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                     'py-1.5 text-right',
                     row.gastosStatus === 'missing'
                       ? 'text-rose-700'
-                      : row.gastosStatus === 'pending'
+                      : row.gastosStatus === 'pending' && !row.gastappOfficialForProvisional
                         ? 'text-amber-700'
                         : 'text-slate-700'
                   )}>
@@ -1945,7 +1949,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                       : row.gastosStatus === 'pending'
                         ? partial && gastosDisplay !== null
                           ? row.gastappOfficialForProvisional && row.partialByFamilyEur
-                            ? <GastappBreakdownTrigger row={row} onOpen={setGastappBreakdownRow}>{`${formatCurrency(gastosDisplay, currency)} (P)`}</GastappBreakdownTrigger>
+                            ? <GastappBreakdownTrigger row={row} onOpen={setGastappBreakdownRow}>{formatCurrency(gastosDisplay, currency)}</GastappBreakdownTrigger>
                             : `${formatCurrency(gastosDisplay, currency)} (P)`
                           : 'Pendiente'
                         : gastosDisplay === null
@@ -2012,7 +2016,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                   {provisionalEstimate.selectedScenarioKey === scenario.key && (
                     <div className="mt-1 inline-flex rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
                       {gastappOfficialForProvisional
-                        ? 'Gasto oficial GastApp usado provisionalmente'
+                        ? 'Gasto oficial GastApp · retorno provisional'
                         : 'Gasto parcial usado en los cálculos'}
                     </div>
                   )}
