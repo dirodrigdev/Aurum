@@ -615,12 +615,22 @@ export const warmGastappMonthlyContable = async () => {
  * cierre. El resto de Aurum sigue usando el runtime cacheado; sólo este flujo
  * pide una lectura nueva para detectar cambios publicados por GastApp.
  */
-export const refreshGastappMonthlyContable = async () => {
-  const canonical = await import('./gastappCanonicalV2');
-  canonical.clearGastappCanonicalV2Cache();
-  resetGastappMonthlyRuntime();
-  gastappMonthlyDiag.didLogMode = false;
-  await loadGastappMonthlyContable();
+let gastappMonthlyRefreshPromise: Promise<void> | null = null;
+export const refreshGastappMonthlyContable = (): Promise<void> => {
+  // The source-updated event can start automatic reconciliation while Analysis
+  // is awaiting this read. Share that read instead of resetting its runtime.
+  if (gastappMonthlyRefreshPromise) return gastappMonthlyRefreshPromise;
+  gastappMonthlyRefreshPromise = (async () => {
+    const canonical = await import('./gastappCanonicalV2');
+    canonical.clearGastappCanonicalV2Cache();
+    resetGastappMonthlyRuntime();
+    gastappMonthlyDiag.didLogMode = false;
+    await loadGastappMonthlyContable();
+    if (gastappMonthlyRuntime.error && gastappMonthlyRuntime.error !== E2E_GASTAPP_FIXTURE_REASON) {
+      throw new Error(gastappMonthlyRuntime.error);
+    }
+  })().finally(() => { gastappMonthlyRefreshPromise = null; });
+  return gastappMonthlyRefreshPromise;
 };
 
 export type GastappMonthlyRuntimeDiagnostic = {
