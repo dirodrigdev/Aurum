@@ -197,6 +197,90 @@ const expectNoHorizontalOverflow = async (page: import('@playwright/test').Page)
   expect(overflow).toBeLessThanOrEqual(1);
 };
 
+test('certified sidecar revision uses Firestore transaction, archives the old version and is idempotent', async ({ page }) => {
+  const { closures, sidecar } = await installMultiYearFixture();
+  const monthKey = '2026-04';
+  const oldEntry = sidecar.snapshotsByMonth[monthKey];
+  const oldSnapshot = oldEntry.snapshot;
+  const closureBefore = structuredClone(closures.find((closure) => closure.monthKey === monthKey));
+  const candidateHash = sha('f');
+  const candidateSnapshot = {
+    ...oldSnapshot,
+    totalEur: oldSnapshot.totalEur + 89,
+    byFamilyEur: { ...oldSnapshot.byFamilyEur, dayToDay: oldSnapshot.byFamilyEur.dayToDay + 89 },
+    monthContractRevision: oldSnapshot.monthContractRevision + 1,
+    monthContractHash: candidateHash,
+    certificationStatus: 'revised',
+    certificationRevision: oldSnapshot.certificationRevision + 1,
+    certificationHash: sha('6'),
+    contractHash: candidateHash,
+    generatedAt: new Date().toISOString(),
+  };
+  await page.goto('/#/analysis');
+  await expect(page.getByTestId('historical-gastapp-sidecar-state')).toBeVisible();
+  const firstResult = await page.evaluate(async ({ monthKey, closureId, previousHash, candidateHash, candidateSnapshot }) => {
+    const { applyCertifiedHistoricalGastappSidecarRevisions } = await import('/src/services/historicalGastappSidecar.ts');
+    const result = await applyCertifiedHistoricalGastappSidecarRevisions([{
+      monthKey, closureId,
+      expectedPreviousContractHash: previousHash,
+      expectedCandidateContractHash: candidateHash,
+      snapshot: candidateSnapshot,
+    }]);
+    return { changed: result.changed, unchanged: result.unchanged, failed: result.failed };
+  }, {
+    monthKey,
+    closureId: oldEntry.closureId,
+    previousHash: oldSnapshot.contractHash,
+    candidateHash,
+    candidateSnapshot,
+  });
+  expect(firstResult).toEqual({ changed: [monthKey], unchanged: [], failed: [] });
+
+  const [wealthAfter, sidecarAfter] = await Promise.all([wealthRef.get(), sidecarRef.get()]);
+  const closureAfter = (wealthAfter.get('closures') as Array<Record<string, unknown>>)
+    .find((closure) => closure.monthKey === monthKey);
+  expect({
+    id: closureAfter?.id,
+    summary: closureAfter?.summary,
+    records: closureAfter?.records,
+    fxRates: closureAfter?.fxRates,
+    fxMetadata: closureAfter?.fxMetadata,
+  }).toEqual({
+    id: closureBefore?.id,
+    summary: closureBefore?.summary,
+    records: closureBefore?.records,
+    fxRates: closureBefore?.fxRates,
+    fxMetadata: closureBefore?.fxMetadata,
+  });
+  const saved = sidecarAfter.get(`snapshotsByMonth.${monthKey}`) as Record<string, any>;
+  expect(saved.snapshot).toMatchObject({ contractHash: candidateHash, totalEur: oldSnapshot.totalEur + 89 });
+  expect(saved.snapshot.fxRates).toEqual(oldSnapshot.fxRates);
+  expect(saved.previousVersions).toHaveLength(1);
+  expect(saved.previousVersions[0].snapshot).toMatchObject({ contractHash: oldSnapshot.contractHash, totalEur: oldSnapshot.totalEur });
+
+  const updateTimeBeforeRepeat = sidecarAfter.updateTime?.toMillis();
+  const secondResult = await page.evaluate(async ({ monthKey, closureId, previousHash, candidateHash, candidateSnapshot }) => {
+    const { applyCertifiedHistoricalGastappSidecarRevisions } = await import('/src/services/historicalGastappSidecar.ts');
+    const result = await applyCertifiedHistoricalGastappSidecarRevisions([{
+      monthKey, closureId,
+      expectedPreviousContractHash: previousHash,
+      expectedCandidateContractHash: candidateHash,
+      snapshot: candidateSnapshot,
+    }]);
+    return { changed: result.changed, unchanged: result.unchanged, failed: result.failed };
+  }, {
+    monthKey,
+    closureId: oldEntry.closureId,
+    previousHash: oldSnapshot.contractHash,
+    candidateHash,
+    candidateSnapshot,
+  });
+  const sidecarAfterRepeat = await sidecarRef.get();
+  expect(secondResult).toEqual({ changed: [], unchanged: [monthKey], failed: [] });
+  expect(sidecarAfterRepeat.updateTime?.toMillis()).toBe(updateTimeBeforeRepeat);
+  expect((sidecarAfterRepeat.get(`snapshotsByMonth.${monthKey}.previousVersions`) as unknown[])).toHaveLength(1);
+});
+
 test('multi-year sidecar remains authoritative through a new close, route changes, and full reload', async ({ page }, testInfo) => {
   const networkGuard = await installLocalNetworkGuard(page);
   const pageErrors: string[] = [];

@@ -49,7 +49,7 @@ import {
   getGastappMonthlyRuntimeDiagnostic,
   warmGastappMonthlyContable,
 } from '../services/gastosMonthly';
-import { applyCertifiedGastappRevisions } from '../services/acceptReviewedGastappRevision';
+import { applyCertifiedGastappRevisions, summarizeGastappHistoricalRevisionAudit } from '../services/acceptReviewedGastappRevision';
 import { describeGastappAnalysisAccessIssue } from '../services/dataRoom/gastappAccessGuidance';
 // GastApp remains the single XLSX/JSON generation authority; Analysis only
 // exposes the existing handoff entry point.
@@ -495,7 +495,12 @@ export const AnalysisAurum: React.FC = () => {
     try {
       if (tab !== 'lab') {
         const revisionSync = await applyCertifiedGastappRevisions();
-        if (revisionSync.failed.length) {
+        if (revisionSync.writesDisabled) {
+          setGastappRefreshNotice({
+            tone: 'warning',
+            message: `${summarizeGastappHistoricalRevisionAudit(revisionSync.audit)} La sincronización está desactivada hasta autorizarla explícitamente.`,
+          });
+        } else if (revisionSync.failed.length) {
           setGastappRefreshNotice({
             tone: 'error',
             message: `No pude aplicar la revisión certificada de GastApp en: ${revisionSync.failed

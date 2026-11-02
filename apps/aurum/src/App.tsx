@@ -57,7 +57,7 @@ import {
   subscribeHistoricalGastappSidecarForAnalysis,
 } from './services/historicalGastappSidecar';
 import { GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT } from './services/gastosMonthly';
-import { applyCertifiedGastappRevisions, buildGastappRevisionInbox, type GastappRevisionInboxItem } from './services/acceptReviewedGastappRevision';
+import { applyCertifiedGastappRevisions, buildGastappRevisionInbox, summarizeGastappHistoricalRevisionAudit, type GastappRevisionInboxItem } from './services/acceptReviewedGastappRevision';
 
 const INCOMPLETE_CLOSURE_PROMPT_DAY_KEY = 'aurum.incomplete-closure.prompt.day.v1';
 const PRESENTATION_ROUTE_EVENT = 'aurum:presentation-route';
@@ -250,7 +250,8 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       const seen = await readGastappRevisionSeenHashes();
       if (sequence !== revisionNoticeReadSeq.current) return;
       const items = buildGastappRevisionInbox(
-        loadClosures(), seen, loadIncludeRiskCapitalInTotals());
+        loadClosures(), seen, loadIncludeRiskCapitalInTotals(),
+        getHistoricalGastappSidecarAnalysisState().document);
       setRevisionInbox(items);
       setRevisionSelectedMonth((current) =>
         items.some((item) => item.monthKey === current)
@@ -476,14 +477,25 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     }
     let cancelled = false;
     let hydrated = false;
+    let rerunRequested = false;
     let cleanup: (() => void) | null = null;
 
-    const reconcileGastappRevisions = async () => {
-      if (!hydrated || cancelled || gastappRevisionSyncRef.current) return;
+    const reconcileGastappRevisions = async (rerunIfBusy = false) => {
+      if (!hydrated || cancelled) return;
+      if (gastappRevisionSyncRef.current) {
+        // A GastApp source-updated event is also emitted by the explicit
+        // refresh performed inside this reconciliation. Only queue a rerun
+        // for an independent Aurum cloud update, otherwise every refresh
+        // would recursively schedule another refresh.
+        if (rerunIfBusy) rerunRequested = true;
+        return;
+      }
       gastappRevisionSyncRef.current = true;
       try {
         const result = await applyCertifiedGastappRevisions();
-        if (result.failed.length) {
+        if (result.writesDisabled) {
+          setRevisionSyncAlert(`${summarizeGastappHistoricalRevisionAudit(result.audit)} La sincronización histórica está desactivada hasta autorizarla explícitamente.`);
+        } else if (result.failed.length) {
           console.warn('[Aurum][GastApp] revisiones certificadas pendientes de reintento', result.failed);
           setRevisionSyncAlert('No se pudo incorporar la revisión certificada de GastApp para: '
             + result.failed.map((row) => monthLabelFromKey(row.monthKey)).join(', ')
@@ -501,7 +513,13 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         console.warn('[Aurum][GastApp] no se pudo completar la sincronización automática', error);
       } finally {
         gastappRevisionSyncRef.current = false;
-        if (!cancelled) void refreshRevisionInbox();
+        if (!cancelled) {
+          void refreshRevisionInbox();
+          if (rerunRequested) {
+            rerunRequested = false;
+            void reconcileGastappRevisions();
+          }
+        }
       }
     };
 
@@ -519,7 +537,9 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     };
 
     const onFinancialDataUpdated = () => {
-      if (hydrated && !cancelled) void refreshRevisionInbox();
+      if (!hydrated || cancelled) return;
+      void refreshRevisionInbox();
+      void reconcileGastappRevisions(true);
     };
     window.addEventListener(WEALTH_DATA_UPDATED_EVENT, onFinancialDataUpdated as EventListener);
     window.addEventListener(GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT, onGastappSourceUpdated as EventListener);
