@@ -184,6 +184,45 @@ describe('gastosMonthly canonical source', () => {
     expect(loadGastappCanonicalV2OfficialMonthContractFreshMock).toHaveBeenCalledTimes(2);
   });
 
+  it('shares concurrent refreshes so automatic reconciliation cannot invalidate the analysis read', async () => {
+    const hash = `sha256:${'a'.repeat(64)}`;
+    loadGastappCanonicalV2OfficialMonthContractFreshMock.mockResolvedValue({
+      version: 'gastapp-aurum-calendar-months-v2', generatedAt: '2026-10-03T12:00:00Z',
+      canonicalDataHash: hash, operationalDataHash: hash, operationalRevision: 2, sourceGeneration: 2,
+      months: [{ calendarMonthKey: '2026-09', status: 'complete', calendarStatus: 'complete', eligibleForAurumReturns: true,
+        totalEur: 2805, byFamily: { dayToDay: 2805, trips: 0, others: 0 }, monthContractRevision: 2, monthContractHash: hash,
+        calendarCertification: { status: 'certified', certificationRevision: 2, certificationHash: hash, sourceGeneration: 2 },
+      }],
+    });
+    const { refreshGastappMonthlyContable, resolveGastappMonthlyCloseCandidate } = await import('../src/services/gastosMonthly');
+    let sourceEventRefresh: Promise<void> | undefined;
+    vi.stubGlobal('window', { dispatchEvent: () => {
+      sourceEventRefresh ||= refreshGastappMonthlyContable();
+      return true;
+    } });
+    try {
+      await Promise.all([refreshGastappMonthlyContable(), refreshGastappMonthlyContable()]);
+      await sourceEventRefresh;
+      expect(sourceEventRefresh).toBeDefined();
+      expect(clearGastappCanonicalV2CacheMock).toHaveBeenCalledTimes(1);
+      expect(loadGastappCanonicalV2OfficialMonthContractFreshMock).toHaveBeenCalledTimes(1);
+      expect(resolveGastappMonthlyCloseCandidate('2026-09')).toMatchObject({ status: 'complete', snapshot: { totalEur: 2805 } });
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('reports a failed refresh to automatic reconciliation and permits a later retry', async () => {
+    loadGastappCanonicalV2OfficialMonthContractFreshMock.mockRejectedValueOnce(new Error('contract read failed'));
+    const { refreshGastappMonthlyContable } = await import('../src/services/gastosMonthly');
+    await expect(refreshGastappMonthlyContable()).rejects.toThrow('contract read failed');
+    loadGastappCanonicalV2OfficialMonthContractFreshMock.mockResolvedValueOnce({
+      version: 'gastapp-aurum-calendar-months-v2', canonicalDataHash: `sha256:${'a'.repeat(64)}`,
+      operationalDataHash: `sha256:${'b'.repeat(64)}`, operationalRevision: 2, sourceGeneration: 2,
+      generatedAt: '2026-10-03T12:00:00Z', months: [],
+    });
+    await expect(refreshGastappMonthlyContable()).resolves.toBeUndefined();
+    expect(firestoreMock.setDoc).not.toHaveBeenCalled();
+  });
+
   it.each([
     { olderOutcome: 'pending', currentStatus: 'complete' },
     { olderOutcome: 'error', currentStatus: 'complete' },

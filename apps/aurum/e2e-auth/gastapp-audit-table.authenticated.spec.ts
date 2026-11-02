@@ -4,6 +4,7 @@ import { installLocalNetworkGuard } from '../../../packages/e2e-harness/playwrig
 test('read-only audit shows monthly evidence across viewports', async ({ page }, testInfo) => {
   const guard = await installLocalNetworkGuard(page);
   await page.goto('/#/analysis');
+  await page.getByRole('button', { name: 'Actualizar análisis', exact: true }).waitFor({ state: 'visible' });
   await expect(page.getByRole('button', { name: 'Actualizar análisis', exact: true })).toBeVisible();
   await page.evaluate(async () => {
     const ReactModule = await import('/node_modules/.vite/deps/react.js');
