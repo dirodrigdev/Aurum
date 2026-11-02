@@ -1,3 +1,4 @@
+import { GastappRevisionAuditTable } from '../components/analysis/GastappRevisionAuditTable';
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3, ChevronDown, RefreshCw } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
@@ -49,7 +50,7 @@ import {
   getGastappMonthlyRuntimeDiagnostic,
   warmGastappMonthlyContable,
 } from '../services/gastosMonthly';
-import { applyCertifiedGastappRevisions } from '../services/acceptReviewedGastappRevision';
+import { applyCertifiedGastappRevisions, summarizeGastappHistoricalRevisionAudit, type GastappHistoricalRevisionAuditRow } from '../services/acceptReviewedGastappRevision';
 import { describeGastappAnalysisAccessIssue } from '../services/dataRoom/gastappAccessGuidance';
 // GastApp remains the single XLSX/JSON generation authority; Analysis only
 // exposes the existing handoff entry point.
@@ -134,6 +135,7 @@ export const AnalysisAurum: React.FC = () => {
   const [gastappRefreshNotice, setGastappRefreshNotice] = useState<
     { tone: 'warning' | 'error'; message: string } | null
   >(null);
+  const [revisionAudit, setRevisionAudit] = useState<GastappHistoricalRevisionAuditRow[] | null>(null);
   const [analysisRefreshTick, setAnalysisRefreshTick] = useState(0);
   const analysisRefreshInFlightRef = useRef(false);
   const refreshClosures = useCallback(() => {
@@ -495,7 +497,13 @@ export const AnalysisAurum: React.FC = () => {
     try {
       if (tab !== 'lab') {
         const revisionSync = await applyCertifiedGastappRevisions();
-        if (revisionSync.failed.length) {
+        setRevisionAudit(revisionSync.audit);
+        if (revisionSync.writesDisabled) {
+          setGastappRefreshNotice({
+            tone: 'warning',
+            message: `${summarizeGastappHistoricalRevisionAudit(revisionSync.audit)} La sincronización está desactivada hasta autorizarla explícitamente.`,
+          });
+        } else if (revisionSync.failed.length) {
           setGastappRefreshNotice({
             tone: 'error',
             message: `No pude aplicar la revisión certificada de GastApp en: ${revisionSync.failed
@@ -668,6 +676,8 @@ export const AnalysisAurum: React.FC = () => {
       ) : (
         <ReturnsTab {...returnsTabProps} />
       )}
+
+      {revisionAudit && <GastappRevisionAuditTable rows={revisionAudit} />}
 
       {!!gastappRefreshNotice && (
         <Card

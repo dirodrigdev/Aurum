@@ -6,6 +6,10 @@ vi.mock('../src/services/firebase', () => ({
 }));
 
 import type { WealthMonthlyClosure } from '../src/services/wealthStorage';
+import {
+  clearHistoricalGastappSidecarForAnalysis,
+  setHistoricalGastappSidecarForAnalysis,
+} from '../src/services/historicalGastappSidecar';
 const TEST_GASTOS_EUR: Record<string, number> = {
   '2025-12': 4400,
   '2026-01': 6288,
@@ -139,6 +143,33 @@ const withGastappPartial = <T extends ReturnType<typeof computeMonthlyRows>[numb
 });
 
 describe('returns analysis helpers', () => {
+  it('uses a corrected sidecar amount in historical returns without changing patrimonial variation', () => {
+    const january = makeClosure('2026-01', { netClp: 1_050_000_000 });
+    january.gastappExpenseClose = undefined;
+    const closures = [makeClosure('2025-12', { netClp: 1_000_000_000 }), january];
+    const makeSidecar = (totalEur: number) => ({
+      schemaVersion: 'aurum-gastapp-historical-sidecar-v1' as const,
+      snapshotsByMonth: {
+        '2026-01': {
+          closureId: january.id,
+          snapshot: { monthKey: '2026-01', totalEur, byFamilyEur: { dayToDay: totalEur, trips: 0, others: 0 } } as NonNullable<WealthMonthlyClosure['gastappExpenseClose']>,
+          repairAudit: {} as never,
+        },
+      },
+    });
+    setHistoricalGastappSidecarForAnalysis('owner-1', makeSidecar(7675.01) as never);
+    const before = computeMonthlyRows(closures, false, 'CLP').find((row) => row.monthKey === '2026-01')!;
+    setHistoricalGastappSidecarForAnalysis('owner-1', makeSidecar(7764.01) as never);
+    const after = computeMonthlyRows(closures, false, 'CLP').find((row) => row.monthKey === '2026-01')!;
+
+    expect(before.varPatrimonioClp).toBe(50_000_000);
+    expect(after.varPatrimonioClp).toBe(before.varPatrimonioClp);
+    expect(after.gastosClp).toBeCloseTo(7764.01 * january.fxRates!.eurClp, 6);
+    expect(after.retornoRealClp! - before.retornoRealClp!).toBeCloseTo(89 * january.fxRates!.eurClp);
+    expect(after.pct).toBeGreaterThan(before.pct!);
+    clearHistoricalGastappSidecarForAnalysis('owner-1');
+  });
+
   it('carries a pending GastApp partial through the real open-month builder and P calculation', () => {
     const records = [{
       id: 'partial-bank', block: 'bank' as const, source: 'test', label: 'Cuenta ficticia',

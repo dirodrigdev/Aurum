@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   currentUid: { value: 'owner-1' as string | null },
   getDocFromServer: vi.fn(),
   onSnapshot: vi.fn(),
+  runTransaction: vi.fn(),
   normalizeSnapshot: vi.fn((raw: unknown, monthKey: string) => {
     const value = raw as { monthKey?: string } | null;
     return value?.monthKey === monthKey ? raw : undefined;
@@ -14,6 +15,7 @@ vi.mock('firebase/firestore', () => ({
   doc: vi.fn((...parts: string[]) => parts.join('/')),
   getDocFromServer: mocks.getDocFromServer,
   onSnapshot: mocks.onSnapshot,
+  runTransaction: mocks.runTransaction,
 }));
 vi.mock('../src/services/firebase', () => ({
   db: {},
