@@ -8,6 +8,8 @@ The same reconciliation now handles both snapshot locations. Sidecar updates use
 
 The read-only audit compares GastApp's current certified contract hash and amount against both embedded and sidecar snapshots, returning `current`, `stale`, `missing` or `blocked`. It reads the root and sidecar documents directly; it does not scan historical movements.
 
+Analysis now retains those audit rows after the existing refresh action and displays each month, both Aurum snapshot amounts and full hashes, the current GastApp amount and full hash, the effective source, status/reason, and the EUR difference (GastApp minus effective Aurum snapshot). Missing or blocked source identities display no inferred difference. The table is read-only and horizontally scrollable within its own region on narrow screens.
+
 ## Production write gate
 
 `VITE_GASTAPP_REVISION_AUTO_SYNC` is an explicit opt-in. If it is unset or anything other than the string `true`, automatic reconciliation performs the read-only audit and returns without calling either closure or sidecar writers. The production Vite build was checked with this variable unset. The tracked `.env.e2e` sets it to `true` only for local emulator scenarios that exercise writes. No production deployment or Firestore write was made for this change.
