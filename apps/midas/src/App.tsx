@@ -6,7 +6,6 @@ import type {
   ManualCapitalAdjustment,
   ModelParameters,
   PortfolioWeights,
-  RiskCapitalInput,
   ScenarioVariant,
   ScenarioVariantId,
   SimulationCompositionInput,
@@ -47,7 +46,10 @@ import {
 } from './domain/model/canonicalInstrumentUniverse';
 import { resolveAurumEurUsdForMidas, resolveOperativeMasterFx, type OperativeFxResolution } from './domain/model/operativeFx';
 import { optimizableSnapshotToReference, snapshotToSimulationComposition } from './integrations/aurum/adapters';
-import { getCanonicalSnapshotEconomicSignature } from './integrations/aurum/canonicalSnapshotIdentity';
+import { normalizeRiskCapitalExposure, type NormalizedRiskCapitalExposure } from './domain/model/aurumRiskExposure';
+import { rebaseSimulationParams } from './integrations/aurum/rebaseSimulationParams';
+import { rebaseSnapshotFx, sourceRebaseEngineIdentity } from './integrations/aurum/rebaseSnapshotEconomics';
+import { getSnapshotRiskExposure, getCanonicalSnapshotEconomicSignature } from './integrations/aurum/canonicalSnapshotIdentity';
 import {
   subscribeToPublishedOptimizableInvestmentsSnapshot,
   type AurumSnapshotResolutionStatus,
@@ -541,67 +543,6 @@ function sanitizeSimulationOverridesForParams(
 function isBlocksCompositionMode(params: ModelParameters): boolean {
   const mode = params.simulationComposition?.mode;
   return mode === 'full' || mode === 'partial';
-}
-
-type NormalizedRiskCapitalExposure = {
-  baseWithoutRiskCLP: number;
-  baseWithRiskCLP: number;
-  riskTotalCLP: number;
-  usdTotal: number;
-  usdSnapshotCLP: number;
-  visibleCLP: number;
-  source?: string;
-};
-
-function normalizeRiskCapitalExposure(
-  risk: RiskCapitalInput | null | undefined,
-  fallbackUsdSnapshotCLP: number,
-  totalWithoutRiskCLP?: number,
-  totalWithRiskCLP?: number,
-): NormalizedRiskCapitalExposure {
-  const rawTotalWithoutRisk = Number(totalWithoutRiskCLP ?? 0);
-  const rawTotalWithRisk = Number(totalWithRiskCLP ?? 0);
-  const baseWithoutRiskCLP = Number.isFinite(rawTotalWithoutRisk) && rawTotalWithoutRisk > 0 ? rawTotalWithoutRisk : 0;
-  const baseWithRiskCLP = Number.isFinite(rawTotalWithRisk) && rawTotalWithRisk > 0 ? rawTotalWithRisk : 0;
-  const riskFromTotals =
-    baseWithoutRiskCLP > 0 && baseWithRiskCLP > baseWithoutRiskCLP
-      ? baseWithRiskCLP - baseWithoutRiskCLP
-      : 0;
-  const rawTotalCLP = Number(risk?.totalCLP ?? 0);
-  const hasExplicitTotalCLP =
-    risk != null &&
-    Object.prototype.hasOwnProperty.call(risk, 'totalCLP') &&
-    Number.isFinite(rawTotalCLP);
-  const rawCLP = Number(risk?.clp ?? 0);
-  const rawUSD = Number(risk?.usd ?? 0);
-  const rawUsdTotal = Number(risk?.usdTotal ?? 0);
-  const usdSnapshotCLP = Number(risk?.usdSnapshotCLP ?? fallbackUsdSnapshotCLP);
-  const safeUsdSnapshotCLP = Number.isFinite(usdSnapshotCLP) && usdSnapshotCLP > 0 ? usdSnapshotCLP : 1;
-  const clpComponent = Number.isFinite(rawCLP) && rawCLP > 0 ? rawCLP : 0;
-  const usdComponent = Number.isFinite(rawUSD) && rawUSD > 0 ? rawUSD : 0;
-  const totalClpComponent = Number.isFinite(rawTotalCLP) && rawTotalCLP > 0 ? rawTotalCLP : 0;
-  const usdTotalFromRaw = usdComponent + (clpComponent / safeUsdSnapshotCLP);
-  const totalClpForExposure = hasExplicitTotalCLP ? Math.max(0, rawTotalCLP) : Math.max(totalClpComponent, riskFromTotals);
-  const usdTotalFromTotalClp = totalClpForExposure / safeUsdSnapshotCLP;
-  const usdTotalFromInput = Number.isFinite(rawUsdTotal) && rawUsdTotal > 0 ? rawUsdTotal : 0;
-  const usdTotal = hasExplicitTotalCLP
-    ? Math.max(0, usdTotalFromTotalClp)
-    : Math.max(0, usdTotalFromInput, usdTotalFromRaw, usdTotalFromTotalClp);
-  const riskTotalCLP = totalClpForExposure > 0 ? totalClpForExposure : usdTotal * safeUsdSnapshotCLP;
-  const finalWithRisk = baseWithoutRiskCLP > 0
-    ? baseWithoutRiskCLP + riskTotalCLP
-    : baseWithRiskCLP > 0
-      ? baseWithRiskCLP
-      : riskTotalCLP;
-  return {
-    baseWithoutRiskCLP,
-    baseWithRiskCLP: finalWithRisk,
-    riskTotalCLP,
-    usdTotal,
-    usdSnapshotCLP: safeUsdSnapshotCLP,
-    visibleCLP: riskTotalCLP,
-    ...(risk?.source ? { source: risk.source } : {}),
-  };
 }
 
 function getAurumFxReferenceClpUsd(snapshot: AurumOptimizableInvestmentsSnapshot | null | undefined): number | null {
@@ -2346,31 +2287,7 @@ export default function App() {
     [],
   );
   const computeRiskCapital = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot) => {
-    const snapshotFxClpUsd = getAurumFxReferenceClpUsd(snapshot);
-    const fallbackUsdSnapshotCLP = Number(
-      snapshotFxClpUsd ?? baseParamsRef.current.fx?.clpUsdInitial ?? DEFAULT_PARAMETERS.fx.clpUsdInitial,
-    );
-    const exposure = normalizeRiskCapitalExposure(
-      snapshot.version === 2 ? snapshot.riskCapital : undefined,
-      fallbackUsdSnapshotCLP,
-      Number(snapshot.totalNetWorthCLP ?? 0),
-      Number(snapshot.totalNetWorthWithRiskCLP ?? 0),
-    );
-    if (exposure.riskTotalCLP <= 0) {
-      const fallbackFromOptimizable =
-        Number.isFinite(snapshot.optimizableInvestmentsWithRiskCLP) && Number.isFinite(snapshot.optimizableInvestmentsCLP)
-          ? Math.max(0, Number(snapshot.optimizableInvestmentsWithRiskCLP) - Number(snapshot.optimizableInvestmentsCLP))
-          : 0;
-      if (fallbackFromOptimizable > 0) {
-        return normalizeRiskCapitalExposure(
-          { totalCLP: fallbackFromOptimizable },
-          fallbackUsdSnapshotCLP,
-          Number(snapshot.totalNetWorthCLP ?? 0),
-          Number(snapshot.totalNetWorthCLP ?? 0) + fallbackFromOptimizable,
-        );
-      }
-    }
-    return exposure;
+    return getSnapshotRiskExposure(snapshot, Number(baseParamsRef.current.fx?.clpUsdInitial ?? DEFAULT_PARAMETERS.fx.clpUsdInitial));
   }, []);
 
   useEffect(() => {
@@ -2561,142 +2478,14 @@ export default function App() {
         applyCapital?: boolean;
         manualImpact?: ManualAdjustmentImpact;
         riskCapitalEnabled?: boolean;
+        sourceBase?: boolean;
       },
     ): ModelParameters => {
-      const applyCapital = options?.applyCapital ?? true;
-      const canonicalBaseParamsCurrent = stripManualAdjustmentImpactFromParams(
-        baseParamsCurrent,
-        manualAdjustmentImpact,
-      );
-      const canonicalCurrentSimParams = stripManualAdjustmentImpactFromParams(
-        currentSimParams,
-        manualAdjustmentImpact,
-      );
-      const manualImpact = options?.manualImpact ?? manualAdjustmentImpact;
-      const riskEnabled = options?.riskCapitalEnabled ?? riskCapitalEnabled;
-      const mergedEvents = [
-        ...(canonicalBaseParamsCurrent.cashflowEvents ?? []),
-        ...manualImpact.futureEvents,
-      ];
-      const mergedFutureCapitalEvents = (() => {
-        const map = new Map<string, FutureCapitalEvent>();
-        for (const event of canonicalBaseParamsCurrent.futureCapitalEvents ?? []) {
-          map.set(event.id, event);
-        }
-        for (const event of canonicalCurrentSimParams.futureCapitalEvents ?? []) {
-          map.set(event.id, event);
-        }
-        for (const event of manualImpact.futureCapitalEvents ?? []) {
-          map.set(event.id, event);
-        }
-        return [...map.values()].sort((a, b) => {
-          const dateCmp = a.effectiveDate.localeCompare(b.effectiveDate);
-          if (dateCmp !== 0) return dateCmp;
-          return a.id.localeCompare(b.id);
-        });
-      })();
-      const blocksMode = isBlocksCompositionMode(canonicalBaseParamsCurrent);
-      let next: ModelParameters = {
-        ...canonicalCurrentSimParams,
-        cashflowEvents: mergedEvents,
-        futureCapitalEvents: mergedFutureCapitalEvents,
-        simulationBaseMonth: canonicalCurrentSimParams.simulationBaseMonth
-          ?? canonicalBaseParamsCurrent.simulationBaseMonth
-          ?? resolveSimulationBaseMonth(canonicalCurrentSimParams),
-      };
-
-      if (blocksMode && canonicalBaseParamsCurrent.simulationComposition) {
-        const baseComposition = JSON.parse(
-          JSON.stringify(canonicalBaseParamsCurrent.simulationComposition),
-        ) as SimulationCompositionInput;
-        let nextOptimizable = Math.max(
-          0,
-          Number(baseComposition.optimizableInvestmentsCLP ?? 0) + manualImpact.currentInvestmentsDelta,
-        );
-        let nextBanks = Math.max(
-          0,
-          Number(baseComposition.nonOptimizable?.banksCLP ?? 0) + manualImpact.currentBanksDelta,
-        );
-        const baseRiskExposure = normalizeRiskCapitalExposure(
-          baseComposition.nonOptimizable?.riskCapital,
-          riskCapitalUsdSnapshotCLP || baseParamsCurrent.fx.clpUsdInitial || DEFAULT_PARAMETERS.fx.clpUsdInitial,
-          Number(baseComposition.totalNetWorthCLP ?? 0),
-          Number(baseComposition.totalNetWorthCLP ?? 0) + Number(riskCapitalCLP ?? 0),
-        );
-        const riskUsdSnapshot = baseRiskExposure.usdSnapshotCLP;
-        const riskBaseClp = Math.max(0, riskCapitalCLP || baseRiskExposure.riskTotalCLP);
-        const riskManualClp = manualImpact.currentRiskDelta;
-        const riskEnabledClpTotal = Math.max(0, riskBaseClp + riskManualClp);
-        const riskUsdEnabledTotal = riskUsdSnapshot > 0
-          ? riskEnabledClpTotal / riskUsdSnapshot
-          : 0;
-
-        const targetWithoutRisk = Math.max(
-          1,
-          Number(baseComposition.optimizableInvestmentsCLP ?? 0) +
-            Number(baseComposition.nonOptimizable?.banksCLP ?? 0) +
-            manualImpact.currentBanksDelta +
-            manualImpact.currentInvestmentsDelta,
-        );
-        const modeledWithoutRisk = nextOptimizable + nextBanks;
-        let gap = targetWithoutRisk - modeledWithoutRisk;
-        if (Math.abs(gap) > 0.5) {
-          nextBanks = Math.max(0, nextBanks + gap);
-          const remainingGap = targetWithoutRisk - (nextOptimizable + nextBanks);
-          if (Math.abs(remainingGap) > 0.5) {
-            nextOptimizable = Math.max(0, nextOptimizable + remainingGap);
-          }
-        }
-
-        // capitalInitial debe seguir el capital core líquido usado por el motor (optimizable + bancos).
-        // Casa y riesgo viajan por canales separados (house / risk_capital_clp) en el payload M8.
-        const targetVisibleCapital = targetWithoutRisk;
-
-        const nextComposition: SimulationCompositionInput = {
-          ...baseComposition,
-          optimizableInvestmentsCLP: nextOptimizable,
-          nonOptimizable: {
-            ...baseComposition.nonOptimizable,
-            banksCLP: nextBanks,
-            riskCapital: {
-              enabled: riskEnabled,
-              source: baseComposition.nonOptimizable?.riskCapital?.source ?? 'normalized-usd',
-              usdSnapshotCLP: riskUsdSnapshot,
-              usdTotal: riskUsdEnabledTotal,
-              usd: riskUsdEnabledTotal,
-              totalCLP: riskEnabledClpTotal,
-            },
-          },
-        };
-        next = {
-          ...next,
-          simulationComposition: nextComposition,
-          capitalInitial: applyCapital ? Math.max(1, targetVisibleCapital) : canonicalCurrentSimParams.capitalInitial,
-        };
-      } else {
-        const riskDelta = riskEnabled
-          ? manualImpact.currentRiskDelta + riskCapitalCLP
-          : 0;
-        const nextDelta = manualImpact.currentBanksDelta + manualImpact.currentInvestmentsDelta + riskDelta;
-        const targetCapital = Math.max(1, canonicalBaseParamsCurrent.capitalInitial + nextDelta);
-        next = {
-          ...next,
-          capitalInitial: applyCapital ? targetCapital : canonicalCurrentSimParams.capitalInitial,
-        };
-      }
-
-      const normalizedNext: ModelParameters = {
-        ...next,
-        spendingPhases: normalizeModelSpendingPhases(next),
-      };
-      const hasRealEstateBlock = Boolean(normalizedNext.simulationComposition?.nonOptimizable?.realEstate);
-      if (!hasRealEstateBlock && normalizedNext.realEstatePolicy?.enabled) {
-        normalizedNext.realEstatePolicy = {
-          ...normalizedNext.realEstatePolicy,
-          enabled: false,
-        };
-      }
-      return applyActiveDistribution(normalizedNext);
+      return rebaseSimulationParams(baseParamsCurrent, currentSimParams, options, {
+        manualAdjustmentImpact, riskCapitalEnabled,
+        riskCapitalCLP, riskCapitalUsdSnapshotCLP,
+        applyActiveDistribution, resolveSimulationBaseMonth,
+      });
     },
     [
       applyActiveDistribution,
@@ -3085,8 +2874,8 @@ export default function App() {
       const aurumFxSource = getAurumFxReferenceSource(snapshot);
       const compositionWithToggle = withRiskCapitalDetectionState(composition, riskExposure, riskCapitalEnabled);
 
-      setAurumSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
-      setAurumSnapshotMonth(snapshot.snapshotMonth || null);
+      setAurumSnapshotLabel(snapshot?.snapshotLabel || 'ultimo cierre confirmado');
+      setAurumSnapshotMonth(snapshot?.snapshotMonth || null);
       setRiskCapitalCLP(riskExposure.riskTotalCLP);
       setRiskCapitalUsdTotal(riskExposure.usdTotal);
       setRiskCapitalUsdSnapshotCLP(riskExposure.usdSnapshotCLP);
@@ -3127,10 +2916,17 @@ export default function App() {
       const nextBaseOfficialParams = buildCanonicalSimParams(baseSnapshotLayer, baseSnapshotLayer, {
         applyCapital: true,
         manualImpact: EMPTY_MANUAL_ADJUSTMENT_IMPACT,
+        sourceBase: true,
         riskCapitalEnabled,
       });
       const currentSim = simParamsRef.current;
-      const nextSimParamsFinal = nextBaseOfficialParams;
+      const nextSimParamsFinal = buildCanonicalSimParams(nextBaseOfficialParams, currentSim, {
+        applyCapital: true, sourceBase: true, riskCapitalEnabled,
+      });
+      nextSimParamsFinal.fx = rebaseSnapshotFx(currentBase, currentSim, nextBaseOfficialParams);
+      const previousEngineIdentity = sourceRebaseEngineIdentity(applySimulationOverrides(currentSim, sanitizeSimulationOverridesForParams(currentSim, simOverrides)));
+      const nextEngineIdentity = sourceRebaseEngineIdentity(applySimulationOverrides(nextSimParamsFinal, sanitizeSimulationOverridesForParams(nextSimParamsFinal, simOverrides)));
+      const engineChanged = !previousEngineIdentity || previousEngineIdentity !== nextEngineIdentity;
       const sameBaseSignature = JSON.stringify(currentBase) === JSON.stringify(nextBaseOfficialParams);
       const sameSimSignature = JSON.stringify(currentSim) === JSON.stringify(nextSimParamsFinal);
 
@@ -3152,9 +2948,7 @@ export default function App() {
       aurumSnapshotResolutionRef.current = 'applied';
       setAurumSnapshotResolution('applied');
       setAurumSnapshotResolutionReason(null);
-      setSimulationActive(false);
-      setSimulationPreset('base');
-      setSimOverrides(null);
+      setSimOverrides(sanitizeSimulationOverridesForParams(nextSimParamsFinal, simOverrides));
       const nextBaseOptimizable = Number(nextBaseOfficialParams.simulationComposition?.optimizableInvestmentsCLP ?? NaN);
       const latestOptimizable = Number(snapshot.optimizableInvestmentsCLP ?? NaN);
       setAurumSyncBaseOpt(Number.isFinite(nextBaseOptimizable) ? nextBaseOptimizable : null);
@@ -3165,14 +2959,14 @@ export default function App() {
           : null,
       );
       setAurumSyncState('synced');
-      if (shouldRecalculate) {
+      if (shouldRecalculate && engineChanged) {
         setBaseUpdatePending(false);
-        startRecalculation('apply-aurum', () => nextSimParamsFinal, {
+        startRecalculation('apply-aurum', () => applySimulationOverrides(nextSimParamsFinal, sanitizeSimulationOverridesForParams(nextSimParamsFinal, simOverrides)), {
           aurumIntegrationStatus: isPartialComposition ? 'partial' : 'available',
           aurumSnapshotAvailable: Boolean(appliedSnapshotSignature),
         });
-      } else if (!sameSimSignature) {
-        setBaseUpdatePending(true);
+      } else {
+        setBaseUpdatePending(engineChanged && !shouldRecalculate);
       }
     } catch (error: any) {
       console.error('[Midas] Error aplicando snapshot Aurum', error);
@@ -3190,6 +2984,7 @@ export default function App() {
     startRecalculation,
     buildCanonicalSimParams,
     summarizeParams,
+    simOverrides,
   ]);
 
   const resetSimulationSession = useCallback(() => {
@@ -4128,7 +3923,7 @@ export default function App() {
         (composition?.diagnostics?.notes ?? []).some((note) => String(note).includes('fallback'));
       const isPartialComposition = compositionMode === 'partial' || hasFallbackFlags;
       setAurumIntegrationStatus(isPartialComposition ? 'partial' : 'available');
-      setAurumSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
+      setAurumSnapshotLabel(snapshot?.snapshotLabel || 'ultimo cierre confirmado');
       setRiskCapitalCLP(riskExposure.riskTotalCLP);
       setAurumSnapshotPublishedAt(typeof snapshot.publishedAt === 'string' ? snapshot.publishedAt : null);
       setRiskCapitalUsdTotal(riskExposure.usdTotal);
@@ -4182,11 +3977,12 @@ export default function App() {
             }
             const canonicalSnapshotParams = buildCanonicalSimParamsCurrent(canonicalSnapshotLayer, simParamsRef.current, {
               applyCapital: true,
-              manualImpact: EMPTY_MANUAL_ADJUSTMENT_IMPACT,
+              sourceBase: true,
               riskCapitalEnabled: riskCapitalEnabledRef.current,
             });
+            canonicalSnapshotParams.fx = rebaseSnapshotFx(baseParamsRef.current, simParamsRef.current, canonicalSnapshotLayer);
             const sameCanonicalSignature = JSON.stringify(simParamsRef.current) === JSON.stringify(canonicalSnapshotParams);
-            setBaseParams(canonicalSnapshotParams);
+            setBaseParams(canonicalSnapshotLayer);
             setSimParams(canonicalSnapshotParams);
             if (!sameCanonicalSignature) {
               cloudConfigRecalcHashRef.current = null;
@@ -4240,6 +4036,9 @@ export default function App() {
           snapshotSignature
           && snapshotSignature === lastProcessedSnapshotSignatureRef.current
         ) {
+          setAurumSnapshotLabel(snapshot?.snapshotLabel || 'ultimo cierre confirmado');
+          setAurumSnapshotMonth(snapshot?.snapshotMonth || null);
+          setAurumSnapshotPublishedAt(snapshot?.publishedAt || null);
           setDuplicateSnapshotSkippedCount((prev) => prev + 1);
           setLastSnapshotSkippedAt(new Date().toISOString());
           return;

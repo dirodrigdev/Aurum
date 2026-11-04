@@ -105,23 +105,17 @@ describe('midasPublished fxReference source-of-truth', () => {
     expect(prepared.selection.skippedClosures).toEqual([]);
   });
 
-  it('skips an invalid latest closure and publishes the previous fully canonical closure', () => {
+  it('blocks an invalid latest closure instead of silently publishing an older one', () => {
     const prior = makeClosure(980, '2026-02');
     const latest = makeClosure(985, '2026-03');
     delete latest.fxMetadata;
 
     const prepared = prepareAurumOptimizableInvestmentsSnapshot([prior, latest]);
-    expect(prepared.ok).toBe(true);
-    if (!prepared.ok) return;
-    expect(prepared.snapshot.snapshotMonth).toBe('2026-02');
-    expect(prepared.snapshot.fxReference?.asOf).toBe('2026-02-28');
+    expect(prepared.ok).toBe(false);
     expect(prepared.selection).toMatchObject({
-      latestClosureMonthKey: '2026-03',
-      selectedClosureMonthKey: '2026-02',
-      selectedEconomicDate: '2026-02-28',
+      latestClosureMonthKey: '2026-03', selectedClosureMonthKey: null, selectedEconomicDate: null,
     });
     expect(prepared.selection.skippedClosures[0]).toMatchObject({ monthKey: '2026-03' });
-    expect(resolvePublishedSnapshotData(prepared.snapshot).status).toBe('valid');
   });
 
   it('does not fall back to local or live FX when no closure is fully canonical', () => {
@@ -135,7 +129,7 @@ describe('midasPublished fxReference source-of-truth', () => {
     expect(prepared.ok).toBe(false);
     if (prepared.ok) return;
     expect(prepared.selection.selectedClosureMonthKey).toBeNull();
-    expect(prepared.selection.skippedClosures.map((item) => item.monthKey)).toEqual(['2026-03', '2026-02']);
+    expect(prepared.selection.skippedClosures.map((item) => item.monthKey)).toEqual(['2026-03']);
   });
 
   it('repairs a legacy closure only from matching historical FX metadata and preserves snapshotMonth', () => {

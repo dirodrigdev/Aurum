@@ -472,7 +472,7 @@ export const prepareAurumOptimizableInvestmentsSnapshot = (
   let selected: WealthMonthlyClosure | null = null;
   let selectedInspection: Extract<ReturnType<typeof inspectClosureForMidasPublication>, { ok: true }> | null = null;
 
-  for (const closure of orderedClosures) {
+  for (const closure of orderedClosures.slice(0, 1)) {
     const inspection = inspectClosureForMidasPublication(closure);
     if (inspection.ok) {
       selected = closure;

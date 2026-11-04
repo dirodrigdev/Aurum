@@ -7,6 +7,11 @@ const storageMock = vi.hoisted(() => ({
   load: vi.fn(),
   append: vi.fn(),
 }));
+// These storage/UI cases require an official GastApp amount. Zero is an
+// explicit certified fixture, not a fallback for missing real expense data.
+vi.mock('../src/services/gastosMonthly', () => ({
+  resolveGastappMonthlySpend: (monthKey:string) => ({monthKey,status:'complete',gastosEur:0,source:'gastapp_firestore'}),
+}));
 const authMock = vi.hoisted(() => ({ uid: 'performance-test-user' }));
 vi.mock('../src/services/firebase', () => ({
   db: {},
@@ -119,9 +124,9 @@ describe('financial performance confirmation read errors', () => {
     expect((container.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true);
     expect(Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Lista completa')?.getAttribute('aria-pressed')).toBe('true');
     expect(container.textContent).toContain('RECONSTRUIDO');
-    expect(container.textContent).toContain('lista vacía se interpreta como cero aportes/retiros');
+    expect(container.textContent).toContain('GastApp se incorpora automáticamente como retiro del portafolio del mes');
     expect(storageMock.append).not.toHaveBeenCalled();
-    const noFlows = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'No hubo flujos este mes');
+    const noFlows = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'No hubo otros flujos este mes');
     await act(async () => noFlows?.click());
     expect(storageMock.append).toHaveBeenCalledWith(expect.objectContaining({ perimeter: 'investment_with_risk' }), period,
       { expectedUid: 'performance-test-user', perimeter: 'investment_with_risk' });
@@ -130,7 +135,7 @@ describe('financial performance confirmation read errors', () => {
     expect(container.querySelector('[data-testid="financial-performance-published-value"]')?.textContent).not.toBe('—');
   });
 
-  it('keeps the interval indicative when the user unchecks incomplete position movements', async () => {
+  it('keeps the valid percentage clearly indicative when position movements are unconfirmed', async () => {
     storageMock.load.mockResolvedValue(null);
     storageMock.append.mockImplementation(async (value) => ({ ...value, revision: 1 }));
     container = document.createElement('div');
@@ -155,7 +160,25 @@ describe('financial performance confirmation read errors', () => {
       { expectedUid: 'performance-test-user', perimeter: 'investment' },
     );
     expect(container.textContent).toContain('INDICATIVO');
-    expect(container.textContent).not.toContain('Rentabilidad financiera');
+    expect(container.textContent).toContain('Rentabilidad financiera · INDICATIVA');
+    expect(container.textContent).toContain('falta validar movimientos internos de posiciones y atribuciones');
+    expect(container.querySelector('[data-testid="financial-performance-published-value"]')?.textContent).toBe('10%');
+    expect(container.textContent).not.toContain('RECONSTRUIDO');
+  });
+
+  it('withholds the percentage when external flows are incomplete even with an official expense fixture', async () => {
+    storageMock.load.mockResolvedValue(null);
+    container=document.createElement('div');document.body.appendChild(container);root=createRoot(container);
+    await act(async()=>root?.render(React.createElement(FinancialPerformanceSlice,{
+      closures:[makeClosure('2024-07',100),makeClosure('2024-08',110)],includeRiskCapital:false,period:{startMonth:'2024-07',endMonth:'2024-08'},
+    })));
+    const incomplete=Array.from(container.querySelectorAll('button')).find(b=>b.textContent==='Incompleta / no sé');
+    await act(async()=>incomplete?.click());
+    // A draft is not a new confirmed source. Save the incomplete declaration.
+    storageMock.append.mockImplementation(async(value)=>({...value,revision:1}));
+    await act(async()=>Array.from(container!.querySelectorAll('button')).find(b=>b.textContent==='Guardar confirmación')?.click());
+    expect(container.querySelector('[data-testid="financial-performance-published-value"]')?.textContent).toBe('—');
+    expect(container.textContent).toContain('Rentabilidad pendiente de validación');
   });
 
   it('requires confirmation before replacing entered flows with zero and can discard a draft without writing', async () => {
@@ -174,7 +197,7 @@ describe('financial performance confirmation read errors', () => {
       includeRiskCapital: false, period: { startMonth: '2024-07', endMonth: '2024-08' },
     })));
     const button = (name: string) => Array.from(container!.querySelectorAll('button')).find(b => b.textContent === name);
-    await act(async () => button('No hubo flujos este mes')?.click());
+    await act(async () => button('No hubo otros flujos este mes')?.click());
     expect(window.confirm).toHaveBeenCalledOnce();
     expect(storageMock.append).not.toHaveBeenCalled();
     expect(container.querySelectorAll('input[type="number"]')).toHaveLength(1);

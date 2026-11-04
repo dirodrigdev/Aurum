@@ -16,7 +16,10 @@ let originalSidecar: Record<string, unknown> | null = null;
 let existedWealth = false;
 let existedSidecar = false;
 
-test.afterEach(async () => {
+test.afterEach(async ({page}) => {
+  // Stop live subscriptions and autosync before restoring shared emulator state.
+  // Restoring while the fixture page remains open can republish its closures.
+  await Promise.all(page.context().pages().map(openPage => openPage.close()));
   if (existedWealth && originalWealth) await wealthRef.set(originalWealth);
   else await wealthRef.delete();
   if (existedSidecar && originalSidecar) await sidecarRef.set(originalSidecar);

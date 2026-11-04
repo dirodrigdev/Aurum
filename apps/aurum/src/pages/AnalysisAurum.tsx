@@ -592,7 +592,7 @@ export const AnalysisAurum: React.FC = () => {
                   key={item}
                   type="button"
                   onClick={() => setCurrency(item)}
-                  className={`min-h-9 min-w-[42px] rounded-md px-2 text-[10px] font-semibold transition touch-manipulation ${
+                  className={`min-h-11 min-w-[44px] rounded-md px-2 text-[10px] font-semibold transition touch-manipulation ${
                     currency === item
                       ? 'bg-slate-800 text-white shadow-sm'
                       : 'text-slate-600'
