@@ -5,13 +5,15 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, Root } from 'react-dom/client';
 
-// Cloud-dependent integration flow. Excluded from the default quality gate and
-// only enabled when RUN_CLOUD_TESTS=1.
+// Local service integration flow. The Firebase identity is intentionally absent:
+// this suite validates browser storage and calculations, not Firestore access.
+// It is excluded from the default quality gate and enabled with RUN_CLOUD_TESTS=1.
 const describeCloud = process.env.RUN_CLOUD_TESTS === '1' ? describe : describe.skip;
 
 vi.mock('../src/services/firebase', () => ({
   db: {},
   ensureAuthPersistence: vi.fn(async () => {}),
+  isE2EFirebaseEmulatorEnabled: vi.fn(() => false),
   getCurrentUid: vi.fn(() => null),
 }));
 
@@ -20,7 +22,6 @@ import {
   buildWealthNetBreakdown,
   RISK_CAPITAL_LABEL_CLP,
   applyMortgageAutoCalculation,
-  clearWealthDataForFreshStart,
   computeWealthHomeSectionAmounts,
   createMonthlyClosure,
   currentMonthKey,
@@ -183,6 +184,11 @@ const makeClosureForMonth = (monthKey: string) => {
   };
 };
 
+const resetLocalWealthFixture = () => {
+  localStorage.clear();
+  sessionStorage.clear();
+};
+
 describeCloud('Aurum full flow (service-level e2e)', () => {
   beforeEach(async () => {
     (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -190,7 +196,7 @@ describeCloud('Aurum full flow (service-level e2e)', () => {
     vi.setSystemTime(new Date('2026-03-15T12:00:00.000Z'));
     localStorage.clear();
     localStorage.removeItem(CLOSE_CONFIG_KEY);
-    await clearWealthDataForFreshStart({ preserveFx: false });
+    resetLocalWealthFixture();
     (globalThis as any).fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
@@ -409,7 +415,7 @@ describeCloud('Aurum full flow (service-level e2e)', () => {
     saveClosures([makeClosureForMonth('2026-03'), makeClosureForMonth('2026-01')]);
     expect(currentMonthKey()).toBe('2026-04');
 
-    await clearWealthDataForFreshStart({ preserveFx: false });
+    resetLocalWealthFixture();
     expect(loadClosures()).toHaveLength(0);
     expect(currentMonthKey()).toBe('2026-03');
   });

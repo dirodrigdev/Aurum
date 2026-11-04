@@ -57,7 +57,7 @@ import {
   subscribeHistoricalGastappSidecarForAnalysis,
 } from './services/historicalGastappSidecar';
 import { GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT } from './services/gastosMonthly';
-import { applyCertifiedGastappRevisions, buildGastappRevisionInbox, summarizeGastappHistoricalRevisionAudit, type GastappRevisionInboxItem } from './services/acceptReviewedGastappRevision';
+import { GASTAPP_REVISION_NOTICE_SEEN_EVENT, applyCertifiedGastappRevisions, buildGastappRevisionInbox, summarizeGastappHistoricalRevisionAudit, type GastappRevisionInboxItem } from './services/acceptReviewedGastappRevision';
 
 const INCOMPLETE_CLOSURE_PROMPT_DAY_KEY = 'aurum.incomplete-closure.prompt.day.v1';
 const PRESENTATION_ROUTE_EVENT = 'aurum:presentation-route';
@@ -274,6 +274,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         getHistoricalGastappSidecarAnalysisState().document);
       setRevisionInbox(items);
       setRevisionSelectedMonth(items[0]?.monthKey || null);
+      window.dispatchEvent(new CustomEvent(GASTAPP_REVISION_NOTICE_SEEN_EVENT, { detail: seen }));
     } catch (error) {
       setRevisionNoticeError(
         'No pude confirmar la lectura en la nube. Reintenta para que el aviso no vuelva a aparecer.');
@@ -282,6 +283,19 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       setRevisionNoticeBusy(false);
     }
   };
+  useEffect(() => {
+    const onSharedAcknowledgement = (event: Event) => {
+      const seen = (event as CustomEvent<unknown>).detail;
+      if (!seen || typeof seen !== 'object' || Array.isArray(seen)) return;
+      const items = buildGastappRevisionInbox(
+        loadClosures(), seen as Record<string, string>, loadIncludeRiskCapitalInTotals(),
+        getHistoricalGastappSidecarAnalysisState().document);
+      setRevisionInbox(items);
+      setRevisionSelectedMonth(items[0]?.monthKey || null);
+    };
+    window.addEventListener(GASTAPP_REVISION_NOTICE_SEEN_EVENT, onSharedAcknowledgement);
+    return () => window.removeEventListener(GASTAPP_REVISION_NOTICE_SEEN_EVENT, onSharedAcknowledgement);
+  }, []);
   const [isPresentationRoute, setIsPresentationRoute] = useState(
     isPresentationPath,
   );

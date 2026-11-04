@@ -333,6 +333,42 @@ describe('gastosMonthly canonical source', () => {
     });
   });
 
+  it('keeps GastApp May 2023 partial from its real start date and cannot certify it as a full month', async () => {
+    loadGastappCanonicalV2OfficialMonthContractFreshMock.mockResolvedValue({
+      version: 'gastapp-aurum-calendar-months-v2',
+      generatedAt: '2026-11-04T00:00:00.000Z',
+      canonicalDataHash: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      operationalDataHash: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+      operationalRevision: 9,
+      sourceGeneration: 4,
+      months: [{
+        calendarMonthKey: '2023-05',
+        status: 'pending',
+        calendarStatus: 'partial_boundary_start',
+        eligibleForAurumReturns: false,
+        coverage: { fromYmd: '2023-05-12', toYmd: '2023-05-31' },
+        totalEur: 10,
+        byFamily: { dayToDay: 10, trips: 0, others: 0 },
+        monthContractRevision: 1,
+        monthContractHash: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        calendarCertification: null,
+      }],
+    });
+    const { resolveGastappMonthlyCloseCandidate, resolveGastappMonthlySpend, warmGastappMonthlyContable } = await import('../src/services/gastosMonthly');
+
+    await warmGastappMonthlyContable();
+    const resolution = resolveGastappMonthlySpend('2023-05', new Date('2023-06-01T12:00:00Z'));
+    const candidate = resolveGastappMonthlyCloseCandidate('2023-05');
+
+    expect(resolution).toMatchObject({
+      status: 'pending',
+      gastosEur: null,
+      partialGastosEur: 10,
+      partialByFamilyEur: { dayToDay: 10, trips: 0, others: 0 },
+    });
+    expect(candidate).toMatchObject({ status: 'pending', partialGastosEur: 10, snapshot: null });
+  });
+
   it('requires the certification embedded in the current monthly row', async () => {
     const baseContract = {
       version: 'gastapp-aurum-calendar-months-v2',
