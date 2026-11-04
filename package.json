@@ -5,6 +5,7 @@
     "apps/*"
   ],
   "scripts": {
+    "test:midas:publication:emulator": "node scripts/run-midas-publication-emulator.mjs",
     "dev:aurum": "npm -w apps/aurum run dev",
     "build:aurum": "npm -w apps/aurum run build",
     "lint:aurum": "npm -w apps/aurum run lint",

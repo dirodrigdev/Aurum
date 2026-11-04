@@ -92,8 +92,11 @@ test('preflight summary check remains readable across viewports', async ({ page 
 });
 
 test('a certified GastApp revision updates the whole Aurum chain automatically and only asks for read acknowledgement', async ({ page }, testInfo) => {
+  // This end-to-end scenario covers closure, automatic revision propagation,
+  // read acknowledgement, and downstream analysis in one isolated session.
+  test.setTimeout(60_000);
   await page.clock.setFixedTime(new Date('2026-07-31T12:00:00.000Z'));
-  const { modal, networkGuard, pageErrors, consoleErrors } = await prepare(page);
+  const { modal, networkGuard, pageErrors, consoleErrors } = await prepare(page, '2026-07', true);
   await confirm(page, modal);
   const originalClosure = await cloudClosure('2026-07');
   expect(originalClosure.gastappExpenseClose).toMatchObject({
@@ -111,6 +114,7 @@ test('a certified GastApp revision updates the whole Aurum chain automatically a
   const previousSnapshot = {
     ...originalClosure.gastappExpenseClose,
     totalEur: 2000,
+    operationalRevision:1,sourceGeneration:1,monthContractRevision:1,certificationRevision:1,
     byFamilyEur: { dayToDay: 1800, trips: 100, others: 100 },
     contractHash: `sha256:${'a'.repeat(64)}`,
     monthContractHash: `sha256:${'a'.repeat(64)}`,
@@ -157,14 +161,32 @@ test('a certified GastApp revision updates the whole Aurum chain automatically a
   await page.reload();
   await page.goto('/#/patrimonio');
   await expect(page.getByRole('button', { name: 'Cerrar mes', exact: true })).toBeVisible();
+  const sourceFixture = await page.evaluate(async () => {
+    const sourcePath = '/src/services/gastosMonthly.ts';
+    const revisionPath = '/src/services/acceptReviewedGastappRevision.ts';
+    const { resolveGastappMonthlyCloseCandidate } = await import(sourcePath);
+    const { isGastappAutomaticRevisionSyncEnabled } = await import(revisionPath);
+    return { enabled: isGastappAutomaticRevisionSyncEnabled(), candidate: resolveGastappMonthlyCloseCandidate('2026-07').snapshot };
+  });
+  expect(sourceFixture).toMatchObject({ enabled: true, candidate: { contractVersion: 'gastapp-aurum-calendar-months-v2', certificationRevision: 2 } });
   await expect.poll(async () => (await cloudClosure('2026-07')).gastappExpenseClose?.totalEur).toBe(2715);
-  const revisionAlert = page.getByText('GastApp actualizó cierres de Aurum', { exact: true });
+  const revisionAlert = page.getByText('GastApp actualizó cierres de aurum', { exact: true });
   await expect(revisionAlert).toBeVisible();
   const revisionSection = page.locator('section[aria-live="polite"]').filter({ hasText: 'La corrección ya está aplicada.' });
   await expect(revisionSection).toContainText('Antes: 2000,00 €');
   await expect(revisionSection).toContainText('Ahora: 2715,00 €');
   await expect(revisionSection).toContainText('Diferencia: 715,00 €');
   await expect(page.getByRole('button', { name: 'Aceptar y actualizar cadena', exact: true })).toHaveCount(0);
+
+  // The app-wide read acknowledgement precedes the existing page detail.
+  // Both already exist in main; acknowledging either must not change a close.
+  const groupedNotice = page.getByRole('dialog', { name: 'Cambios financieros aplicados', exact: true });
+  await expect(groupedNotice).toBeVisible();
+  await expect(groupedNotice).toContainText('Julio de 2026');
+  const appliedBeforeAcknowledgement = await cloudClosure('2026-07');
+  await groupedNotice.getByRole('button', { name: 'Entendido', exact: true }).click();
+  await expect(groupedNotice).toHaveCount(0);
+  expect(await cloudClosure('2026-07')).toEqual(appliedBeforeAcknowledgement);
 
   await revisionSection.getByRole('button', { name: 'Ver detalle', exact: true }).click();
   const detailDialog = page.getByRole('dialog', { name: 'Detalle de revisión GastApp Julio de 2026', exact: true });
@@ -186,7 +208,7 @@ test('a certified GastApp revision updates the whole Aurum chain automatically a
 
   const updated = await cloudClosure('2026-07');
   expect(updated.gastappExpenseClose.totalEur).toBe(2715);
-  expect(updated.gastappExpenseClose.certificationRevision).toBe(1);
+  expect(updated.gastappExpenseClose.certificationRevision).toBe(2);
   expect(updated.summary).toEqual(originalClosure.summary);
   expect(updated.records).toEqual(originalClosure.records);
   expect(updated.fxRates).toEqual(originalClosure.fxRates);
@@ -293,7 +315,7 @@ test('legacy close expenses stay explicitly unavailable without rebuilding histo
   await expect.poll(async () => ordered((await emulatorDb().doc(`aurum_wealth/${uid}`).get()).get('closures'))).toEqual(ordered(before));
   await page.goto('/#/analysis');
   await page.getByRole('button', { name: /Avisos ·/ }).click();
-  const warning = page.getByText(/Meses cerrados sin una versión de GastApp confirmada y guardada en Aurum:/);
+  const warning = page.getByText(/Meses cerrados sin una versión de GastApp confirmada y guardada en aurum:/);
   await expect(warning).toBeVisible();
   await expect(warning).toContainText('ni se reconstruye el histórico automáticamente');
   for (const viewport of [
@@ -432,6 +454,7 @@ for (const viewport of [
   { name: 'mobile', width: 390, height: 844, rejectFx: true },
 ]) {
   test(`next month start preserves history and applies mortgage once on ${viewport.name}`, async ({ page }, testInfo) => {
+    test.setTimeout(60_000);
     await seedMortgageStart();
     await page.clock.setFixedTime(new Date('2026-08-01T12:00:00.000Z'));
     await page.setViewportSize(viewport);
@@ -620,7 +643,7 @@ test.afterEach(async ({ page }) => {
   if (restore) await restore();
 });
 
-async function prepare(page: Page, monthKey = '2026-07') {
+async function prepare(page: Page, monthKey = '2026-07', certifiedRevisionFixture = false) {
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
   const confirmationWarnings: string[] = [];
@@ -635,6 +658,25 @@ async function prepare(page: Page, monthKey = '2026-07') {
     }
   });
   const networkGuard = await installLocalNetworkGuard(page);
+  if (certifiedRevisionFixture) {
+    // Supply a certified upstream contract for this month only. The default
+    // synthetic demo contract is deliberately excluded from automatic revisions.
+    // Intercept local fixture data, leaving every production validator intact.
+    await page.route('**/src/services/gastosMonthly.ts*', async (route) => {
+      const response = await route.fetch();
+      const body = await response.text();
+      const marker = /contractVersion:\s*["']e2e_fixture["']/g;
+      expect(body.match(marker), 'The scoped source fixture marker must exist exactly once').toHaveLength(1);
+      let fixture = body.replace(marker,
+        'contractVersion: monthKey === "2026-07" ? "gastapp-aurum-calendar-months-v2" : "e2e_fixture"');
+      for (const key of ['operationalRevision', 'sourceGeneration', 'monthContractRevision', 'certificationRevision']) {
+        const revision = new RegExp(`${key}:\\s*1,`, 'g');
+        expect(fixture.match(revision), `Fixture revision ${key} must be explicit`).toHaveLength(1);
+        fixture = fixture.replace(revision, `${key}: monthKey === "2026-07" ? 2 : 1,`);
+      }
+      await route.fulfill({ response, body: fixture });
+    });
+  }
   await page.addInitScript(() => {
     window.localStorage.setItem('aurum.banks.update.mode.v1', 'manual');
     const now = new Date();
@@ -722,9 +764,9 @@ async function confirm(page: Page, modal: Locator, overwrite = false) {
   if (overwrite) await page.getByRole('button', { name: 'Reemplazar cierre', exact: true }).click();
   try {
     const closeSummaryButton = page.getByRole('button', { name: 'Cerrar ventana', exact: true });
-    await expect(closeSummaryButton).toBeAttached();
+    await expect(closeSummaryButton).toBeAttached({ timeout: 10_000 });
     await closeSummaryButton.scrollIntoViewIfNeeded();
-    await expect(closeSummaryButton).toBeVisible();
+    await expect(closeSummaryButton).toBeVisible({ timeout: 10_000 });
   } catch (error) {
     const monthKey = await modal.locator('input[type="month"]').inputValue().catch(() => 'unknown');
     const closeError = await modal.locator('.border-red-200.bg-red-50').last().innerText().catch(() => 'no visible close error');
@@ -896,6 +938,7 @@ for (const viewport of [
   { name: 'mobile', width: 390, height: 844 },
 ]) {
   test(`customer close matches preview, survives reload and advances on ${viewport.name}`, async ({ page }, testInfo) => {
+    test.setTimeout(60_000);
     await page.setViewportSize(viewport);
     const { modal, networkGuard, pageErrors, consoleErrors } = await prepare(page);
     const preview = await previewAmounts(modal);

@@ -156,7 +156,7 @@ describe('SyncStatusSection MIDAS publication recovery', () => {
       }));
     });
 
-    expect(container.textContent).toContain('Publicación Aurum → MIDAS');
+    expect(container.textContent).toContain('Publicación aurum → MIDAS');
     expect(container.textContent).toContain('Listo para publicar 2026-05');
     const button = Array.from(container.querySelectorAll('button')).find((item) =>
       item.textContent?.includes('Regenerar publicación MIDAS'),

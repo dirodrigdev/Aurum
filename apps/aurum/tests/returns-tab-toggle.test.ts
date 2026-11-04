@@ -570,8 +570,8 @@ describe('ReturnsTab partial month toggle', () => {
       );
     });
 
-    expect(container.textContent).toContain('Agosto de 2026 · GastApp cerrado oficialmente · cierre Aurum pendiente');
-    expect(container.textContent).toContain('Mes provisional de Aurum');
+    expect(container.textContent).toContain('Agosto de 2026 · GastApp cerrado oficialmente · cierre aurum pendiente');
+    expect(container.textContent).toContain('Mes provisional de aurum');
     expect(container.textContent).toContain('Usado: gasto oficial del cierre calendario de GastApp.');
     expect(container.textContent).toContain('GastApp cerrado');
 
@@ -585,12 +585,12 @@ describe('ReturnsTab partial month toggle', () => {
     expect(cells?.[4]?.textContent).toContain('$2.500.000');
     expect(cells?.[4]?.textContent).not.toContain('(P)');
 
+    const user = userEvent.setup();
     const writeText = vi.fn(async (_value: string) => undefined);
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: { writeText },
     });
-    const user = userEvent.setup();
     await act(async () => {
       await user.click(Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Copiar tabla'))!);
     });
@@ -628,14 +628,14 @@ describe('ReturnsTab partial month toggle', () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull();
 
     const provisionalToggle = Array.from(container.querySelectorAll('button')).find((node) =>
-      node.textContent?.includes('Mes provisional de Aurum'),
+      node.textContent?.includes('Mes provisional de aurum'),
     ) as HTMLElement | undefined;
     expect(provisionalToggle).toBeTruthy();
     await act(async () => {
       await userEvent.setup().click(provisionalToggle!);
     });
     expect(container.textContent).toContain('Gasto oficial GastApp · retorno provisional');
-    expect(container.textContent).toContain('P: cierre provisional de Aurum · GastApp ya está cerrado oficialmente.');
+    expect(container.textContent).toContain('P: cierre provisional de aurum · GastApp ya está cerrado oficialmente.');
     expect(container.textContent).not.toMatch(/NaN|Infinity|undefined/);
   });
 

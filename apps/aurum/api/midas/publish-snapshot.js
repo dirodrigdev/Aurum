@@ -1,8 +1,6 @@
 import { requireFirebaseAuth } from '../_firebaseAuth.js';
+import { publishSnapshotFromCurrentSource } from './_publicationIntegrity.js';
 import { getAdminDb } from '../_firestoreAdmin.js';
-
-const PUBLISHED_COLLECTION = 'aurum_published';
-const OPTIMIZABLE_DOC_ID = 'optimizableInvestments';
 
 const setSharedHeaders = (res) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -230,7 +228,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ ok: false, error: 'Método no permitido' });
   }
 
-  const auth = await requireFirebaseAuth(req, res);
+  const auth = await requireFirebaseAuth(req, res, { includeVerification: true });
   if (!auth) return;
 
   const normalized = normalizeSnapshotPayload(req.body?.snapshot);
@@ -240,41 +238,15 @@ export default async function handler(req, res) {
 
   try {
     const db = getAdminDb();
-    const publishedRef = db.collection(PUBLISHED_COLLECTION).doc(OPTIMIZABLE_DOC_ID);
-    const snapshotToWrite = mirrorLegacyFxFromFxReference(normalized.snapshot);
-    const docPath = `${PUBLISHED_COLLECTION}/${OPTIMIZABLE_DOC_ID}`;
-    console.info(`[FX TRACE][Aurum API publish] write_snapshot ${JSON.stringify({
-      docPath,
-      publishedAt: snapshotToWrite.publishedAt,
-      version: snapshotToWrite.version,
-      snapshotMonth: snapshotToWrite.snapshotMonth,
-      fxReferenceClpUsd: snapshotToWrite.fxReference?.clpUsd ?? null,
-      fxReferenceSource: snapshotToWrite.fxReference?.source ?? null,
-      legacyFxUsdClp: asFiniteOrNull(snapshotToWrite?.fx?.usdClp) ?? null,
-      legacyFxSource: snapshotToWrite?.fx?.source ?? null,
-      uid: auth.uid,
-    })}`);
-    await publishedRef.set(
-      {
-        ...snapshotToWrite,
-        publishedByUid: auth.uid,
-      },
-      { merge: false },
-    );
-    console.info(`[FX TRACE][Aurum API publish] write_snapshot_ok ${JSON.stringify({
-      docPath,
-      fxReferenceClpUsd: snapshotToWrite.fxReference?.clpUsd ?? null,
-      fxReferenceSource: snapshotToWrite.fxReference?.source ?? null,
-      legacyFxUsdClp: asFiniteOrNull(snapshotToWrite?.fx?.usdClp) ?? null,
-      legacyFxSource: snapshotToWrite?.fx?.source ?? null,
-    })}`);
-    return res.status(200).json({ ok: true });
+    const result = await publishSnapshotFromCurrentSource(db, auth, mirrorLegacyFxFromFxReference(normalized.snapshot));
+    return res.status(200).json(result);
   } catch (error) {
     console.info(`[FX TRACE][Aurum API publish] write_snapshot_error ${JSON.stringify({
       error: error?.message || 'No pude escribir el snapshot publicado en Firestore.',
     })}`);
-    return res.status(500).json({
+    return res.status(Number(error?.statusCode) || 500).json({
       ok: false,
+      code: error?.code || 'publication_failed',
       error: error?.message || 'No pude escribir el snapshot publicado en Firestore.',
     });
   }

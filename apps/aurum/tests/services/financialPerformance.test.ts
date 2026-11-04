@@ -495,10 +495,12 @@ describe('reconcileFinancialPerformance', () => {
     expect(result.returnPct).toBe(0);
   });
 
-  it('keeps an unattributed balance change in the residual instead of calling it investment result', () => {
+  it('estimates the aggregate investment change but leaves unconfirmed movements indicative', () => {
     const result = run([makeRecord({ label: 'Fondo', amount: 100 })], [makeRecord({ label: 'Fondo', amount: 120 })], closedZeroFlows);
-    expect(result.investmentAttributable).toBeNull();
-    expect(result.unexplainedResidual).toBe(20);
+    expect(result.investmentAttributable).toBe(20);
+    expect(result.unexplainedResidual).toBe(0);
+    expect(result.quality).toBe('INDICATIVO');
+    expect(result.attributionComplete).toBe(false);
   });
 
   it.each(['automatic', 'automatic-final'] as const)(
@@ -545,7 +547,7 @@ describe('reconcileFinancialPerformance', () => {
     expect(result.unexplainedResidual).toBeCloseTo(0);
   });
 
-  it('rejects a manual USD rate without a correction reason', () => {
+  it('uses the saved USD rate even without a legacy correction reason', () => {
     const result = run(
       [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
       [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
@@ -560,11 +562,11 @@ describe('reconcileFinancialPerformance', () => {
       },
     );
 
-    expect(result.fxAttributable).toBeNull();
-    expect(result.unexplainedResidual).toBe(10_000);
+    expect(result.fxAttributable).toBe(10_000);
+    expect(result.unexplainedResidual).toBeCloseTo(0);
   });
 
-  it('rejects a manual USD rate marked as missing on the closure', () => {
+  it('uses the positive saved USD rate despite a stale legacy missing marker', () => {
     const result = run(
       [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
       [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
@@ -581,11 +583,11 @@ describe('reconcileFinancialPerformance', () => {
       },
     );
 
-    expect(result.fxAttributable).toBeNull();
-    expect(result.unexplainedResidual).toBe(10_000);
+    expect(result.fxAttributable).toBe(10_000);
+    expect(result.unexplainedResidual).toBeCloseTo(0);
   });
 
-  it('rejects fallback USD provenance', () => {
+  it('uses the saved historical USD rate without promoting live FX from fallback provenance', () => {
     const result = run(
       [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
       [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
@@ -599,8 +601,8 @@ describe('reconcileFinancialPerformance', () => {
       },
     );
 
-    expect(result.fxAttributable).toBeNull();
-    expect(result.unexplainedResidual).toBe(10_000);
+    expect(result.fxAttributable).toBe(10_000);
+    expect(result.unexplainedResidual).toBeCloseTo(0);
   });
 
   it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
@@ -628,7 +630,7 @@ describe('reconcileFinancialPerformance', () => {
     },
   );
 
-  it('rejects a manual rate with an economic month that does not match the closure', () => {
+  it('uses the closure rate rather than an inconsistent legacy provenance month', () => {
     const result = run(
       [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
       [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
@@ -645,11 +647,11 @@ describe('reconcileFinancialPerformance', () => {
       },
     );
 
-    expect(result.fxAttributable).toBeNull();
-    expect(result.unexplainedResidual).toBe(10_000);
+    expect(result.fxAttributable).toBe(10_000);
+    expect(result.unexplainedResidual).toBeCloseTo(0);
   });
 
-  it('rejects manual rates without exact input provenance or matching saved values', () => {
+  it('uses closure rates rather than inconsistent legacy metadata values', () => {
     const confirmation = { ...closedZeroFlows, positionMovementCompleteness: 'no_unrecorded_movements' } as const;
     const initial = [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })];
     const final = [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })];
@@ -667,11 +669,11 @@ describe('reconcileFinancialPerformance', () => {
       finalRates: { usdClp: 1100 },
     });
 
-    expect(unknownSource.fxAttributable).toBeNull();
-    expect(mismatchedSavedRate.fxAttributable).toBeNull();
+    expect(unknownSource.fxAttributable).toBe(10_000);
+    expect(mismatchedSavedRate.fxAttributable).toBe(10_000);
   });
 
-  it('rejects a manual USD rate without saved closure reconciliation', () => {
+  it('does not require a legacy reconciliation stamp to use a saved closure rate', () => {
     const result = run(
       [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
       [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
@@ -687,11 +689,11 @@ describe('reconcileFinancialPerformance', () => {
       },
     );
 
-    expect(result.fxAttributable).toBeNull();
-    expect(result.unexplainedResidual).toBe(10_000);
+    expect(result.fxAttributable).toBe(10_000);
+    expect(result.unexplainedResidual).toBeCloseTo(0);
   });
 
-  it('rejects manual provenance that is not attached to a saved closure', () => {
+  it('uses stored closure rates independently of the optional closedAt audit stamp', () => {
     const start = makeClosure(
       PERFORMANCE_INITIAL_MONTH,
       [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })],
@@ -715,11 +717,11 @@ describe('reconcileFinancialPerformance', () => {
       includeRiskCapital: false,
     });
 
-    expect(result.fxAttributable).toBeNull();
-    expect(result.unexplainedResidual).toBe(10_000);
+    expect(result.fxAttributable).toBe(10_000);
+    expect(result.unexplainedResidual).toBeCloseTo(0);
   });
 
-  it('leaves FX in the residual if either close lacks reliable rate provenance', () => {
+  it('keeps FX attributed from saved rates when provenance is only a diagnostic', () => {
     const confirmation: FinancialPerformanceConfirmation = {
       ...closedZeroFlows,
       positionMovementCompleteness: 'no_unrecorded_movements',
@@ -733,9 +735,9 @@ describe('reconcileFinancialPerformance', () => {
     const end = makeClosure(PERFORMANCE_FINAL_MONTH, [makeRecord({ label: 'Fondo USD', amount: 100, currency: 'USD' })], { usdClp: 1100 });
     const result = reconcileFinancialPerformance({ closures: [start, end], confirmation, includeRiskCapital: false });
 
-    expect(result.fxAttributable).toBeNull();
-    expect(result.fxCoveragePct).toBe(0);
-    expect(result.unexplainedResidual).toBe(10_000);
+    expect(result.fxAttributable).toBe(10_000);
+    expect(result.fxCoveragePct).toBe(100);
+    expect(result.unexplainedResidual).toBeCloseTo(0);
     expect(result.returnPct).toBeCloseTo(0.1);
   });
 
@@ -791,13 +793,13 @@ describe('reconcileFinancialPerformance', () => {
       .toMatchObject({ quality: 'INDICATIVO', returnPct: null });
   });
 
-  it('does not call cancellation of unmatched positions fully explained', () => {
+  it('reconciles same-currency position transfers at aggregate level when movements are confirmed', () => {
     const initial = [makeRecord({ label: 'Fondo', amount: 100 }), makeRecord({ label: 'Desaparece', amount: 50 })];
     const final = [makeRecord({ label: 'Fondo', amount: 110 }), makeRecord({ label: 'Aparece', amount: 50 })];
     const result = run(initial, final, { ...closedZeroFlows, positionMovementCompleteness: 'no_unrecorded_movements' });
     expect(result.unexplainedResidual).toBe(0);
-    expect(result.attributionComplete).toBe(false);
-    expect(result.returnWithoutFxPct).toBeNull();
+    expect(result.attributionComplete).toBe(true);
+    expect(result.returnWithoutFxPct).toBeCloseTo(10 / 150);
   });
 
   it('separates each currency coverage and publishes the no-FX bridge only when fully attributed', () => {

@@ -15,11 +15,9 @@ assert.match(
   'missing simulationActiveV1 must stay in safe fallback/read-only state without seeding cloud automatically',
 );
 
-assert.match(
-  appSource,
-  /const canonicalBaseParamsCurrent = stripManualAdjustmentImpactFromParams\(\s*baseParamsCurrent,\s*manualAdjustmentImpact,\s*\);[\s\S]*?const canonicalCurrentSimParams = stripManualAdjustmentImpactFromParams\(\s*currentSimParams,\s*manualAdjustmentImpact,\s*\);[\s\S]*?const manualImpact = options\?\.manualImpact \?\? manualAdjustmentImpact;/,
-  'canonical simulation params must rebuild the comparable M8 input using the effective manual/future flow impact',
-);
+// The transformation is now directly exercised by rebaseSimulationParams.test.ts.
+assert.match(appSource, /return rebaseSimulationParams\(baseParamsCurrent, currentSimParams, options,/);
+assert.match(appSource, /sourceBase: true/);
 
 assert.match(
   appSource,

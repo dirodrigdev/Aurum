@@ -32,6 +32,7 @@ export const FinancialPerformanceResultView: React.FC<{
   };
 }> = ({ result, confirmation, hasSavedConfirmation, isLoading, storageReady, storageError, closures, includeRiskCapital, economicBridge }) => {
   const canPublish = storageReady && !isLoading && result.flowListComplete && result.returnPct !== null;
+  const indicative = canPublish && result.quality === 'INDICATIVO';
   const method = result.returnMethod === 'simple' ? 'Método simple' : result.returnMethod === 'simple_adjusted' ? 'Método simple ajustado' : result.returnMethod === 'modified_dietz' ? 'Modified Dietz' : 'Método pendiente';
   const flowCount = confirmation?.flows.length ?? 0;
   const automaticConsumptionWithdrawalClp = result.automaticConsumptionWithdrawalClp;
@@ -100,7 +101,7 @@ export const FinancialPerformanceResultView: React.FC<{
       </div>
     </div>
     <div className="mt-4 rounded-xl border border-sky-200/20 bg-sky-200/5 p-4">
-      <div className="text-xs font-semibold uppercase tracking-wide text-sky-100">{canPublish ? 'Rentabilidad financiera' : 'Rentabilidad pendiente de validación'}</div>
+      <div className="text-xs font-semibold uppercase tracking-wide text-sky-100">{canPublish ? indicative ? 'Rentabilidad financiera · INDICATIVA' : 'Rentabilidad financiera' : 'Rentabilidad pendiente de validación'}</div>
       <div className="mt-1 break-words text-3xl font-semibold tracking-tight text-white sm:text-4xl">
         <span data-testid="financial-performance-published-value">{isLoading ? 'Cargando…' : canPublish ? pct(result.returnPct) : '—'}</span>
       </div>
@@ -113,6 +114,7 @@ export const FinancialPerformanceResultView: React.FC<{
               ? `Supuesto inicial sin guardar · ${method} · la lista vacía se interpreta como cero aportes/retiros.`
               : `Borrador sin guardar · ${method} · se usan los ${flowCount} aportes/retiros ingresados.`
         : storageError ? 'No pudimos comprobar la confirmación guardada.' : 'Se muestra la variación de saldos, no una rentabilidad confirmada.'}</p>
+      {indicative && <p className="mt-2 text-xs font-semibold text-amber-200" role="note">Estimación INDICATIVA. Los flujos externos están completos y los saldos son comparables; falta validar movimientos internos de posiciones y atribuciones. No es una rentabilidad reconstruida ni certificada.</p>}
       {canPublish && <p className="mt-1 text-xs text-slate-300">{hasAnyFlow
         ? hasAutomaticConsumption
           ? 'Rentabilidad en CLP antes del consumo: el gasto oficial de GastApp se trata como retiro automático del portafolio.'

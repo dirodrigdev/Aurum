@@ -54,6 +54,8 @@ export interface AurumOptimizableInvestmentsSnapshotV1 {
   optimizableInvestmentsCLP: number;
   optimizableInvestmentsWithRiskCLP?: number;
   riskCapital?: AurumRiskCapitalSnapshot;
+  // Canonical FX is already carried by later V1 publications.
+  fxReference?: AurumOptimizableInvestmentsSnapshotV2['fxReference'];
   source: {
     app: 'aurum';
     basis: 'latest_confirmed_closure';

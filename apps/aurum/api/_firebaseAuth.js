@@ -17,7 +17,7 @@ const parseErrorMessage = (payload, fallback) => {
   return msg || fallback || 'Error de autenticación';
 };
 
-export const requireFirebaseAuth = async (req, res) => {
+export const requireFirebaseAuth = async (req, res, { includeVerification = false } = {}) => {
   const idToken = extractBearerToken(req.headers?.authorization || req.headers?.Authorization);
   if (!idToken) {
     res.status(401).json({ ok: false, error: 'Falta token de sesión (Bearer).' });
@@ -71,6 +71,7 @@ export const requireFirebaseAuth = async (req, res) => {
     return {
       uid,
       email: String(user?.email || ''),
+      ...(includeVerification ? { emailVerified: user?.emailVerified === true } : {}),
     };
   } catch (error) {
     res.status(401).json({

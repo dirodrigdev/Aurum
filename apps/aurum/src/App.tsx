@@ -267,11 +267,13 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     revisionNoticeReadSeq.current += 1;
     const acknowledged = [...revisionInbox];
     try {
-      await acknowledgeGastappRevisionNotices(
+      const seen = await acknowledgeGastappRevisionNotices(
         acknowledged.map(({ monthKey, contractHash }) => ({ monthKey, contractHash })));
-      setRevisionInbox([]);
-      setRevisionSelectedMonth(null);
-      void refreshRevisionInbox();
+      const items = buildGastappRevisionInbox(
+        loadClosures(), seen, loadIncludeRiskCapitalInTotals(),
+        getHistoricalGastappSidecarAnalysisState().document);
+      setRevisionInbox(items);
+      setRevisionSelectedMonth(items[0]?.monthKey || null);
     } catch (error) {
       setRevisionNoticeError(
         'No pude confirmar la lectura en la nube. Reintenta para que el aviso no vuelva a aparecer.');

@@ -3,7 +3,6 @@ import {
   aurumDb,
   aurumIntegrationConfigured,
   ensureAurumIntegrationAuthPersistence,
-  isMidasE2EFirebaseEmulatorEnabled,
 } from './firebase';
 import type { AurumOptimizableInvestmentsSnapshot, AurumOptimizableInvestmentsSnapshotV2 } from './types';
 
@@ -102,7 +101,6 @@ const logFxTrace = (stage: string, payload: Record<string, unknown>) => {
 };
 
 export async function loadPublishedOptimizableInvestmentsSnapshot(): Promise<AurumOptimizableInvestmentsSnapshot | null> {
-  if (isMidasE2EFirebaseEmulatorEnabled()) return null;
   if (!aurumIntegrationConfigured || !aurumDb) return null;
 
   await ensureAurumIntegrationAuthPersistence();
@@ -128,11 +126,6 @@ export type PublishedSnapshotListener = {
 };
 
 export function subscribeToPublishedOptimizableInvestmentsSnapshot(listener: PublishedSnapshotListener): () => void {
-  if (isMidasE2EFirebaseEmulatorEnabled()) {
-    listener.onResolution?.({ status: 'missing' });
-    listener.onValue(null);
-    return () => {};
-  }
   if (!aurumIntegrationConfigured || !aurumDb) {
     listener.onResolution?.({ status: 'missing' });
     listener.onValue(null);

@@ -222,8 +222,8 @@ describe('AnalysisAurum returns toolbar', () => {
       );
     });
 
-    expect(container.textContent).toMatch(/Act\.\s\d{2}:\d{2}/);
-    expect(container.textContent).toContain('Actualizar');
+    expect(container.textContent).toMatch(/\d{2}:\d{2}/);
+    expect(container.querySelector('button[aria-label="Actualizar análisis"]')).not.toBeNull();
     expect(container.textContent).not.toContain('Última actualización:');
   });
 
@@ -239,7 +239,7 @@ describe('AnalysisAurum returns toolbar', () => {
     });
 
     const updateButton = Array.from(container.querySelectorAll('button'))
-      .find((button) => button.textContent === 'Actualizar');
+      .find((button) => button.getAttribute('aria-label') === 'Actualizar análisis');
     expect(updateButton).toBeDefined();
 
     await act(async () => {
@@ -267,7 +267,7 @@ describe('AnalysisAurum returns toolbar', () => {
     });
 
     const updateButton = Array.from(container.querySelectorAll('button'))
-      .find((button) => button.textContent === 'Actualizar');
+      .find((button) => button.getAttribute('aria-label') === 'Actualizar análisis');
 
     await act(async () => {
       updateButton?.click();
