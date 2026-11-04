@@ -29,6 +29,9 @@ import {
   buildGastappRevisionNotices,
   buildGastappRevisionInbox,
   gastappRevisionNoticeKey,
+  gastappRevisionNoticeKeysFromSeenHashes,
+  legacyGastappRevisionAcknowledgementsToMigrate,
+  parseLegacyGastappRevisionNoticeAcknowledgements,
   summarizeGastappHistoricalRevisionAudit,
 } from '../src/services/acceptReviewedGastappRevision';
 
@@ -421,6 +424,43 @@ describe('post-application GastApp revision notices', () => {
     };
     const acknowledged = new Set([gastappRevisionNoticeKey('2026-09', current.contractHash)]);
     expect(buildGastappRevisionNotices([closure], acknowledged)).toEqual([]);
+  });
+
+  it('shares the exact month/hash acknowledgement between the grouped and detailed notices', () => {
+    const previous = snapshot('a', 1, 2000);
+    const current = snapshot('b', 2, 2715);
+    const closure = {
+      id: 'sep', monthKey: '2026-09', closedAt: '2026-09-30T23:00:00Z', summary: {} as never,
+      gastappExpenseClose: current,
+      previousVersions: [{
+        id: 'sep:gastapp:1', monthKey: '2026-09', closedAt: '2026-09-30T23:00:00Z',
+        replacedAt: '2026-10-02T12:00:00Z', summary: {} as never, gastappExpenseClose: previous,
+      }],
+    };
+    const seenCurrent = gastappRevisionNoticeKeysFromSeenHashes({ '2026-09': current.contractHash });
+    const seenPrevious = gastappRevisionNoticeKeysFromSeenHashes({ '2026-09': previous.contractHash });
+
+    expect(buildGastappRevisionNotices([closure], seenCurrent)).toEqual([]);
+    expect(buildGastappRevisionNotices([closure], seenPrevious)).toHaveLength(1);
+  });
+
+  it('migrates legacy local acknowledgements by hash without replacing a cloud acknowledgement', () => {
+    const legacy = parseLegacyGastappRevisionNoticeAcknowledgements(JSON.stringify([
+      '2026-01::sha256:old-january',
+      '2026-01::sha256:last-january',
+      '2026-02::sha256:old-february',
+      'invalid',
+      '2026-13::sha256:invalid-month',
+    ]));
+
+    expect(legacy).toEqual([
+      { monthKey: '2026-01', contractHash: 'sha256:last-january' },
+      { monthKey: '2026-02', contractHash: 'sha256:old-february' },
+    ]);
+    expect(legacyGastappRevisionAcknowledgementsToMigrate(
+      { '2026-01': 'sha256:already-seen' }, legacy,
+      { '2026-01': 'sha256:last-january', '2026-02': 'sha256:old-february' },
+    )).toEqual([{ monthKey: '2026-02', contractHash: 'sha256:old-february' }]);
   });
 
   it('notifies sidecar revisions using the same per-month seen hash and suppresses acknowledged months', () => {

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CheckCircle2,
   ArrowLeft,
@@ -81,6 +81,8 @@ import {
   RISK_CAPITAL_LABEL_CLP,
   RISK_CAPITAL_LABEL_USD,
   RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
+  acknowledgeGastappRevisionNotices,
+  readGastappRevisionSeenHashes,
   removeWealthRecordForMonthAsset,
   resolveClosureSectionAmounts,
   saveBankTokens,
@@ -167,7 +169,11 @@ import {
 } from '../services/closureFxRates';
 import { clearClosureFxDraft, loadClosureFxDraft, saveClosureFxDraft } from '../services/closureFxDraft';
 import {
+  GASTAPP_REVISION_NOTICE_SEEN_EVENT,
   buildGastappRevisionNotices,
+  gastappRevisionNoticeKeysFromSeenHashes,
+  legacyGastappRevisionAcknowledgementsToMigrate,
+  parseLegacyGastappRevisionNoticeAcknowledgements,
   type GastappRevisionNotice,
 } from '../services/acceptReviewedGastappRevision';
 
@@ -177,22 +183,6 @@ const HIDE_SENSITIVE_AMOUNTS_PREF_KEY = 'aurum.hide-sensitive-amounts.v1';
 const HIDE_SENSITIVE_AMOUNTS_UPDATED_EVENT = 'aurum:hide-sensitive-amounts-updated';
 const NAVIGATE_PATRIMONIO_HOME_EVENT = 'aurum:navigate-patrimonio-home';
 const GASTAPP_REVISION_NOTICE_ACK_KEY = 'aurum.gastapp.revision.notice.ack.v1';
-
-const readGastappRevisionAcknowledgements = () => {
-  try {
-    const raw = JSON.parse(window.localStorage.getItem(GASTAPP_REVISION_NOTICE_ACK_KEY) || '[]');
-    return new Set<string>(Array.isArray(raw) ? raw.map((value) => String(value || '')).filter(Boolean) : []);
-  } catch {
-    return new Set<string>();
-  }
-};
-
-const persistGastappRevisionAcknowledgements = (acknowledged: Set<string>) => {
-  window.localStorage.setItem(
-    GASTAPP_REVISION_NOTICE_ACK_KEY,
-    JSON.stringify([...acknowledged].slice(-200)),
-  );
-};
 
 const formatEconomicDateForMessage = (economicDate: string) => {
   const [year, month, day] = economicDate.split('-');
@@ -4851,8 +4841,10 @@ export const Patrimonio: React.FC = () => {
   const [closePreflightVisible, setClosePreflightVisible] = useState(false);
   const [gastosSourceVersion, setGastosSourceVersion] = useState(0);
   const [closePreflightCopied, setClosePreflightCopied] = useState(false);
-  const [gastappRevisionNoticeVersion, setGastappRevisionNoticeVersion] = useState(0);
   const [gastappRevisionDetail, setGastappRevisionDetail] = useState<GastappRevisionNotice | null>(null);
+  const [gastappRevisionSeenHashes, setGastappRevisionSeenHashes] = useState<Record<string, string> | null>(null);
+  const [gastappRevisionNoticeError, setGastappRevisionNoticeError] = useState<string | null>(null);
+  const [gastappRevisionNoticeBusyId, setGastappRevisionNoticeBusyId] = useState<string | null>(null);
   const [closeBackupCheck, setCloseBackupCheck] = useState<MonthlyCloseCheckpointReadinessResult | null>(null);
   const [closeBackupRunning, setCloseBackupRunning] = useState(false);
   const [closeRunning, setCloseRunning] = useState(false);
@@ -7295,17 +7287,100 @@ export const Patrimonio: React.FC = () => {
     () => pendingGastappRevisions.filter(({ candidate }) => !candidate.snapshot),
     [pendingGastappRevisions],
   );
+  const refreshGastappRevisionSeenHashes = useCallback(async () => {
+    setGastappRevisionNoticeError(null);
+    try {
+      let seen = await readGastappRevisionSeenHashes();
+      let legacyRaw: string | null = null;
+      try {
+        legacyRaw = window.localStorage.getItem(GASTAPP_REVISION_NOTICE_ACK_KEY);
+      } catch {
+        // Cloud acknowledgement remains authoritative when browser storage is unavailable.
+      }
+      const legacy = parseLegacyGastappRevisionNoticeAcknowledgements(legacyRaw);
+      const currentHashes = Object.fromEntries(loadClosures()
+        .flatMap((closure) => closure.gastappExpenseClose
+          ? [[closure.monthKey, closure.gastappExpenseClose.contractHash] as const]
+          : []));
+      const migration = legacyGastappRevisionAcknowledgementsToMigrate(seen, legacy, currentHashes);
+      if (migration.length) seen = await acknowledgeGastappRevisionNotices(migration);
+      if (legacy.every(({ monthKey }) => Boolean(currentHashes[monthKey]))) {
+        try {
+          window.localStorage.removeItem(GASTAPP_REVISION_NOTICE_ACK_KEY);
+        } catch {
+          // A later successful read can retry cleanup without changing notice state.
+        }
+      }
+      setGastappRevisionSeenHashes(seen);
+    } catch (error) {
+      setGastappRevisionNoticeError('No se pudo consultar el reconocimiento de revisiones en la nube. Reintenta para comprobar si el aviso ya se leyó.');
+      console.warn('[Aurum][GastApp] no se pudo leer el estado de avisos de Patrimonio', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    const onSharedAcknowledgement = (event: Event) => {
+      const detail = (event as CustomEvent<unknown>).detail;
+      if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+        setGastappRevisionSeenHashes(detail as Record<string, string>);
+        setGastappRevisionNoticeError(null);
+      } else {
+        void refreshGastappRevisionSeenHashes();
+      }
+    };
+    const refreshWhenVisible = () => {
+      if (!document.hidden) void refreshGastappRevisionSeenHashes();
+    };
+    void refreshGastappRevisionSeenHashes();
+    window.addEventListener(GASTAPP_REVISION_NOTICE_SEEN_EVENT, onSharedAcknowledgement);
+    window.addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      window.removeEventListener(GASTAPP_REVISION_NOTICE_SEEN_EVENT, onSharedAcknowledgement);
+      window.removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [refreshGastappRevisionSeenHashes]);
+
+  useEffect(() => {
+    if (!closures.length) return;
+    let hasLegacyAcknowledgement = false;
+    try {
+      hasLegacyAcknowledgement = Boolean(window.localStorage.getItem(GASTAPP_REVISION_NOTICE_ACK_KEY));
+    } catch {
+      return;
+    }
+    if (hasLegacyAcknowledgement) void refreshGastappRevisionSeenHashes();
+  }, [closures.length, refreshGastappRevisionSeenHashes]);
+
+  const acknowledgedGastappRevisionNoticeKeys = useMemo(
+    () => gastappRevisionNoticeKeysFromSeenHashes(gastappRevisionSeenHashes || {}),
+    [gastappRevisionSeenHashes],
+  );
   const unreadGastappRevisionNotices = useMemo(
-    () => buildGastappRevisionNotices(closures, readGastappRevisionAcknowledgements()),
-    [closures, gastappRevisionNoticeVersion],
+    () => gastappRevisionSeenHashes === null
+      ? []
+      : buildGastappRevisionNotices(closures, acknowledgedGastappRevisionNoticeKeys),
+    [closures, gastappRevisionSeenHashes, acknowledgedGastappRevisionNoticeKeys],
   );
 
-  const acknowledgeGastappRevisionNotice = (notice: GastappRevisionNotice) => {
-    const acknowledged = readGastappRevisionAcknowledgements();
-    acknowledged.add(notice.id);
-    persistGastappRevisionAcknowledgements(acknowledged);
-    setGastappRevisionDetail((current) => current?.id === notice.id ? null : current);
-    setGastappRevisionNoticeVersion((current) => current + 1);
+  const acknowledgeGastappRevisionNotice = async (notice: GastappRevisionNotice) => {
+    if (gastappRevisionNoticeBusyId) return;
+    setGastappRevisionNoticeBusyId(notice.id);
+    setGastappRevisionNoticeError(null);
+    try {
+      const seen = await acknowledgeGastappRevisionNotices([
+        { monthKey: notice.monthKey, contractHash: notice.currentSnapshot.contractHash },
+      ]);
+      setGastappRevisionSeenHashes(seen);
+      window.dispatchEvent(new CustomEvent(GASTAPP_REVISION_NOTICE_SEEN_EVENT, { detail: seen }));
+      setGastappRevisionDetail((current) => current?.id === notice.id ? null : current);
+    } catch (error) {
+      setGastappRevisionNoticeError('No se pudo guardar la lectura en la nube. El aviso seguirá visible hasta confirmarlo.');
+      console.warn('[Aurum][GastApp] no se pudo guardar el aviso leído de Patrimonio', error);
+    } finally {
+      setGastappRevisionNoticeBusyId(null);
+    }
   };
 
   const closePreflightDiagnostic = useMemo(() => {
@@ -7942,6 +8017,14 @@ export const Patrimonio: React.FC = () => {
 
   return (
     <div className="p-3 space-y-3">
+      {gastappRevisionNoticeError && (
+        <section className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" role="alert" aria-live="assertive">
+          <p>{gastappRevisionNoticeError}</p>
+          <Button size="sm" variant="outline" className="mt-2" onClick={() => void refreshGastappRevisionSeenHashes()}>
+            Reintentar comprobación
+          </Button>
+        </section>
+      )}
       {!!unreadGastappRevisionNotices.length && (
         <section className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-950" aria-live="polite">
           <div className="font-semibold">GastApp actualizó cierres de aurum</div>
@@ -7956,7 +8039,9 @@ export const Patrimonio: React.FC = () => {
                     <div className="font-semibold">{monthLabel(notice.monthKey)} · revisión {saved.certificationRevision} → {next.certificationRevision}</div>
                     <div className="flex flex-wrap gap-2">
                       <Button size="sm" variant="outline" onClick={() => setGastappRevisionDetail(notice)}>Ver detalle</Button>
-                      <Button size="sm" onClick={() => acknowledgeGastappRevisionNotice(notice)}>OK, leído</Button>
+                      <Button size="sm" disabled={gastappRevisionNoticeBusyId !== null} onClick={() => void acknowledgeGastappRevisionNotice(notice)}>
+                        {gastappRevisionNoticeBusyId === notice.id ? 'Guardando…' : 'OK, leído'}
+                      </Button>
                     </div>
                   </div>
                   <div className="mt-1 grid grid-cols-1 gap-1 text-xs sm:grid-cols-3">
@@ -8029,7 +8114,9 @@ export const Patrimonio: React.FC = () => {
             </div>
             <div className="mt-4 flex flex-wrap justify-end gap-2">
               <Button variant="outline" onClick={() => setGastappRevisionDetail(null)}>Cerrar</Button>
-              <Button onClick={() => acknowledgeGastappRevisionNotice(gastappRevisionDetail)}>OK, leído</Button>
+              <Button disabled={gastappRevisionNoticeBusyId !== null} onClick={() => void acknowledgeGastappRevisionNotice(gastappRevisionDetail)}>
+                {gastappRevisionNoticeBusyId === gastappRevisionDetail.id ? 'Guardando…' : 'OK, leído'}
+              </Button>
             </div>
           </div>
         </div>

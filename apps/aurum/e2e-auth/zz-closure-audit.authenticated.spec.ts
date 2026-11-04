@@ -178,33 +178,41 @@ test('a certified GastApp revision updates the whole Aurum chain automatically a
   await expect(revisionSection).toContainText('Diferencia: 715,00 €');
   await expect(page.getByRole('button', { name: 'Aceptar y actualizar cadena', exact: true })).toHaveCount(0);
 
-  // The app-wide read acknowledgement precedes the existing page detail.
-  // Both already exist in main; acknowledging either must not change a close.
+  // The global and detailed views share the same cloud hash acknowledgement;
+  // reading the global notice must suppress the duplicate detail in Patrimonio.
   const groupedNotice = page.getByRole('dialog', { name: 'Cambios financieros aplicados', exact: true });
   await expect(groupedNotice).toBeVisible();
   await expect(groupedNotice).toContainText('Julio de 2026');
   const appliedBeforeAcknowledgement = await cloudClosure('2026-07');
-  await groupedNotice.getByRole('button', { name: 'Entendido', exact: true }).click();
-  await expect(groupedNotice).toHaveCount(0);
-  expect(await cloudClosure('2026-07')).toEqual(appliedBeforeAcknowledgement);
-
-  await revisionSection.getByRole('button', { name: 'Ver detalle', exact: true }).click();
-  const detailDialog = page.getByRole('dialog', { name: 'Detalle de revisión GastApp Julio de 2026', exact: true });
-  await expect(detailDialog).toBeVisible();
-  await expect(detailDialog).toContainText('La actualización ya fue aplicada');
   for (const viewport of [
     { name: 'desktop', width: 1280, height: 800 },
     { name: 'tablet', width: 768, height: 1024 },
     { name: 'mobile', width: 390, height: 844 },
   ]) {
     await page.setViewportSize(viewport);
-    await expect(detailDialog).toBeVisible();
-    const dialogBox = await detailDialog.boundingBox();
+    await expect(groupedNotice).toBeVisible();
+    const dialogBox = await groupedNotice.boundingBox();
     expect(dialogBox).not.toBeNull();
     expect(dialogBox!.y).toBeGreaterThanOrEqual(0);
     expect(dialogBox!.y + dialogBox!.height).toBeLessThanOrEqual(viewport.height);
-    await page.screenshot({ path: testInfo.outputPath(`gastapp-revision-auto-${viewport.name}.png`) });
+    await page.screenshot({ path: testInfo.outputPath(`gastapp-revision-global-${viewport.name}.png`) });
   }
+  await groupedNotice.getByRole('button', { name: 'Entendido', exact: true }).click();
+  await expect(groupedNotice).toHaveCount(0);
+  expect(await cloudClosure('2026-07')).toEqual(appliedBeforeAcknowledgement);
+  await expect(revisionSection).toHaveCount(0);
+  const acknowledgedUserState = (await ref.get()).data()!;
+  expect(acknowledgedUserState.gastappRevisionNoticeSeenV1).toMatchObject({
+    '2026-07': appliedBeforeAcknowledgement.gastappExpenseClose.contractHash,
+  });
+  const acknowledgementUpdateTime = (await ref.get()).updateTime?.toMillis();
+  await page.evaluate(async (contractHash) => {
+    const { acknowledgeGastappRevisionNotices } = await import('/src/services/wealthStorage.ts');
+    await Promise.all(Array.from({ length: 3 }, () => acknowledgeGastappRevisionNotices([
+      { monthKey: '2026-07', contractHash },
+    ])));
+  }, appliedBeforeAcknowledgement.gastappExpenseClose.contractHash);
+  expect((await ref.get()).updateTime?.toMillis()).toBe(acknowledgementUpdateTime);
 
   const updated = await cloudClosure('2026-07');
   expect(updated.gastappExpenseClose.totalEur).toBe(2715);
@@ -215,9 +223,22 @@ test('a certified GastApp revision updates the whole Aurum chain automatically a
   expect(updated.previousVersions.some((version: { gastappExpenseClose?: { contractHash: string; totalEur: number } }) =>
     version.gastappExpenseClose?.contractHash === previousSnapshot.contractHash && version.gastappExpenseClose.totalEur === 2000)).toBe(true);
 
-  // “OK, leído” only acknowledges this exact revision; it must not mutate the close.
-  await detailDialog.getByRole('button', { name: 'OK, leído', exact: true }).click();
-  await expect(revisionAlert).toHaveCount(0);
+  // Exercise the one-time migration of the old per-device acknowledgement.
+  // It must write the exact current hash to the shared field and suppress both
+  // views after the closure is rehydrated from Firestore.
+  const appliedHash = appliedBeforeAcknowledgement.gastappExpenseClose.contractHash;
+  await ref.update({ gastappRevisionNoticeSeenV1: {} });
+  await page.evaluate((contractHash) => {
+    window.localStorage.setItem('aurum.gastapp.revision.notice.ack.v1', JSON.stringify([`2026-07::${contractHash}`]));
+    window.localStorage.removeItem('wealth_closures_v1');
+  }, appliedHash);
+  await page.reload();
+  await page.goto('/#/patrimonio');
+  await expect(page.getByRole('button', { name: 'Cerrar mes', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Cambios financieros aplicados', exact: true })).toHaveCount(0);
+  await expect(page.getByText('GastApp actualizó cierres de aurum', { exact: true })).toHaveCount(0);
+  await expect.poll(async () => (await ref.get()).data()?.gastappRevisionNoticeSeenV1?.['2026-07']).toBe(appliedHash);
+  await expect.poll(async () => page.evaluate(() => window.localStorage.getItem('aurum.gastapp.revision.notice.ack.v1'))).toBeNull();
   expect(await cloudClosure('2026-07')).toEqual(updated);
 
   // All consumers now read the automatically accepted snapshot even though
@@ -662,7 +683,12 @@ async function prepare(page: Page, monthKey = '2026-07', certifiedRevisionFixtur
     // Supply a certified upstream contract for this month only. The default
     // synthetic demo contract is deliberately excluded from automatic revisions.
     // Intercept local fixture data, leaving every production validator intact.
+    let certifiedFixtureModule: string | null = null;
     await page.route('**/src/services/gastosMonthly.ts*', async (route) => {
+      if (certifiedFixtureModule !== null) {
+        await route.fulfill({ status: 200, contentType: 'text/javascript', body: certifiedFixtureModule });
+        return;
+      }
       const response = await route.fetch();
       const body = await response.text();
       const marker = /contractVersion:\s*["']e2e_fixture["']/g;
@@ -674,6 +700,7 @@ async function prepare(page: Page, monthKey = '2026-07', certifiedRevisionFixtur
         expect(fixture.match(revision), `Fixture revision ${key} must be explicit`).toHaveLength(1);
         fixture = fixture.replace(revision, `${key}: monthKey === "2026-07" ? 2 : 1,`);
       }
+      certifiedFixtureModule = fixture;
       await route.fulfill({ response, body: fixture });
     });
   }

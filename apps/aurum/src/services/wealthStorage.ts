@@ -8842,6 +8842,7 @@ export const clearWealthDataForFreshStart = async (
 // existing per-user wealth document, outside the sealed financial fields.
 // They synchronize across devices but never modify closures or their history.
 const GASTAPP_REVISION_NOTICE_SEEN_FIELD = 'gastappRevisionNoticeSeenV1';
+let gastappRevisionNoticeWriteQueue: Promise<void> = Promise.resolve();
 const normalizeGastappRevisionSeenHashes = (value: unknown): Record<string, string> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return Object.fromEntries(Object.entries(value as Record<string, unknown>)
@@ -8865,16 +8866,23 @@ export const acknowledgeGastappRevisionNotices = async (
 ): Promise<Record<string, string>> => {
   const ref = await getWealthCloudRef();
   if (!ref) throw new Error('No se pudieron guardar los avisos leídos en la nube.');
-  const validUpdates = updates.filter((item) =>
-    /^\d{4}-(0[1-9]|1[0-2])$/.test(item.monthKey)
-    && Boolean(item.contractHash?.trim()));
+  const validUpdates = [...new Map(updates
+    .filter((item) => /^\d{4}-(0[1-9]|1[0-2])$/.test(item.monthKey) && Boolean(item.contractHash?.trim()))
+    .map((item) => [item.monthKey, { monthKey: item.monthKey, contractHash: item.contractHash.trim() }])).values()];
   if (!validUpdates.length) return readGastappRevisionSeenHashes();
-  return runTransaction(db, async (transaction) => {
+  const write = () => runTransaction(db, async (transaction) => {
     const snap = await transaction.get(ref);
-    const seen = normalizeGastappRevisionSeenHashes(
-      snap.data()?.[GASTAPP_REVISION_NOTICE_SEEN_FIELD]);
-    for (const item of validUpdates) seen[item.monthKey] = item.contractHash;
-    transaction.set(ref, { [GASTAPP_REVISION_NOTICE_SEEN_FIELD]: seen }, { merge: true });
+    const seen = normalizeGastappRevisionSeenHashes(snap.data()?.[GASTAPP_REVISION_NOTICE_SEEN_FIELD]);
+    let changed = false;
+    for (const item of validUpdates) {
+      if (seen[item.monthKey] === item.contractHash) continue;
+      seen[item.monthKey] = item.contractHash;
+      changed = true;
+    }
+    if (changed) transaction.set(ref, { [GASTAPP_REVISION_NOTICE_SEEN_FIELD]: seen }, { merge: true });
     return seen;
   });
+  const pending = gastappRevisionNoticeWriteQueue.then(write, write);
+  gastappRevisionNoticeWriteQueue = pending.then(() => undefined, () => undefined);
+  return pending;
 };

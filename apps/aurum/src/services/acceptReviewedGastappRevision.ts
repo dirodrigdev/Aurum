@@ -325,6 +325,45 @@ export type GastappRevisionNotice = {
 export const gastappRevisionNoticeKey = (monthKey: string, contractHash: string) =>
   `${monthKey}::${contractHash}`;
 
+export const GASTAPP_REVISION_NOTICE_SEEN_EVENT = 'aurum:gastapp-revision-notice-seen-updated';
+
+export const gastappRevisionNoticeKeysFromSeenHashes = (
+  seenHashes: Record<string, string>,
+) => new Set(Object.entries(seenHashes)
+  .filter(([monthKey, contractHash]) =>
+    /^\d{4}-(0[1-9]|1[0-2])$/.test(monthKey) && Boolean(contractHash?.trim()))
+  .map(([monthKey, contractHash]) => gastappRevisionNoticeKey(monthKey, contractHash)));
+
+export const parseLegacyGastappRevisionNoticeAcknowledgements = (
+  raw: string | null,
+): Array<{ monthKey: string; contractHash: string }> => {
+  try {
+    const values = JSON.parse(raw || '[]');
+    if (!Array.isArray(values)) return [];
+    const latestByMonth = new Map<string, string>();
+    values.forEach((value) => {
+      if (typeof value !== 'string') return;
+      const separator = value.indexOf('::');
+      if (separator < 0) return;
+      const monthKey = value.slice(0, separator);
+      const contractHash = value.slice(separator + 2).trim();
+      if (/^\d{4}-(0[1-9]|1[0-2])$/.test(monthKey) && contractHash && contractHash.length <= 160) {
+        latestByMonth.set(monthKey, contractHash);
+      }
+    });
+    return [...latestByMonth].map(([monthKey, contractHash]) => ({ monthKey, contractHash }));
+  } catch {
+    return [];
+  }
+};
+
+export const legacyGastappRevisionAcknowledgementsToMigrate = (
+  seenHashes: Record<string, string>,
+  legacy: Array<{ monthKey: string; contractHash: string }>,
+  currentHashes: Record<string, string> = {},
+) => legacy.filter(({ monthKey, contractHash }) =>
+  currentHashes[monthKey] === contractHash && !seenHashes[monthKey]);
+
 const versionTimestamp = (version: WealthMonthlyClosureVersion) => {
   const value = new Date(version.replacedAt || version.closedAt || '').getTime();
   return Number.isFinite(value) ? value : 0;
