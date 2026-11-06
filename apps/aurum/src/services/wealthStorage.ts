@@ -8862,19 +8862,32 @@ export const readGastappRevisionSeenHashes = async (): Promise<Record<string, st
 };
 
 export const acknowledgeGastappRevisionNotices = async (
-  updates: Array<{ monthKey: string; contractHash: string }>,
+  updates: Array<{ monthKey: string; contractHash: string; certificationRevision?: number }>,
 ): Promise<Record<string, string>> => {
   const ref = await getWealthCloudRef();
   if (!ref) throw new Error('No se pudieron guardar los avisos leídos en la nube.');
   const validUpdates = [...new Map(updates
     .filter((item) => /^\d{4}-(0[1-9]|1[0-2])$/.test(item.monthKey) && Boolean(item.contractHash?.trim()))
-    .map((item) => [item.monthKey, { monthKey: item.monthKey, contractHash: item.contractHash.trim() }])).values()];
+    .map((item) => [item.monthKey, { monthKey: item.monthKey, contractHash: item.contractHash.trim(), certificationRevision: item.certificationRevision }])).values()];
   if (!validUpdates.length) return readGastappRevisionSeenHashes();
+  const { historicalGastappSidecarRef, parseHistoricalGastappSidecar } = await import('./historicalGastappSidecar');
+  const sidecarRef = historicalGastappSidecarRef(ref.id);
   const write = () => runTransaction(db, async (transaction) => {
-    const snap = await transaction.get(ref);
+    const [snap, sidecarSnap] = await Promise.all([transaction.get(ref), transaction.get(sidecarRef)]);
+    const closures = Array.isArray(snap.data()?.closures) ? snap.data()!.closures : [];
+    const sidecar = sidecarSnap.exists() ? parseHistoricalGastappSidecar(sidecarSnap.data()) : null;
+    if (sidecarSnap.exists() && !sidecar) throw new Error('No se pudo validar el histórico para reconocer los avisos.');
     const seen = normalizeGastappRevisionSeenHashes(snap.data()?.[GASTAPP_REVISION_NOTICE_SEEN_FIELD]);
     let changed = false;
     for (const item of validUpdates) {
+      const closure = closures.find((value: WealthMonthlyClosure) => value.monthKey === item.monthKey);
+      const entry = sidecar?.snapshotsByMonth[item.monthKey];
+      const current = closure?.gastappExpenseClose || (entry?.closureId === closure?.id ? entry?.snapshot : undefined);
+      // A hash identifies a revision, but does not order it. Only the certified
+      // revision currently accepted in this transaction may be acknowledged.
+      if (!current || !['certified', 'revised'].includes(current.certificationStatus) ||
+          !(current.certificationRevision > 0) || current.contractHash !== item.contractHash ||
+          (item.certificationRevision !== undefined && item.certificationRevision !== current.certificationRevision)) continue;
       if (seen[item.monthKey] === item.contractHash) continue;
       seen[item.monthKey] = item.contractHash;
       changed = true;

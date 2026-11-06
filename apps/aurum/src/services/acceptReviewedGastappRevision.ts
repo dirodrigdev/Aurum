@@ -410,6 +410,7 @@ export const buildGastappRevisionNotices = (
  * month produce one entry comparing the last acknowledged state with current.
  */
 export type GastappRevisionInboxItem = {
+  certificationRevision: number;
   monthKey: string;
   contractHash: string;
   originalGastosEur: number;
@@ -494,6 +495,7 @@ export const buildGastappRevisionInbox = (
     return [{
       monthKey: closure.monthKey,
       contractHash: current.contractHash,
+      certificationRevision: current.certificationRevision,
       originalGastosEur: baseline.totalEur,
       updatedGastosEur: current.totalEur,
       originalReturnPct: originalReturn?.pct ?? null,

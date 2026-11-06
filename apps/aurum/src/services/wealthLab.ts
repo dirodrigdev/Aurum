@@ -6,6 +6,7 @@ import {
   type WealthMonthlyClosure,
   type WealthSnapshotSummary,
 } from './wealthStorage';
+import { resolveAcceptedGastappSnapshot } from './historicalGastappSidecar';
 import { resolveGastappMonthlySpend } from './gastosMonthly';
 import { WEALTH_LAB_EXTERNAL_AGGREGATE } from '../data/wealthLabHistoricalAggregate';
 
@@ -425,7 +426,7 @@ export const buildWealthLabModel = (
       : null;
     const provisionalSpend = openMonthSpend
       ? openMonthSpend.gastosEur ?? openMonthSpend.partialGastosEur ?? null
-      : closure.gastappExpenseClose?.totalEur ?? null;
+      : resolveAcceptedGastappSnapshot(closure)?.totalEur ?? null;
     const gastosClp = provisionalSpend !== null ? provisionalSpend * fx.eurClp : null;
     const retornoEconomicoClp =
       varPatrimonioClp !== null && gastosClp !== null ? varPatrimonioClp + gastosClp : null;

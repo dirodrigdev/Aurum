@@ -3826,37 +3826,6 @@ export default function App() {
       prev === 'available' || prev === 'partial' ? 'refreshing' : 'loading'
     ));
 
-    const applyLegacyFallback = () => {
-      setBaseParams((prev) => ({
-        ...prev,
-        simulationComposition: {
-          ...(prev.simulationComposition ?? DEFAULT_PARAMETERS.simulationComposition!),
-          mode: 'legacy',
-          diagnostics: {
-            sourceVersion: 1,
-            mode: 'legacy',
-            compositionGapCLP: 0,
-            compositionGapPct: 0,
-            notes: ['fallback-after-snapshot-error'],
-          },
-        },
-      }));
-      setSimParams((prev) => ({
-        ...prev,
-        simulationComposition: {
-          ...(prev.simulationComposition ?? DEFAULT_PARAMETERS.simulationComposition!),
-          mode: 'legacy',
-          diagnostics: {
-            sourceVersion: 1,
-            mode: 'legacy',
-            compositionGapCLP: 0,
-            compositionGapPct: 0,
-            notes: ['fallback-after-snapshot-error'],
-          },
-        },
-      }));
-    };
-
     const applySnapshot = (
       snapshot: AurumOptimizableInvestmentsSnapshot | null,
       snapshotSignatureOverride?: string | null,
@@ -4036,6 +4005,7 @@ export default function App() {
           snapshotSignature
           && snapshotSignature === lastProcessedSnapshotSignatureRef.current
         ) {
+          applySnapshot(snapshot, snapshotSignature);
           setAurumSnapshotLabel(snapshot?.snapshotLabel || 'ultimo cierre confirmado');
           setAurumSnapshotMonth(snapshot?.snapshotMonth || null);
           setAurumSnapshotPublishedAt(snapshot?.publishedAt || null);
@@ -4063,7 +4033,8 @@ export default function App() {
           sourceLabel: 'Aurum · último cierre confirmado',
           status: 'pending',
         });
-        applyLegacyFallback();
+        // Keep the last applied economic parameters while the source is
+        // unavailable. Recovery of the same identity must only rehydrate it.
         setAurumIntegrationStatus('error');
         setAurumSnapshotLabel(null);
         setAurumSnapshotMonth(null);
@@ -4769,6 +4740,13 @@ export default function App() {
     if (gate.status === 'completed') {
       setSimulationRunStatus('completed');
       setSimulationRunBlockedReason(null);
+      // A source read error temporarily hides the result. Once the same
+      // effective input is valid again, restore its completed result without
+      // starting another run or rebuilding the user's manual overrides.
+      if (simulationRunStatus === 'blocked' && simResult && lastRenderedResultHash === effectiveHash) {
+        setSimUiState('ready');
+        setHeroPhase('ready');
+      }
       return;
     }
     if (

@@ -1,6 +1,10 @@
 import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { calculateHistoricalClosureSummary } from '../api/admin/_historicalClosureCore.js';
 import { installLocalNetworkGuard } from '../../../packages/e2e-harness/playwright/local-network-guard.mjs';
 
 // Regression assertions describe the required customer behaviour. Known defects
@@ -8,7 +12,19 @@ import { installLocalNetworkGuard } from '../../../packages/e2e-harness/playwrig
 const projectId = 'aurum-e2e-local';
 const uid = 'aurum-e2e-user';
 const rates = { usdClp: 934, eurClp: 1052, ufClp: 39560 };
+const sharedScenarioPath = process.env.CROSS_APP_SCENARIO_PATH;
 let restoreFixture: (() => Promise<void>) | null = null;
+
+const readSharedScenario = () => {
+  if (!sharedScenarioPath) return null;
+  const value = JSON.parse(readFileSync(sharedScenarioPath, 'utf8'));
+  if (value.schemaVersion !== 'gastapp-aurum-midas-cross-app-synthetic-v1'
+      || value.gastapp?.initialContract?.contractVersion !== 'gastapp-aurum-calendar-months-v2'
+      || value.gastapp?.currentContract?.contractVersion !== 'gastapp-aurum-calendar-months-v2') {
+    throw new Error('cross_app_shared_scenario_contract_invalid');
+  }
+  return value;
+};
 
 function emulatorDb() {
   if (!/^127\.0\.0\.1:\d+$/.test(process.env.FIRESTORE_EMULATOR_HOST || '')) {
@@ -17,6 +33,49 @@ function emulatorDb() {
   const name = 'aurum-close-audit';
   const app = getApps().find((item) => item.name === name) || initializeApp({ projectId }, name);
   return getFirestore(app);
+}
+
+type FirestoreCommitAttempt = {
+  sequence: number;
+  elapsedMs: number;
+  operation: string;
+  document: string;
+  updateMask: string[];
+  precondition: string[];
+  status: number | null;
+};
+
+function observeFirestoreCommits(page: Page, userId: string) {
+  const startedAt = Date.now();
+  const attempts: FirestoreCommitAttempt[] = [];
+  const requestAttempts = new WeakMap<object, FirestoreCommitAttempt>();
+  page.on('request', (request) => {
+    if (!new URL(request.url()).pathname.endsWith('/documents:commit')) return;
+    let body: any = {};
+    try { body = JSON.parse(request.postData() || '{}'); } catch { /* Never log request bodies. */ }
+    const write = Array.isArray(body.writes) ? body.writes[0] || {} : {};
+    const operation = ['update', 'delete', 'transform'].find((key) => write[key] !== undefined) || 'unknown';
+    const documentName = String(write[operation]?.name || write[operation]?.document || 'unknown')
+      .split('/documents/').pop() || 'unknown';
+    const attempt: FirestoreCommitAttempt = {
+      sequence: attempts.length + 1,
+      elapsedMs: Date.now() - startedAt,
+      operation,
+      document: documentName.replace(userId, '{uid}'),
+      updateMask: Array.isArray(write.updateMask?.fieldPaths) ? write.updateMask.fieldPaths : [],
+      precondition: Object.keys(write.currentDocument || {}),
+      status: null,
+    };
+    attempts.push(attempt);
+    requestAttempts.set(request, attempt);
+  });
+  page.on('response', (response) => {
+    const attempt = requestAttempts.get(response.request());
+    if (!attempt) return;
+    attempt.status = response.status();
+    console.info('[E2E Firestore commit]', JSON.stringify(attempt));
+  });
+  return attempts;
 }
 
 type AuditRecord = {
@@ -275,10 +334,391 @@ test('a certified GastApp revision updates the whole Aurum chain automatically a
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
 });
+
+test('cross-app shared scenario applies GastApp revision, acknowledges once and persists Aurum inputs for MIDAS', async ({ page, browser }, testInfo) => {
+  const scenario = readSharedScenario();
+  test.skip(!scenario, 'Requiere el orquestador E2E transversal y el handoff sintético de GastApp.');
+  test.setTimeout(90_000);
+  const monthKey = scenario!.monthKey as string;
+  const initial = scenario!.gastapp.initialContract;
+  const current = scenario!.gastapp.currentContract;
+  expect(current.totalEur).toBeGreaterThan(initial.totalEur);
+  expect(current.contractHash).not.toBe(initial.contractHash);
+  expect(scenario!.expense).toMatchObject({ amountEur: 25, category: 'cross-app-transit' });
+  const firestoreCommitSequence = observeFirestoreCommits(page, uid);
+  const upstreamApp = getApps().find(app => app.name === 'cross-upstream') || initializeApp({ projectId: 'gastapp-e2e-local' }, 'cross-upstream');
+  const upstream = getFirestore(upstreamApp);
+  const rules = readFileSync(resolve(process.env.GASTAPP_REPO_DIR!, 'firestore.rules'), 'utf8');
+  const rulesResponse = await fetch('http://127.0.0.1:8080/emulator/v1/projects/gastapp-e2e-local:securityRules', {
+    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rules: { files: [{ name: 'firestore.rules', content: rules }] } }),
+  });
+  expect(rulesResponse.ok).toBe(true);
+  // The shared Auth Emulator uses its configured aurum-e2e-local namespace;
+  // the independently authorized GastApp reader has its own signed-in user.
+  const upstreamAuthApp = getApps().find(app => app.name === 'cross-upstream-auth') || initializeApp({ projectId: 'aurum-e2e-local' }, 'cross-upstream-auth');
+  const upstreamAuth = getAuth(upstreamAuthApp);
+  try { await upstreamAuth.createUser({ uid: 'gastapp-e2e-user', email: 'gastapp-e2e@example.test', password: 'gastapp-e2e-password' }); } catch (error: any) { if (error.code !== 'auth/uid-already-exists') throw error; }
+  await upstream.doc('authorized_users/gastapp-e2e@example.test').set({ active: true, role: 'admin' });
+  const writeRawUpstream = async (documents: Record<string, any>) => {
+    const batch = upstream.batch(); for (const [path, document] of Object.entries(documents)) batch.set(upstream.doc(path), document);
+    await batch.commit();
+  };
+  await writeRawUpstream(scenario!.gastapp.initialDocuments);
+  const publicationRef = emulatorDb().doc('aurum_published/optimizableInvestments');
+  await publicationRef.set({ publishedByUid: uid });
+
+  await page.clock.setFixedTime(new Date('2026-07-31T12:00:00.000Z'));
+  const rootRef = emulatorDb().doc(`aurum_wealth/${uid}`);
+  const rootBeforeBrowser = (await rootRef.get()).data()!;
+  const juneTemplate = rootBeforeBrowser.closures.find((closure: { monthKey: string }) => closure.monthKey === '2026-06');
+  if (!juneTemplate) throw new Error('Aurum emulator seed is missing the June closure template.');
+  const economicDate = '2026-07-31';
+  const convert = (factor: number) => Object.fromEntries(
+    Object.entries({ total: initial.totalEur, ...initial.byFamilyEur }).map(([key, value]) => [key, Number(value) * factor]),
+  );
+  const initialSnapshot = {
+    ...initial,
+    schemaVersion: 'aurum-gastapp-monthly-close-v2',
+    sourcePath: 'gastapp_aurum_contracts_v2/months_current',
+    capturedAt: '2026-07-31T12:00:00.000Z',
+    fxRates: rates,
+    amountsByCurrency: {
+      EUR: { total: initial.totalEur, ...initial.byFamilyEur },
+      CLP: convert(rates.eurClp),
+      USD: convert(rates.eurClp / rates.usdClp),
+      UF: convert(rates.eurClp / rates.ufClp),
+    },
+  };
+  const seededRecords = (juneTemplate.records || []).map((record: any) => ({
+    ...record,
+    id: `cross-app-${record.id}`,
+    snapshotDate: String(record.snapshotDate || '').replace(/^\d{4}-\d{2}/, monthKey),
+    createdAt: String(record.createdAt || '').replace(/^\d{4}-\d{2}/, monthKey),
+  }));
+  const seededClosure = {
+    ...juneTemplate,
+    id: 'cross-app-synthetic-closure',
+    monthKey,
+    closedAt: `${economicDate}T12:00:00.000Z`,
+    records: seededRecords,
+    summary: calculateHistoricalClosureSummary(seededRecords, rates),
+    fxRates: { ...rates },
+    fxMetadata: {
+      economicMonthKey: monthKey,
+      economicDate,
+      usedFxRates: { ...rates },
+      rateOrigin: { usd: 'automatic-final', eur: 'automatic-final', uf: 'automatic-final' },
+      source: { usd: 'synthetic-e2e', eur: 'synthetic-e2e', uf: 'synthetic-e2e' },
+      retrievedAt: `${economicDate}T12:00:00.000Z`,
+    },
+    gastappExpenseClose: initialSnapshot,
+    previousVersions: [],
+  };
+  // Seed the synthetic closure before opening Aurum so browser autosync cannot
+  // race a test-only Admin SDK write. The fixture is isolated to the emulator.
+  await rootRef.update({ closures: [seededClosure, ...rootBeforeBrowser.closures] });
+  const { networkGuard, pageErrors, consoleErrors } = await prepare(page, monthKey, false, undefined, false);
+  await expect.poll(async () => (await cloudClosure(monthKey)).gastappExpenseClose?.contractHash).toBe(initial.contractHash);
+  const before = await cloudClosure(monthKey);
+  expect(before.id).toBe(seededClosure.id);
+  expect(before.gastappExpenseClose).toMatchObject({
+    contractHash: initial.contractHash,
+    totalEur: initial.totalEur,
+    certificationRevision: initial.certificationRevision,
+  });
+  const beforeChain = await readAcceptedChain(page);
+  expect(beforeChain.monthSpendEur).toBe(initial.totalEur);
+
+  const browserSyncSettled = async () => {
+    const status = await page.evaluate(async () => {
+      const { loadWealthSyncUiState } = await import('/src/services/wealthStorage.ts');
+      return loadWealthSyncUiState().status;
+    });
+    return status === 'synced' && firestoreCommitSequence.length > 0
+      && firestoreCommitSequence.every((attempt) => attempt.status !== null);
+  };
+  await expect.poll(browserSyncSettled, { timeout: 15_000 }).toBe(true);
+  const settledCommitCount = firestoreCommitSequence.length;
+  await page.waitForTimeout(200);
+  await expect.poll(browserSyncSettled, { timeout: 15_000 }).toBe(true);
+  expect(firestoreCommitSequence).toHaveLength(settledCommitCount);
+
+  await writeRawUpstream(scenario!.gastapp.currentDocuments);
+  await page.evaluate(async () => {
+    const source = await import('/src/services/gastosMonthly.ts');
+    await source.refreshGastappMonthlyContable();
+    const candidate = source.resolveGastappMonthlyCloseCandidate('2026-07');
+    if (!candidate.snapshot) throw new Error(candidate.message);
+  });
+  const partialMay = await page.evaluate(async () => {
+    const source = await import('/src/services/gastosMonthly.ts');
+    return source.resolveGastappMonthlyCloseCandidate('2023-05');
+  });
+  expect(partialMay.snapshot).toBeNull();
+  expect(partialMay.partialGastosEur).toBe(scenario!.gastapp.partialMayCoverage.amountEur);
+  expect(partialMay.status).not.toBe('complete');
+  await expect.poll(async () => (await cloudClosure(monthKey)).gastappExpenseClose?.contractHash).toBe(current.contractHash);
+  const notice = page.getByRole('dialog', { name: 'Cambios financieros aplicados', exact: true });
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText('Julio de 2026');
+  await expect(notice).toContainText('Gastos anteriores');
+  await expect(notice).toContainText('99,00 €');
+  await expect(notice).toContainText('Gastos actualizados');
+  await expect(notice).toContainText('104,00 €');
+
+  const updated = await cloudClosure(monthKey);
+  expect(updated.gastappExpenseClose).toMatchObject({
+    contractHash: current.contractHash,
+    totalEur: current.totalEur,
+    certificationRevision: current.certificationRevision,
+  });
+  expect(updated.summary).toEqual(before.summary);
+  expect(updated.records).toEqual(before.records);
+  expect(updated.fxRates).toEqual(before.fxRates);
+  expect(updated.previousVersions.some((version: any) =>
+    version.gastappExpenseClose?.contractHash === initial.contractHash
+      && version.gastappExpenseClose?.totalEur === initial.totalEur)).toBe(true);
+
+  await notice.getByRole('button', { name: 'Entendido', exact: true }).click();
+  await expect.poll(async () => (await rootRef.get()).data()?.gastappRevisionNoticeSeenV1?.[monthKey]).toBe(current.contractHash);
+  await page.reload();
+  // Let the real secondary Firebase sign-in finish before another navigation.
+  // Navigating immediately after load aborts its top-level module request.
+  await page.evaluate(async () => {
+    const source = await import('/src/services/gastosMonthly.ts');
+    await source.refreshGastappMonthlyContable();
+  });
+  await page.evaluate(() => { window.location.hash = '/patrimonio'; });
+  await expect(page.getByRole('button', { name: 'Cerrar mes', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Cambios financieros aplicados', exact: true })).toHaveCount(0);
+  expect((await cloudClosure(monthKey)).gastappExpenseClose.contractHash).toBe(current.contractHash);
+
+  await page.evaluate(() => { window.location.hash = '/analysis'; });
+  await page.locator('[aria-label="Moneda"]').getByRole('button', { name: 'EUR', exact: true }).click();
+  const row = page.getByRole('row').filter({ has: page.getByText('Jul 2026', { exact: true }) });
+  await expect(row.locator('td').nth(4)).toHaveText('104,00 EUR');
+  const chain = await readAcceptedChain(page);
+  expect(chain.monthSpendEur).toBe(current.totalEur);
+  expect(chain.accumulatedSpendClp - beforeChain.accumulatedSpendClp).toBeCloseTo(
+    (current.totalEur - initial.totalEur) * rates.eurClp,
+    4,
+  );
+  expect(chain.labSpendClp - beforeChain.labSpendClp).toBeCloseTo(
+    (current.totalEur - initial.totalEur) * rates.eurClp,
+    4,
+  );
+  expect(Number.isFinite(chain.dashboard12Uf)).toBe(true);
+
+  await page.getByRole('button', { name: 'Mostrar secciones de Análisis', exact: true }).click();
+  await page.getByRole('button', { name: 'Rendimiento', exact: true }).click();
+  await page.getByText('Revisar validación del período', { exact: true }).click();
+  await page.getByRole('button', { name: 'No hubo otros flujos este mes', exact: true }).click();
+  await expect(page.getByText('RECONSTRUIDO', { exact: true })).toBeVisible();
+  const positionMovements = page.getByRole('checkbox', {
+    name: 'Confirmo que aurum registra todas las compras, ventas y traslados de posición de este período.',
+  });
+  await positionMovements.uncheck();
+  await page.getByRole('button', { name: 'Guardar confirmación', exact: true }).click();
+  await expect(page.getByText('Rentabilidad financiera · INDICATIVA', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('financial-performance-published-value')).not.toHaveText('—');
+  await expect(page.getByRole('note')).toContainText('falta validar movimientos internos de posiciones y atribuciones');
+
+  const cloud = (await rootRef.get()).data()!;
+  const acceptedClosure = await cloudClosure(monthKey);
+  const httpResults: any[] = [];
+  page.on('response', async response => {
+    if (new URL(response.url()).pathname === '/api/midas/publish-snapshot') {
+      httpResults.push({ status: response.status(), payload: await response.json() });
+    }
+  });
+  await publicationRef.set({ publishedByUid: uid });
+  const publish = async (closure: any, concurrent = false) => {
+    await rootRef.update({ closures: [closure, ...cloud.closures.filter((value: any) => value.monthKey !== monthKey)] });
+    const results = await page.evaluate(async ({ closure, concurrent }) => {
+      const { publishAurumOptimizableInvestmentsSnapshot } = await import('/src/services/midasPublished.ts');
+      const run = () => publishAurumOptimizableInvestmentsSnapshot([closure]);
+      return concurrent ? Promise.all([run(), run()]) : [await run()];
+    }, { closure, concurrent });
+    expect(results.every(value => value.ok)).toBe(true);
+    return (await publicationRef.get()).data()!;
+  };
+  const publishedSnapshot = await publish(acceptedClosure, true);
+  await expect.poll(() => httpResults.length).toBeGreaterThanOrEqual(2);
+  expect(httpResults.slice(0, 2).map(value => value.payload.result).sort()).toEqual(['published', 'unchanged']);
+  const firstTime = (await publicationRef.get()).updateTime!.toMillis();
+  const expenseOnly = await publish({ ...acceptedClosure, gastappExpenseClose: { ...acceptedClosure.gastappExpenseClose, totalEur: current.totalEur + 1 } });
+  expect((await publicationRef.get()).updateTime!.toMillis()).toBe(firstTime);
+  const records = acceptedClosure.records.map((record: any) => record.block === 'real_estate' && record.label.toLowerCase().includes('valor propiedad')
+    ? { ...record, amount: record.amount + 20000000 } : record);
+  const revisedClosure = { ...acceptedClosure, records, summary: calculateHistoricalClosureSummary(records, acceptedClosure.fxRates) };
+  const patrimonial = await publish(revisedClosure);
+  const ownerToken = await page.evaluate(async () => {
+    const { auth } = await import('/src/services/firebase.ts');
+    if (!auth.currentUser) throw new Error('Synthetic publisher session is missing');
+    return auth.currentUser.getIdToken();
+  });
+  const beforeStaleRequest = await publicationRef.get();
+  const staleRequest = await page.request.post('/api/midas/publish-snapshot', {
+    headers: { Authorization: `Bearer ${ownerToken}` }, data: { snapshot: { ...publishedSnapshot, publishedAt: '2099-01-01T00:00:00Z' } },
+  });
+  expect(staleRequest.status()).toBe(409);
+  const stalePayload = await staleRequest.json();
+  expect(stalePayload.code).toBe('source_changed');
+  expect((await publicationRef.get()).updateTime!.toMillis()).toBe(beforeStaleRequest.updateTime!.toMillis());
+  // Exercise the real HTTP handler and real Auth Emulator tokens for rejection too.
+  const noAuth = await page.request.post('/api/midas/publish-snapshot', { data: { snapshot: publishedSnapshot } });
+  expect(noAuth.status()).toBe(401);
+  const unauthorized = await page.request.post('/api/midas/publish-snapshot', { headers: { Authorization: 'Bearer invalid-synthetic-token' }, data: { snapshot: publishedSnapshot } });
+  expect(unauthorized.status()).toBe(401);
+  const intruder = await page.request.post('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=synthetic-local-key', {
+    data: { returnSecureToken: true },
+  });
+  expect(intruder.ok()).toBe(true);
+  const intruderIdentity = await intruder.json();
+  await emulatorDb().doc(`aurum_wealth/${intruderIdentity.localId}`).set({ closures: [revisedClosure] });
+  const beforeUnauthorized = await publicationRef.get();
+  const forbidden = await page.request.post('/api/midas/publish-snapshot', {
+    headers: { Authorization: `Bearer ${intruderIdentity.idToken}` }, data: { snapshot: patrimonial },
+  });
+  expect(forbidden.status()).toBe(403);
+  const forbiddenPayload = await forbidden.json();
+  expect(forbiddenPayload.code).toBe('publisher_forbidden');
+  expect((await publicationRef.get()).updateTime!.toMillis()).toBe(beforeUnauthorized.updateTime!.toMillis());
+  await emulatorDb().doc(`aurum_wealth/${intruderIdentity.localId}`).delete();
+  await upstreamAuth.deleteUser(intruderIdentity.localId);
+  const output = {
+    ...scenario,
+    aurum: {
+      monthKey,
+      closure: acceptedClosure,
+      publishedSnapshot, publicationVariants: { expenseOnly, patrimonial },
+      publicationHttpResults: httpResults,
+      publicationRejections: {
+        stale: { status: staleRequest.status(), code: stalePayload.code },
+        noCredentials: { status: noAuth.status() }, invalidCredentials: { status: unauthorized.status() },
+        unauthorizedUser: { status: forbidden.status(), code: forbiddenPayload.code },
+      },
+      records: cloud.records,
+      fx: cloud.fx,
+      sourceContractHash: current.contractHash,
+      acceptedSpendEur: current.totalEur,
+      acceptedCertificationRevision: current.certificationRevision,
+      noticeSeenHash: cloud.gastappRevisionNoticeSeenV1?.[monthKey] || null,
+      partialMay: { status: partialMay.status, partialGastosEur: partialMay.partialGastosEur, snapshot: partialMay.snapshot },
+    },
+  };
+  const path = resolve(sharedScenarioPath!);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(output, null, 2), { mode: 0o600 });
+  await testInfo.attach('cross-app-aurum-handoff.json', { body: JSON.stringify(output, null, 2), contentType: 'application/json' });
+  await networkGuard.assertClean(testInfo);
+  expect(pageErrors).toEqual([]);
+  expect(firestoreCommitSequence.filter((attempt) => (attempt.status || 0) >= 400)).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+
+  // Repeat the historical reads from a fresh session with no embedded snapshot.
+  // Close the first session before moving this synthetic fixture to avoid a
+  // stale autosync write racing the deliberate Admin-only fixture change.
+  await page.close();
+  const rootWithAccepted = (await rootRef.get()).data()!;
+  const sidecarRef = rootRef.collection('gastapp_snapshots').doc('historical_v1');
+  // Use the original accepted perimeter, not the later property-change
+  // publication variant, so its persisted indicative confirmation still fits.
+  const historicalClosure = acceptedClosure;
+  const sidecarSnapshot = historicalClosure.gastappExpenseClose;
+  expect(sidecarSnapshot.contractHash).toBe(current.contractHash);
+  const closureWithoutSnapshot = { ...historicalClosure };
+  delete closureWithoutSnapshot.gastappExpenseClose;
+  await sidecarRef.set({ schemaVersion: 'aurum-gastapp-historical-sidecar-v1', snapshotsByMonth: {
+    [monthKey]: { closureId: historicalClosure.id, snapshot: sidecarSnapshot, repairAudit: {
+      reason: 'historical_schema_compatibility_reconstruction', reconstructedAt: '2026-07-31T12:00:00.000Z',
+      originalClosureAt: historicalClosure.closedAt, preFingerprint: 'synthetic-unchanged', postFingerprint: 'synthetic-unchanged',
+      sourceContractHash: current.contractHash,
+    } },
+  } });
+  await rootRef.update({ closures: rootWithAccepted.closures.map((value: any) => value.monthKey === monthKey ? closureWithoutSnapshot : value) });
+  // A different page shares localStorage; use an actually fresh device.
+  const sidecarContext = await browser.newContext({ baseURL: 'http://127.0.0.1:3000' });
+  try {
+  const sidecarPage = await sidecarContext.newPage();
+  await sidecarPage.clock.setFixedTime(new Date('2026-07-31T12:00:00.000Z'));
+  const sidecarChecks = await prepare(sidecarPage, monthKey, false, undefined, false);
+  const waitForSidecar = async () => {
+    await expect.poll(() => sidecarPage.evaluate(async () => {
+      const storage = await import('/src/services/wealthStorage.ts');
+      const sidecar = await import('/src/services/historicalGastappSidecar.ts');
+      const closure = storage.loadClosures().find((value: any) => value.monthKey === '2026-07');
+      return closure ? { embedded: Boolean(closure.gastappExpenseClose), hash: sidecar.resolveAcceptedGastappSnapshot(closure)?.contractHash } : null;
+    })).toEqual({ embedded: false, hash: current.contractHash });
+  };
+  await waitForSidecar();
+  for (const reload of [false, true]) {
+    if (reload) {
+      await sidecarPage.reload();
+      await waitForSidecar();
+    }
+    await sidecarPage.evaluate(() => { window.location.hash = '/analysis'; });
+    const effective = await readAcceptedChain(sidecarPage);
+    expect(effective.monthSpendEur).toBe(104);
+    expect(effective.labSpendClp).toBe(104 * rates.eurClp);
+    expect(effective.accumulatedSpendClp).toBe(chain.accumulatedSpendClp);
+    await sidecarPage.getByRole('button', { name: 'Mostrar secciones de Análisis', exact: true }).click();
+    await sidecarPage.getByRole('button', { name: 'Rendimiento', exact: true }).click();
+    await expect(sidecarPage.getByText('Rentabilidad financiera · INDICATIVA', { exact: true })).toBeVisible();
+    await expect(sidecarPage.getByTestId('financial-performance-published-value')).not.toHaveText('—');
+  }
+  expect(await cloudClosure(monthKey)).toEqual(closureWithoutSnapshot);
+  await sidecarChecks.networkGuard.assertClean(testInfo);
+  expect(sidecarChecks.pageErrors).toEqual([]);
+  expect(sidecarChecks.consoleErrors).toEqual([]);
+  // Deny only the upstream reader using the actual GastApp Rules. Accepted
+  // historical consumption must survive a failed live refresh unchanged.
+  const authorizedReader = upstream.doc('authorized_users/gastapp-e2e@example.test');
+  try {
+    await authorizedReader.update({ active: false });
+    const unavailable = await sidecarPage.evaluate(async () => {
+      const source = await import('/src/services/gastosMonthly.ts');
+      let rejection: string | null = null;
+      try { await source.refreshGastappMonthlyContable(); }
+      catch (error) { rejection = error instanceof Error ? error.message : String(error); }
+      return { rejection, candidate: source.resolveGastappMonthlyCloseCandidate('2026-07') };
+    });
+    expect(unavailable.rejection).toBe('La sesión autorizada de GastApp no tiene permiso de lectura para este documento.');
+    expect(unavailable.candidate.status).toBe('unavailable');
+    expect(unavailable.candidate.snapshot).toBeNull();
+    const retained = await readAcceptedChain(sidecarPage);
+    expect(retained.monthSpendEur).toBe(104);
+    expect(retained.labSpendClp).toBe(104 * rates.eurClp);
+    await expect(sidecarPage.getByTestId('financial-performance-published-value')).not.toHaveText('—');
+    expect(sidecarChecks.consoleErrors.length).toBeGreaterThan(0);
+    expect(sidecarChecks.consoleErrors.every(message => /GastApp|permission|insufficient/i.test(message))).toBe(true);
+    expect(sidecarChecks.pageErrors).toEqual([]);
+    expect(await cloudClosure(monthKey)).toEqual(closureWithoutSnapshot);
+  } finally { await authorizedReader.update({ active: true }); }
+  await sidecarChecks.networkGuard.assertClean(testInfo);
+  } finally { await sidecarContext.close(); }
+});
 test('accepted GastApp snapshots survive reload and match Dashboard and presentation', async ({ page }, testInfo) => {
   await page.clock.setFixedTime(new Date('2026-08-01T12:00:00.000Z'));
+  const firestoreCommitSequence = observeFirestoreCommits(page, uid);
   const { modal, networkGuard, pageErrors, consoleErrors } = await prepare(page);
   await modal.getByRole('button', { name: 'Cancelar', exact: true }).click();
+  const appSyncIsSettled = async () => {
+    const status = await page.evaluate(async () => {
+      const { loadWealthSyncUiState } = await import('/src/services/wealthStorage.ts');
+      return loadWealthSyncUiState().status;
+    });
+    return status === 'synced' && firestoreCommitSequence.length > 0
+      && firestoreCommitSequence.every((attempt) => attempt.status !== null);
+  };
+  await expect.poll(appSyncIsSettled, { timeout: 15_000 }).toBe(true);
+  const settledCommitCount = firestoreCommitSequence.length;
+  // The fixture below updates the cloud document through Admin SDK. Let initial
+  // app defaults/autosync finish first so this deliberate out-of-band seed cannot
+  // race a stale transaction from startup.
+  await page.waitForTimeout(200);
+  await expect.poll(appSyncIsSettled, { timeout: 15_000 }).toBe(true);
+  expect(firestoreCommitSequence).toHaveLength(settledCommitCount);
   const ref = emulatorDb().doc(`aurum_wealth/${uid}`);
   const root = (await ref.get()).data()!;
   const seededClosures = await page.evaluate(async ({ closures, records, fx }) => {
@@ -301,7 +741,9 @@ test('accepted GastApp snapshots survive reload and match Dashboard and presenta
       }, closure.fxRates) };
     });
   }, { closures: root.closures, records: root.records, fx: rates });
+  console.info('[E2E Firestore fixture] admin update aurum_wealth/{uid} fields=closures');
   await ref.update({ closures: seededClosures });
+  console.info('[E2E Firestore fixture] admin update complete aurum_wealth/{uid}');
   await page.goto('/#/analysis');
   await page.locator('[aria-label="Moneda"]').getByRole('button', { name: 'EUR', exact: true }).click();
   const julyRow = page.getByRole('row').filter({ has: page.getByText('Jul 2026', { exact: true }) });
@@ -318,7 +760,7 @@ test('accepted GastApp snapshots survive reload and match Dashboard and presenta
   await page.goto('/#/presentation');
   await expect(page.getByTestId('aurum-presentation')).toContainText(expected.presentation36UfText);
   expect(await cloudClosure('2026-07')).toEqual(saved);
-  await attachEvidence(testInfo, { expected, saved });
+  await attachEvidence(testInfo, { expected, saved, firestoreCommitSequence });
   await networkGuard.assertClean(testInfo);
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
@@ -664,7 +1106,13 @@ test.afterEach(async ({ page }) => {
   if (restore) await restore();
 });
 
-async function prepare(page: Page, monthKey = '2026-07', certifiedRevisionFixture = false) {
+async function prepare(
+  page: Page,
+  monthKey = '2026-07',
+  certifiedRevisionFixture = false,
+  sharedGastappContracts?: any[],
+  openCloseDialog = true,
+) {
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
   const confirmationWarnings: string[] = [];
@@ -683,6 +1131,14 @@ async function prepare(page: Page, monthKey = '2026-07', certifiedRevisionFixtur
     // Supply a certified upstream contract for this month only. The default
     // synthetic demo contract is deliberately excluded from automatic revisions.
     // Intercept local fixture data, leaving every production validator intact.
+    if (sharedGastappContracts) {
+      await page.addInitScript((contracts) => {
+        if (!window.localStorage.getItem('cross-app.gastapp-contracts.v1')) {
+          window.localStorage.setItem('cross-app.gastapp-contracts.v1', JSON.stringify(contracts));
+          window.localStorage.setItem('cross-app.gastapp-contract-index.v1', '0');
+        }
+      }, { monthKey: '2026-07', contracts: sharedGastappContracts });
+    }
     let certifiedFixtureModule: string | null = null;
     await page.route('**/src/services/gastosMonthly.ts*', async (route) => {
       if (certifiedFixtureModule !== null) {
@@ -691,14 +1147,36 @@ async function prepare(page: Page, monthKey = '2026-07', certifiedRevisionFixtur
       }
       const response = await route.fetch();
       const body = await response.text();
-      const marker = /contractVersion:\s*["']e2e_fixture["']/g;
-      expect(body.match(marker), 'The scoped source fixture marker must exist exactly once').toHaveLength(1);
-      let fixture = body.replace(marker,
-        'contractVersion: monthKey === "2026-07" ? "gastapp-aurum-calendar-months-v2" : "e2e_fixture"');
-      for (const key of ['operationalRevision', 'sourceGeneration', 'monthContractRevision', 'certificationRevision']) {
-        const revision = new RegExp(`${key}:\\s*1,`, 'g');
-        expect(fixture.match(revision), `Fixture revision ${key} must be explicit`).toHaveLength(1);
-        fixture = fixture.replace(revision, `${key}: monthKey === "2026-07" ? 2 : 1,`);
+      let fixture = body;
+      if (sharedGastappContracts) {
+        const marker = 'const storedContractHash = readString(options.previousSnapshot?.contractHash);';
+        expect(body.split(marker), 'The shared contract fixture must inject at the candidate resolver boundary').toHaveLength(2);
+        const branch = `const sharedRaw = window.localStorage.getItem('cross-app.gastapp-contracts.v1');
+        const sharedContracts = sharedRaw ? JSON.parse(sharedRaw) : null;
+        const sharedIndex = Number(window.localStorage.getItem('cross-app.gastapp-contract-index.v1') || 0);
+        const sharedSnapshot = sharedContracts?.monthKey === monthKey ? sharedContracts.contracts?.[sharedIndex] : null;
+        if (sharedSnapshot) {
+          const sharedPreviousHash = readString(options.previousSnapshot?.contractHash) || null;
+          return {
+            monthKey, status: 'complete', partialGastosEur: sharedSnapshot.totalEur,
+            partialByFamilyEur: sharedSnapshot.byFamilyEur, snapshot: sharedSnapshot,
+            sourceChangedAfterClosure: Boolean(sharedPreviousHash && sharedPreviousHash !== sharedSnapshot.contractHash),
+            currentContractHash: sharedSnapshot.monthContractHash, storedContractHash: sharedPreviousHash,
+            message: 'Fixture E2E transversal desde contrato GastApp certificado.',
+          };
+        }
+        ${marker}`;
+        fixture = body.replace(marker, branch);
+      } else {
+        const marker = /contractVersion:\s*["']e2e_fixture["']/g;
+        expect(body.match(marker), 'The scoped source fixture marker must exist exactly once').toHaveLength(1);
+        fixture = body.replace(marker,
+          'contractVersion: monthKey === "2026-07" ? "gastapp-aurum-calendar-months-v2" : "e2e_fixture"');
+        for (const key of ['operationalRevision', 'sourceGeneration', 'monthContractRevision', 'certificationRevision']) {
+          const revision = new RegExp(`${key}:\\s*1,`, 'g');
+          expect(fixture.match(revision), `Fixture revision ${key} must be explicit`).toHaveLength(1);
+          fixture = fixture.replace(revision, `${key}: monthKey === "2026-07" ? 2 : 1,`);
+        }
       }
       certifiedFixtureModule = fixture;
       await route.fulfill({ response, body: fixture });
@@ -757,6 +1235,12 @@ async function prepare(page: Page, monthKey = '2026-07', certifiedRevisionFixtur
     });
     window.localStorage.setItem('aurum.closing.config.v1', JSON.stringify(config));
   });
+  if (!openCloseDialog) {
+    return {
+      modal: page.locator('div.fixed.inset-0').filter({ hasText: 'Confirmar cierre mensual' }),
+      networkGuard, pageErrors, consoleErrors, confirmationWarnings,
+    };
+  }
   await page.getByRole('button', { name: 'Cerrar mes', exact: true }).click();
   const modal = page.locator('div.fixed.inset-0').filter({ hasText: 'Confirmar cierre mensual' });
   await expect(modal).toBeVisible();
@@ -820,6 +1304,7 @@ async function readAcceptedChain(page: Page) {
     const { loadClosures, loadWealthRecords, loadFxRates, loadIncludeRiskCapitalInTotals } = await import(storagePath);
     const { computeMonthlyRows, aggregateRows, buildTrailingSummary } = await import(returnsPath);
     const { buildWealthLabModel } = await import(labPath);
+    const { resolveAcceptedGastappSnapshot } = await import('/src/services/historicalGastappSidecar.ts');
     const { buildAurumPresentationModel } = await import(presentationPath);
     const closures = loadClosures();
     const includeRisk = loadIncludeRiskCapitalInTotals();
@@ -830,13 +1315,15 @@ async function readAcceptedChain(page: Page) {
     const presentation = buildAurumPresentationModel({ closures, records: loadWealthRecords(), fx: loadFxRates(), includeRiskCapitalInTotals: includeRisk });
     const pctText = (value: number) => `${value >= 0 ? '+' : ''}${value.toFixed(1).replace('.', ',')}%`;
     return {
-      monthSpendEur: closures.find((closure: { monthKey: string }) => closure.monthKey === '2026-07').gastappExpenseClose.totalEur,
+      monthSpendEur: resolveAcceptedGastappSnapshot(closures.find((closure: { monthKey: string }) => closure.monthKey === '2026-07'))?.totalEur ?? null,
       accumulatedSpendClp: aggregateRows('test-total', 'Total', rows, null).gastosAcumClp,
       labSpendClp: buildWealthLabModel(closures, includeRisk).points.find((point: { monthKey: string }) => point.monthKey === '2026-07').gastosClp,
       dashboard12Uf: pct12, dashboard36Uf: pct36,
       dashboard12UfText: pctText(pct12), dashboard36UfText: pctText(pct36),
       presentation36Uf: presentation.return36mUfPct,
-      presentation36UfText: `${presentation.return36mUfPct.toLocaleString('es-CL', { maximumFractionDigits: 1 })} % anualizado`,
+      presentation36UfText: presentation.return36mUfPct === null
+        ? null
+        : `${presentation.return36mUfPct.toLocaleString('es-CL', { maximumFractionDigits: 1 })} % anualizado`,
     };
   });
 }

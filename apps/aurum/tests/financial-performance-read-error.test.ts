@@ -7,10 +7,11 @@ const storageMock = vi.hoisted(() => ({
   load: vi.fn(),
   append: vi.fn(),
 }));
+const liveMock = vi.hoisted(() => ({ resolve: vi.fn() }));
 // These storage/UI cases require an official GastApp amount. Zero is an
 // explicit certified fixture, not a fallback for missing real expense data.
 vi.mock('../src/services/gastosMonthly', () => ({
-  resolveGastappMonthlySpend: (monthKey:string) => ({monthKey,status:'complete',gastosEur:0,source:'gastapp_firestore'}),
+  resolveGastappMonthlySpend: liveMock.resolve,
 }));
 const authMock = vi.hoisted(() => ({ uid: 'performance-test-user' }));
 vi.mock('../src/services/firebase', () => ({
@@ -28,7 +29,10 @@ vi.mock('../src/services/financialPerformanceStorage', () => ({
 import { LabTab } from '../src/components/analysis/LabTab';
 import { FinancialPerformanceSlice } from '../src/components/analysis/FinancialPerformanceSlice';
 import { buildWealthLabModel } from '../src/services/wealthLab';
-import { summarizeWealth, type WealthMonthlyClosure, type WealthRecord } from '../src/services/wealthStorage';
+import { buildGastappMonthlyExpenseCloseSnapshot, summarizeWealth, type WealthMonthlyClosure, type WealthRecord } from '../src/services/wealthStorage';
+
+import { setHistoricalGastappSidecarForAnalysis } from '../src/services/historicalGastappSidecar';
+import { computeMonthlyRows } from '../src/services/returnsAnalysis';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -51,6 +55,14 @@ const makeClosure = (monthKey: string, amount: number): WealthMonthlyClosure => 
     records,
     fxRates,
     summary: summarizeWealth(records, fxRates),
+    gastappExpenseClose: buildGastappMonthlyExpenseCloseSnapshot({
+      monthKey, calendarMonthKey: monthKey, totalEur: 0, byFamilyEur: { dayToDay: 0, trips: 0, others: 0 },
+      canonicalDataHash: `sha256:${'a'.repeat(64)}`, operationalDataHash: `sha256:${'a'.repeat(64)}`,
+      operationalRevision: 1, sourceGeneration: 1, monthContractRevision: 1,
+      monthContractHash: `sha256:${'b'.repeat(64)}`, contractHash: `sha256:${'b'.repeat(64)}`,
+      certificationStatus: 'certified', certificationRevision: 1, certificationHash: `sha256:${'c'.repeat(64)}`,
+      contractVersion: 'gastapp-aurum-calendar-months-v2', generatedAt: `${monthKey}-28T12:00:00.000Z`,
+    }, fxRates),
   };
 };
 
@@ -60,7 +72,9 @@ describe('financial performance confirmation read errors', () => {
 
   beforeEach(() => {
     window.localStorage.clear();
+    setHistoricalGastappSidecarForAnalysis(null, null);
     storageMock.load.mockRejectedValue(new Error('permission-denied'));
+    liveMock.resolve.mockReset().mockImplementation((monthKey: string) => ({ monthKey, status: 'complete', gastosEur: 0, source: 'gastapp_firestore' }));
   });
 
   afterEach(async () => {
@@ -74,6 +88,45 @@ describe('financial performance confirmation read errors', () => {
     storageMock.load.mockReset();
     storageMock.append.mockReset();
     vi.restoreAllMocks();
+  });
+
+  it('uses the accepted sidecar in Returns, Lab and performance without reading a newer live contract', async () => {
+    storageMock.load.mockResolvedValue(null);
+    liveMock.resolve.mockReturnValue({ monthKey: '2024-08', status: 'complete', gastosEur: 9999, source: 'gastapp_firestore' });
+    const closures = [makeClosure('2024-07', 1000000), makeClosure('2024-08', 1100000)];
+    for (const closure of closures) closure.fxRates!.eurClp = 1000;
+    const snapshot = { ...closures[1].gastappExpenseClose!, totalEur: 104,
+      byFamilyEur: { dayToDay: 104, trips: 0, others: 0 },
+      amountsByCurrency: { ...closures[1].gastappExpenseClose!.amountsByCurrency, CLP: { total: 104000, dayToDay: 104000, trips: 0, others: 0 } } };
+    delete closures[1].gastappExpenseClose;
+    setHistoricalGastappSidecarForAnalysis(authMock.uid, {
+      schemaVersion: 'aurum-gastapp-historical-sidecar-v1', snapshotsByMonth: {
+        '2024-08': { closureId: closures[1].id, snapshot, repairAudit: {
+          reason: 'historical_schema_compatibility_reconstruction', reconstructedAt: '2026-11-06T00:00:00Z',
+          originalClosureAt: closures[1].closedAt, preFingerprint: 'same', postFingerprint: 'same', sourceContractHash: snapshot.contractHash,
+        } },
+      },
+    });
+    const original = structuredClone(closures);
+    const lab = buildWealthLabModel(closures).points.find(point => point.monthKey === '2024-08')!;
+    expect(lab).toMatchObject({ varPatrimonioClp: 100000, gastosClp: 104000, retornoEconomicoClp: 204000 });
+    const row = computeMonthlyRows(closures, false, 'CLP').find(value => value.monthKey === '2024-08')!;
+    expect(row.gastosClp).toBe(104000);
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    await act(async () => root?.render(React.createElement(FinancialPerformanceSlice, {
+      closures, includeRiskCapital: false, period: { startMonth: '2024-07', endMonth: '2024-08' },
+    })));
+    expect(container.textContent).toContain('RECONSTRUIDO');
+    expect(container.querySelector('[data-testid="financial-performance-published-value"]')?.textContent).not.toBe('—');
+    expect(container.textContent).toContain('GastApp automático');
+    expect(closures).toEqual(original);
+    expect(liveMock.resolve).not.toHaveBeenCalled();
+    setHistoricalGastappSidecarForAnalysis(null, null);
+    await act(async () => root?.render(React.createElement(FinancialPerformanceSlice, {
+      closures: [...closures], includeRiskCapital: false, period: { startMonth: '2024-07', endMonth: '2024-08' },
+    })));
+    expect(container.querySelector('[data-testid="financial-performance-published-value"]')?.textContent).toBe('—');
+    expect(liveMock.resolve).not.toHaveBeenCalled();
   });
 
   it('stops loading, reports the read error, and does not publish a return', async () => {

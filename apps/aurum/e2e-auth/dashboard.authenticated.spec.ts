@@ -66,6 +66,23 @@ const addFinancialPerformanceClosureFixture = async () => {
       },
       summary: base?.summary,
       records,
+      // This UI case requires accepted historical consumption. A live demo
+      // contract is intentionally no longer a historical fallback.
+      gastappExpenseClose: {
+        schemaVersion: 'aurum-gastapp-monthly-close-v2',
+        sourcePath: 'gastapp_aurum_contracts_v2/months_current',
+        monthKey, calendarMonthKey: monthKey,
+        capturedAt: `${economicDate}T12:00:00.000Z`, generatedAt: `${economicDate}T12:00:00.000Z`,
+        totalEur: 104, byFamilyEur: { dayToDay: 104, trips: 0, others: 0 },
+        canonicalDataHash: `sha256:${'a'.repeat(64)}`, operationalDataHash: `sha256:${'a'.repeat(64)}`,
+        operationalRevision: 1, sourceGeneration: 1, monthContractRevision: 1,
+        monthContractHash: `sha256:${'b'.repeat(64)}`, contractHash: `sha256:${'b'.repeat(64)}`,
+        certificationStatus: 'certified', certificationRevision: 1, certificationHash: `sha256:${'c'.repeat(64)}`,
+        contractVersion: 'gastapp-aurum-calendar-months-v2', fxRates,
+        amountsByCurrency: Object.fromEntries(Object.entries({ CLP: fxRates.eurClp, EUR: 1,
+          USD: fxRates.eurClp / fxRates.usdClp, UF: fxRates.eurClp / fxRates.ufClp }).map(([currency, rate]) =>
+          [currency, { total: 104 * rate, dayToDay: 104 * rate, trips: 0, others: 0 }])),
+      },
     };
   };
 
