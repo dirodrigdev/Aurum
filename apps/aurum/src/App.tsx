@@ -242,22 +242,29 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [revisionSelectedMonth, setRevisionSelectedMonth] = useState<string | null>(null);
   const [revisionNoticeBusy, setRevisionNoticeBusy] = useState(false);
   const [revisionNoticeError, setRevisionNoticeError] = useState<string | null>(null);
+  const [revisionReadError, setRevisionReadError] = useState(false);
+  const [revisionReadBusy, setRevisionReadBusy] = useState(false);
   const [revisionSyncAlert, setRevisionSyncAlert] = useState<string | null>(null);
 
   const refreshRevisionInbox = async () => {
     const sequence = ++revisionNoticeReadSeq.current;
+    setRevisionReadBusy(true);
     try {
       const seen = await readGastappRevisionSeenHashes();
       if (sequence !== revisionNoticeReadSeq.current) return;
       const items = buildGastappRevisionInbox(
         loadClosures(), seen, loadIncludeRiskCapitalInTotals(),
         getHistoricalGastappSidecarAnalysisState().document);
+      setRevisionReadError(false);
       setRevisionInbox(items);
       setRevisionSelectedMonth((current) =>
         items.some((item) => item.monthKey === current)
           ? current : items[0]?.monthKey || null);
     } catch (error) {
+      if (sequence === revisionNoticeReadSeq.current) setRevisionReadError(true);
       console.warn('[Aurum][GastApp] no se pudo leer el estado de avisos', error);
+    } finally {
+      if (sequence === revisionNoticeReadSeq.current) setRevisionReadBusy(false);
     }
   };
   const acknowledgeRevisionInbox = async () => {
@@ -268,7 +275,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const acknowledged = [...revisionInbox];
     try {
       const seen = await acknowledgeGastappRevisionNotices(
-        acknowledged.map(({ monthKey, contractHash }) => ({ monthKey, contractHash })));
+        acknowledged.map(({ monthKey, contractHash, certificationRevision }) => ({ monthKey, contractHash, certificationRevision })));
       const items = buildGastappRevisionInbox(
         loadClosures(), seen, loadIncludeRiskCapitalInTotals(),
         getHistoricalGastappSidecarAnalysisState().document);
@@ -647,6 +654,15 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return (
     <>
       {children}
+      {!isPresentationRoute && revisionReadError && (
+        <section role="alert" aria-live="assertive" className="fixed inset-x-3 bottom-20 z-[119] mx-auto max-w-xl rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 shadow-lg sm:bottom-6">
+          <p>Avisos de GastApp: no verificable. No pude comprobar qué revisiones están leídas.</p>
+          <button type="button" disabled={revisionReadBusy} onClick={() => void refreshRevisionInbox()}
+            className="mt-2 min-h-11 rounded-lg border border-amber-700 px-3 font-semibold disabled:opacity-60">
+            {revisionReadBusy ? 'Comprobando avisos…' : 'Reintentar lectura de avisos'}
+          </button>
+        </section>
+      )}
       {!isPresentationRoute && revisionSyncAlert && !revisionInbox.length && (
         <div className="fixed inset-x-3 bottom-20 z-[110] mx-auto max-w-xl rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950 shadow-lg sm:bottom-6" role="status">
           {revisionSyncAlert}

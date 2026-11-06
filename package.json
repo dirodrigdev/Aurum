@@ -17,6 +17,7 @@
     "emulators:aurum": "node packages/e2e-harness/firebase/start-app-emulators.mjs e2e/apps/aurum.e2e.config.mjs",
     "seed:e2e:aurum": "node scripts/seed-aurum-e2e.mjs",
     "test:e2e:aurum:authenticated": "node packages/e2e-harness/firebase/run-app-e2e.mjs e2e/apps/aurum.e2e.config.mjs",
+    "test:e2e:cross-app:synthetic": "node packages/e2e-harness/cross-app/run-cross-app-e2e.mjs",
     "clean:e2e:aurum": "node packages/e2e-harness/process/clean-app-e2e.mjs e2e/apps/aurum.e2e.config.mjs",
     "emulators:midas": "node packages/e2e-harness/firebase/start-app-emulators.mjs e2e/apps/midas.e2e.config.mjs",
     "seed:e2e:midas": "node scripts/seed-midas-e2e.mjs",

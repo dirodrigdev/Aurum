@@ -6,6 +6,7 @@ import {
   WEALTH_DATA_UPDATED_EVENT,
   type GastappMonthlyExpenseCloseInput,
   type GastappMonthlyExpenseCloseSnapshot,
+  type WealthMonthlyClosure,
 } from './wealthStorage';
 
 export const HISTORICAL_GASTAPP_SIDECAR_ID = 'historical_v1';
@@ -316,6 +317,12 @@ export const getHistoricalGastappSnapshotForAnalysis = (
   const entry = analysisState.document?.snapshotsByMonth[monthKey];
   return entry?.closureId === closureId ? entry.snapshot : undefined;
 };
+
+/** The accepted historical authority. Live GastApp contracts never replace it at read time. */
+export const resolveAcceptedGastappSnapshot = (
+  closure: Pick<WealthMonthlyClosure, 'id' | 'monthKey' | 'gastappExpenseClose'>,
+): GastappMonthlyExpenseCloseSnapshot | undefined => closure.gastappExpenseClose ||
+  getHistoricalGastappSnapshotForAnalysis(closure.monthKey, closure.id);
 
 export const setHistoricalGastappSidecarForAnalysis = (
   uid: string | null,

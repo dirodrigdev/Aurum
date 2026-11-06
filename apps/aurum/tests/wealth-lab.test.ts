@@ -17,6 +17,10 @@ vi.mock('../src/services/gastosMonthly', () => ({
   resolveGastappMonthlySpend: resolveGastappMonthlySpendMock,
 }));
 
+vi.mock('../src/services/historicalGastappSidecar', () => ({
+  resolveAcceptedGastappSnapshot: (closure: any) => closure.gastappExpenseClose,
+}));
+
 type TestSummary = {
   netByCurrency: { CLP: number; USD: number; EUR: number; UF: number };
   assetsByCurrency: { CLP: number; USD: number; EUR: number; UF: number };

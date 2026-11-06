@@ -84,6 +84,19 @@ try {
     assert.equal((await published.get()).data().optimizableInvestmentsCLP, 1000100);
     assert.equal((await root.get()).data().financialSentinel, 'unchanged');
     console.log('PASS serialized concurrent source update, stale rejection and parallel idempotency');
+    const unchangedPublication = await published.get();
+    for (const [code, source, candidate] of [
+      ['source_deleted', { closures: [closure(100)], closureDeletionTombstones: [{ monthKey: '2026-10', removedAt: '2026-11-01T00:00:00Z' }] }, snapshot(100)],
+      ['source_ambiguous', { closures: [closure(100), { ...closure(100), id: 'other-current-closure' }] }, snapshot(100)],
+      ['obsolete_publication', { closures: [closure(100)] }, { ...snapshot(100), version: 1 }],
+    ]) {
+      await root.set({ ...source, financialSentinel: 'unchanged' });
+      await assert.rejects(publishSnapshotFromCurrentSource(db, identity, candidate), error => error.code === code);
+      const afterRejection = await published.get();
+      assert.equal(afterRejection.updateTime.toMillis(), unchangedPublication.updateTime.toMillis());
+      assert.deepEqual(afterRejection.data(), unchangedPublication.data());
+      console.log(`PASS ${code}: previous publication preserved without writes`);
+    }
     const before = (await published.get()).updateTime.toMillis();
     await root.set({ closures: [{ ...closure(100), fxMetadata: {} }], financialSentinel: 'unchanged' });
     await assert.rejects(publishSnapshotFromCurrentSource(db, identity, snapshot(100)));

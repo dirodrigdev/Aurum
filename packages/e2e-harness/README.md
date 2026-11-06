@@ -10,7 +10,13 @@ Variables opcionales de runtime: `E2E_FIREBASE_RUNTIME_DIR`, `E2E_NODE_BINARY` y
 
 Los comandos públicos siguen siendo `npm run test:e2e:aurum:authenticated` y `npm run test:e2e:midas:authenticated`. Para incorporar GastApp deberá aportar su propia configuración declarativa, Firebase Emulator, seed, stubs de producción y smoke test; no debe copiar infraestructura desde otra aplicación.
 
-Limitación actual: el arnés ejecuta Auth y Firestore Emulator; no emula APIs Vercel ni integra aplicaciones en paralelo.
+El arnés ejecuta Auth y Firestore Emulator, sin integrar aplicaciones en paralelo. El escenario transversal dispone además de un transporte HTTP local del handler real de publicación; no emula la plataforma Vercel.
+
+## Escenario transversal sintético
+
+`npm run test:e2e:cross-app:synthetic` ejecuta secuencialmente GastApp, Aurum y MIDAS con sus proyectos de emulador separados. GastApp entrega documentos crudos de dos revisiones y evidencia del contenido de doce informes. Aurum usa su lector real, acepta la revisión, reconoce el aviso y publica mediante el publicador browser y el endpoint HTTP/autenticado reales. MIDAS recibe ese documento sin reconstruirlo y comprueba identidad M8, recuperación, ajustes e idempotencia. El runner exige `GASTAPP_REPO_DIR` apuntando al checkout aislado de GastApp y conserva un único `scenario.json` sintético. Reproducción y límites: [cross-app/README.md](cross-app/README.md).
+
+El escenario usa la misma fila de gasto, el mismo hash de contrato y el cierre Aurum serializado en los tres pasos. Los emuladores siguen aislados por proyecto para evitar que una aplicación escriba directamente en el esquema de otra; el handoff entre proyectos es el contrato publicado comprobado por la fase siguiente. Ninguna fase se conecta a producción.
 
 ## Aplicaciones externas
 

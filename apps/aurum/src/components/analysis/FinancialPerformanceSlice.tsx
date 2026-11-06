@@ -14,7 +14,7 @@ import {
 } from '../../services/financialPerformance';
 import { appendFinancialPerformanceConfirmation, loadFinancialPerformanceConfirmation } from '../../services/financialPerformanceStorage';
 import { getCurrentUid } from '../../services/firebase';
-import { resolveGastappMonthlySpend } from '../../services/gastosMonthly';
+import { resolveAcceptedGastappSnapshot } from '../../services/historicalGastappSidecar';
 import { type WealthMonthlyClosure } from '../../services/wealthStorage';
 import { formatMonthLabel as monthLabel } from '../../utils/wealthFormat';
 import { FinancialPerformanceResultView } from './FinancialPerformanceResultView';
@@ -150,23 +150,12 @@ export const FinancialPerformanceSlice: React.FC<{
   const calculationConfirmation = confirmation ?? (storageReady && !isLoading ? draftConfirmation : null);
   const initialClosure = selectFinancialPerformanceClosure(closures, period.startMonth, includeRiskCapital);
   const finalClosure = selectFinancialPerformanceClosure(closures, period.endMonth, includeRiskCapital);
-  const embeddedGastappWithdrawalClp = (() => {
-    const snapshot = finalClosure?.gastappExpenseClose;
+  const automaticConsumptionWithdrawalClp = (() => {
+    const snapshot = finalClosure ? resolveAcceptedGastappSnapshot(finalClosure) : undefined;
     if (!snapshot || snapshot.calendarMonthKey !== period.endMonth) return null;
     const amount = Number(snapshot.amountsByCurrency?.CLP?.total);
     return Number.isFinite(amount) && amount >= 0 ? amount : null;
   })();
-  const runtimeGastappSpend = resolveGastappMonthlySpend(period.endMonth);
-  const runtimeGastappWithdrawalClp = (() => {
-    if (runtimeGastappSpend.status !== 'complete' || runtimeGastappSpend.gastosEur === null) return null;
-    const eurClp = Number(finalClosure?.fxRates?.eurClp);
-    if (!Number.isFinite(eurClp) || eurClp <= 0) return null;
-    const amount = runtimeGastappSpend.gastosEur * eurClp;
-    return Number.isFinite(amount) && amount >= 0 ? amount : null;
-  })();
-  // Prefer the close-time snapshot; fall back to the current official GastApp
-  // calendar contract for historical periods that predate embedded snapshots.
-  const automaticConsumptionWithdrawalClp = embeddedGastappWithdrawalClp ?? runtimeGastappWithdrawalClp;
   const result = useMemo(
     () => reconcileFinancialPerformanceForPeriod({
       period,

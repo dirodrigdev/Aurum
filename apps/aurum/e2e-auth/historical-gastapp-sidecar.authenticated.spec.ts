@@ -220,7 +220,10 @@ test('certified sidecar revision uses Firestore transaction, archives the old ve
     generatedAt: new Date().toISOString(),
   };
   await page.goto('/#/analysis');
-  await expect(page.getByTestId('historical-gastapp-sidecar-state')).toBeVisible();
+  // This transaction case needs the authoritative fixture, not a transient
+  // loading frame which can finish before Playwright observes it. The next
+  // test explicitly holds the read and verifies the loading gate separately.
+  await expect(page.getByText('39/39 meses válidos', { exact: true }).first()).toBeVisible();
   const firstResult = await page.evaluate(async ({ monthKey, closureId, previousHash, candidateHash, candidateSnapshot }) => {
     const { applyCertifiedHistoricalGastappSidecarRevisions } = await import('/src/services/historicalGastappSidecar.ts');
     const result = await applyCertifiedHistoricalGastappSidecarRevisions([{

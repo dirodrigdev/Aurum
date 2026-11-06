@@ -7370,7 +7370,7 @@ export const Patrimonio: React.FC = () => {
     setGastappRevisionNoticeError(null);
     try {
       const seen = await acknowledgeGastappRevisionNotices([
-        { monthKey: notice.monthKey, contractHash: notice.currentSnapshot.contractHash },
+        { monthKey: notice.monthKey, contractHash: notice.currentSnapshot.contractHash, certificationRevision: notice.currentSnapshot.certificationRevision },
       ]);
       setGastappRevisionSeenHashes(seen);
       window.dispatchEvent(new CustomEvent(GASTAPP_REVISION_NOTICE_SEEN_EVENT, { detail: seen }));
