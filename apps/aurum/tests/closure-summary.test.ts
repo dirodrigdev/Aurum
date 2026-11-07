@@ -9,11 +9,14 @@ vi.mock('../src/services/firebase', () => ({
 import {
   BANK_BCHILE_CLP_LABEL,
   BANK_BALANCE_CLP_LABEL,
+  BANK_BALANCE_CLP_LEGACY_LABEL,
+  BANK_BALANCE_USD_LEGACY_LABEL,
   DEBT_CARD_CLP_LABEL,
   MORTGAGE_DEBT_BALANCE_LABEL,
   RISK_CAPITAL_LABEL_CLP,
   buildCanonicalClosureSummary,
   computeWealthHomeSectionAmounts,
+  getIncompleteClosures,
   importHistoricalClosuresFromCsv,
   listSuspiciousHistoricalUfClosures,
   loadClosures,
@@ -38,6 +41,41 @@ const makeRecord = (
   snapshotDate: '2026-04-30',
   createdAt: '2026-04-30T12:00:00.000Z',
   ...input,
+});
+
+describe('historical closure reminder', () => {
+  const records = [
+    ...['SURA inversión financiera', 'SURA ahorro previsional', 'BTG total valorización',
+      'PlanVital saldo total', 'Global66 Cuenta Vista USD', 'Wise Cuenta principal USD']
+      .map(label => makeRecord({ block: 'investment', source: 'Manual', label, amount: 10, currency: 'CLP' })),
+    makeRecord({ block: 'real_estate', source: 'Manual', label: 'Valor propiedad', amount: 10, currency: 'UF' }),
+    makeRecord({ block: 'debt', source: 'Manual', label: 'Saldo deuda hipotecaria', amount: 10, currency: 'UF' }),
+    makeRecord({ block: 'bank', source: 'Manual', label: 'Banco de Chile CLP', amount: 20, currency: 'CLP' }),
+    makeRecord({ block: 'bank', source: 'Manual', label: 'Banco de Chile USD', amount: 0, currency: 'USD' }),
+    makeRecord({ block: 'debt', source: 'Manual', label: 'Deuda tarjetas CLP', amount: 10, currency: 'CLP' }),
+    makeRecord({ block: 'debt', source: 'Manual', label: 'Deuda tarjetas USD', amount: 0, currency: 'USD' }),
+  ];
+  const closure = {
+    id: 'synthetic-april', monthKey: '2026-04', closedAt: '2026-05-01T12:00:00Z',
+    records, fxRates, summary: buildCanonicalClosureSummary(records, fxRates),
+  };
+
+  it('accepts canonical account details without duplicate bank aggregate rows', () => {
+    expect(getIncompleteClosures([closure])).toEqual([]);
+  });
+
+  it('accepts historical bank aggregates when they are the recorded balances', () => {
+    const legacy = records.map(record => record.block === 'bank'
+      ? { ...record, label: record.currency === 'CLP' ? BANK_BALANCE_CLP_LEGACY_LABEL : BANK_BALANCE_USD_LEGACY_LABEL }
+      : record);
+    expect(getIncompleteClosures([{ ...closure, records: legacy }])).toEqual([]);
+  });
+
+  it('still warns when bank coverage or historical FX is missing', () => {
+    const withoutUsd = records.filter(record => record.label !== 'Banco de Chile USD');
+    expect(getIncompleteClosures([{ ...closure, records: withoutUsd, fxMissing: ['eurClp'] }]))
+      .toEqual([{ monthKey: '2026-04', missingFieldLabels: ['Saldo bancos USD'], missingFx: true }]);
+  });
 });
 
 const makeMemoryStorage = () => {

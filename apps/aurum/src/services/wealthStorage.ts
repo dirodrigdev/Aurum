@@ -921,8 +921,6 @@ const CLOSURE_REQUIRED_FIELDS: Array<{ label: string; canonicalLabel: string }> 
   { label: DEBT_CARD_USD_LABEL, canonicalLabel: 'deuda tarjetas usd' },
 ];
 const CLOSURE_CANONICAL_ALIASES: Record<string, string[]> = {
-  'saldo bancos clp': [BANK_BALANCE_CLP_LEGACY_LABEL],
-  'saldo bancos usd': [BANK_BALANCE_USD_LEGACY_LABEL],
   'deuda tarjetas clp': [DEBT_CARD_CLP_LEGACY_LABEL],
   'deuda tarjetas usd': [DEBT_CARD_USD_LEGACY_LABEL],
   'saldo deuda hipotecaria': ['deuda hipotecaria', 'saldo hipoteca', 'hipoteca saldo deuda'],
@@ -5213,7 +5211,15 @@ export const getClosureCompleteness = (closure: WealthMonthlyClosure): WealthClo
     latestByCanonical.set(key, pickLatestRecord(prev, record));
   });
 
+  const bankRecords = selectCanonicalWealthExposureRecords(records, true)
+    .filter(({ group }) => group === 'bank')
+    .map(({ record }) => record);
   const missingFieldLabels = CLOSURE_REQUIRED_FIELDS.filter(({ canonicalLabel }) => {
+    if (canonicalLabel === 'saldo bancos clp' || canonicalLabel === 'saldo bancos usd') {
+      const currency = canonicalLabel === 'saldo bancos clp' ? 'CLP' : 'USD';
+      const balances = bankRecords.filter((record) => record.currency === currency);
+      return balances.length === 0 || balances.some((record) => !Number.isFinite(record.amount));
+    }
     const aliases = CLOSURE_CANONICAL_ALIASES[canonicalLabel] || [];
     const keys = [canonicalLabel, ...aliases].map((label) => normalizeLabelKey(label));
     const record = keys
