@@ -33,7 +33,7 @@ import {
   readGastappRevisionSeenHashes,
   computeWealthHomeSectionAmounts,
   currentMonthKey,
-  getIncompleteClosures,
+  getActionableClosureReminder,
   latestRecordsForMonth,
   localYmd,
   loadClosures,
@@ -102,8 +102,7 @@ type FxIndicatorPrompt = {
 
 type IncompletePrompt = {
   monthKey: string;
-  missingCount: number;
-  missingFx: boolean;
+  missingFieldLabels: string[];
 };
 
 const toFinite = (value: unknown): number | null => {
@@ -464,16 +463,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         setIncompletePrompt(null);
         return;
       }
-      const incomplete = getIncompleteClosures(loadClosures())[0] || null;
-      if (!incomplete) {
-        setIncompletePrompt(null);
-        return;
-      }
-      setIncompletePrompt({
-        monthKey: incomplete.monthKey,
-        missingCount: incomplete.missingFieldLabels.length,
-        missingFx: incomplete.missingFx,
-      });
+      setIncompletePrompt(getActionableClosureReminder(loadClosures()));
     };
 
     refreshIncompletePrompt();
@@ -839,15 +829,15 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       )}
       {!isPresentationRoute && !fxIndicatorPrompt && !activeRevision && !!incompletePrompt && (
         <div className="fixed inset-0 z-[120] bg-black/45 p-4 flex items-center justify-center">
-          <div className="w-full max-w-md rounded-2xl border border-amber-200 bg-white p-5 shadow-2xl">
-            <div className="text-lg font-semibold text-slate-900">Cierre mensual incompleto</div>
+          <div role="dialog" aria-modal="true" aria-labelledby="incomplete-closure-title" className="max-h-full w-full max-w-md overflow-y-auto rounded-2xl border border-amber-200 bg-white p-5 shadow-2xl">
+            <div id="incomplete-closure-title" className="text-lg font-semibold text-slate-900">Cierre mensual incompleto</div>
             <div className="mt-2 text-sm text-slate-600">
               El cierre de <span className="font-semibold">{incompletePrompt.monthKey}</span> aún no está completo.
             </div>
-            <div className="mt-2 text-xs text-slate-600">
-              Faltan {incompletePrompt.missingCount} campos
-              {incompletePrompt.missingFx ? ' + TC/UF del cierre' : ''}.
-            </div>
+            <p className="mt-2 text-sm text-slate-600">Puedes completar estos datos desde Cierre → Editar.</p>
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">
+              {incompletePrompt.missingFieldLabels.map((label) => <li key={label}>{label}</li>)}
+            </ul>
             <div className="mt-4 grid grid-cols-2 gap-2">
               <button
                 type="button"

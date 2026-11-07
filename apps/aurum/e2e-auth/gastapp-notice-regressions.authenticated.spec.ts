@@ -8,6 +8,39 @@ let original: any;
 test.beforeEach(async () => { original = (await root.get()).data(); });
 test.afterEach(async ({ context }) => { await context.close(); if (original) await root.set(original); });
 
+test('a legacy summary remains visible without an incomplete close prompt', async ({ page }, testInfo) => {
+  const guard = await installLocalNetworkGuard(page);
+  const { records: _records, ...summaryOnly } = original.closures.at(-1);
+  await root.update({ closures: [summaryOnly] });
+  await page.goto('/#/closing');
+  await expect(page.getByText(/Este cierre no tiene detalle por instrumento/)).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Cierre mensual incompleto' })).toHaveCount(0);
+  await guard.assertClean(testInfo);
+});
+
+test('an editable close shows named fields and opens the correct month', async ({ page }, testInfo) => {
+  const guard = await installLocalNetworkGuard(page);
+  await page.goto('/#/dashboard');
+  const reminder = page.getByRole('dialog', { name: 'Cierre mensual incompleto' });
+  await expect(reminder).toBeVisible();
+  await expect(reminder.getByRole('listitem').filter({ hasText: 'Saldo bancos USD' })).toBeVisible();
+  for (const [name, width, height] of [['desktop', 1280, 800], ['tablet', 768, 1024], ['mobile', 390, 640]] as const) {
+    await page.setViewportSize({ width, height });
+    await expect(reminder.getByRole('button', { name: 'Completar ahora' })).toBeInViewport();
+    await page.screenshot({ path: testInfo.outputPath(`closure-reminder-${name}.png`) });
+  }
+  const month = [...original.closures].sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0].monthKey;
+  const label = new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' })
+    .format(new Date(`${month}-15T12:00:00Z`));
+  await reminder.getByRole('button', { name: 'Completar ahora' }).click();
+  await expect(page).toHaveURL(/#\/closing$/);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('aurum.closing.focus.month.v1'))).toBeNull();
+  await page.getByRole('button', { name: 'Editar', exact: true }).click();
+  await expect(page.getByText(new RegExp(`Editar cierre ${label}`, 'i'))).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Guardar cambios', exact: true })).toBeEnabled();
+  await guard.assertClean(testInfo);
+});
+
 test('global notice read failure is explicit, persistent and recovers without reloading', async ({ page }, testInfo) => {
   const guard = await installLocalNetworkGuard(page);
   await page.addInitScript(() => {

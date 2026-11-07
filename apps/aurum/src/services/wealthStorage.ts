@@ -5256,6 +5256,18 @@ export const getIncompleteClosures = (
     .map((closure) => getClosureCompleteness(closure))
     .filter((summary) => summary.missingFx || summary.missingFieldLabels.length > 0);
 
+export const getActionableClosureReminder = (
+  closures: WealthMonthlyClosure[],
+): { monthKey: string; missingFieldLabels: string[] } | null => {
+  const latest = [...closures].sort(compareClosuresByMonthDesc)[0];
+  // The editor only corrects the latest close, requires its historical FX
+  // and can add instrument fields only to a close that has detailed records.
+  if (!latest?.records?.length) return null;
+  const { monthKey, missingFieldLabels, missingFx } = getClosureCompleteness(latest);
+  if (missingFx || missingFieldLabels.length === 0) return null;
+  return { monthKey, missingFieldLabels };
+};
+
 const getWealthCloudRef = async () => {
   if (!isFirebaseConfigured()) return null;
   await ensureAuthPersistence();

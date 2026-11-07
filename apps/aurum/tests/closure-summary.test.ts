@@ -16,6 +16,7 @@ import {
   RISK_CAPITAL_LABEL_CLP,
   buildCanonicalClosureSummary,
   computeWealthHomeSectionAmounts,
+  getActionableClosureReminder,
   getIncompleteClosures,
   importHistoricalClosuresFromCsv,
   listSuspiciousHistoricalUfClosures,
@@ -75,6 +76,18 @@ describe('historical closure reminder', () => {
     const withoutUsd = records.filter(record => record.label !== 'Banco de Chile USD');
     expect(getIncompleteClosures([{ ...closure, records: withoutUsd, fxMissing: ['eurClp'] }]))
       .toEqual([{ monthKey: '2026-04', missingFieldLabels: ['Saldo bancos USD'], missingFx: true }]);
+  });
+
+  it('shows only missing fields of the latest editable detailed close', () => {
+    const legacy = { ...closure, monthKey: '2025-12', records: undefined };
+    const withoutUsd = records.filter(record => record.label !== 'Banco de Chile USD');
+    const incomplete = { ...closure, records: withoutUsd };
+    expect(getActionableClosureReminder([legacy])).toBeNull();
+    expect(getActionableClosureReminder([legacy, closure])).toBeNull();
+    expect(getActionableClosureReminder([incomplete, { ...closure, monthKey: '2026-05' }])).toBeNull();
+    expect(getActionableClosureReminder([{ ...incomplete, fxMissing: ['eurClp'] }])).toBeNull();
+    expect(getActionableClosureReminder([legacy, incomplete]))
+      .toEqual({ monthKey: '2026-04', missingFieldLabels: ['Saldo bancos USD'] });
   });
 });
 
