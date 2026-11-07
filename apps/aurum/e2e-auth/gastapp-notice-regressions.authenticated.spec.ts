@@ -52,12 +52,31 @@ test('two sessions cannot replace a current R2 acknowledgement with delayed R1',
     if (body.writes?.some((write: any) => write.update?.fields?.gastappRevisionNoticeSeenV1)) acknowledgementWrites++;
   });
   try {
-    await page.goto('/#/presentation'); await other.goto('/#/presentation');
-    for (const actor of [page, other]) await expect.poll(() => actor.evaluate(async () => {
-      const storage = await import('/src/services/wealthStorage.ts'); return storage.loadWealthSyncUiState().status;
-    })).toBe('synced');
+    for (const actor of [page, other]) {
+      await actor.goto('/#/presentation');
+      // A fresh browser context reloads once for the app build marker.
+      await expect(actor).toHaveURL(url => url.searchParams.has('v') && url.hash === '#/presentation');
+      await expect(actor.getByRole('heading', { name: 'Tu situación patrimonial, reunida y puesta en contexto' })).toBeVisible();
+      await expect.poll(() => actor.evaluate(async () => {
+        const storage = await import('/src/services/wealthStorage.ts');
+        return storage.loadWealthSyncUiState().status;
+      })).toBe('synced');
+    }
+    const settleWealthSync = async () => {
+      for (const actor of [page, other]) {
+        expect(await actor.evaluate(async () => {
+          const storage = await import('/src/services/wealthStorage.ts');
+          await storage.hydrateWealthFromCloud();
+          return storage.syncWealthNow();
+        })).toBe(true);
+      }
+    };
+    // Persist the app's normalization of the seed before taking the fixture
+    // baseline. Otherwise sync can enrich legacy summaries during the check.
+    await settleWealthSync();
     const r1 = `sha256:${'1'.repeat(64)}`, r2 = `sha256:${'2'.repeat(64)}`;
     const cloud = (await root.get()).data()!;
+    const targetClosure = cloud.closures[0];
     const accepted = await page.evaluate(async ({ closure, hash }) => {
       const { buildGastappMonthlyExpenseCloseSnapshot } = await import('/src/services/wealthStorage.ts');
       return buildGastappMonthlyExpenseCloseSnapshot({
@@ -68,22 +87,18 @@ test('two sessions cannot replace a current R2 acknowledgement with delayed R1',
         certificationRevision: 2, certificationHash: hash, contractHash: hash,
         contractVersion: 'gastapp-aurum-calendar-months-v2', generatedAt: '2026-11-06T00:00:00Z',
       }, closure.fxRates);
-    }, { closure: cloud.closures[0], hash: r2 });
-    const closures = cloud.closures.map((closure: any, index: number) => index ? closure : ({ ...closure, gastappExpenseClose: accepted }));
-    const monthKey = closures[0].monthKey;
+    }, { closure: targetClosure, hash: r2 });
+    const closures = cloud.closures.map((closure: any) => closure.id === targetClosure.id
+      ? { ...closure, gastappExpenseClose: accepted }
+      : closure);
+    const monthKey = targetClosure.monthKey;
     await root.update({ closures, gastappRevisionNoticeSeenV1: { [monthKey]: r1 } });
     // The preceding full-suite tests can leave legitimate general-sync work.
     // Drain it through the real API before establishing the acknowledgement
     // baseline; keep exact closure/history equality across the acknowledgements.
-    for (const actor of [page, other]) {
-      expect(await actor.evaluate(async () => {
-        const storage = await import('/src/services/wealthStorage.ts');
-        await storage.hydrateWealthFromCloud();
-        return storage.syncWealthNow();
-      })).toBe(true);
-    }
+    await settleWealthSync();
     const closuresBeforeAcknowledgement = (await root.get()).data()!.closures;
-    expect(closuresBeforeAcknowledgement[0].gastappExpenseClose).toEqual(accepted);
+    expect(closuresBeforeAcknowledgement.find((closure: any) => closure.id === targetClosure.id)?.gastappExpenseClose).toEqual(accepted);
     for (const closure of closures) {
       const current = closuresBeforeAcknowledgement.find((value: any) => value.id === closure.id);
       expect(current.records).toEqual(closure.records);
