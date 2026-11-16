@@ -2126,22 +2126,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     return persisted;
   };
 
+  // The local write is authoritative for closing the editor. Cloud persistence
+  // continues independently and is reported by the global sync indicator.
   const confirmInvestmentCloudSave = async () => {
-    if (section !== 'investment') return true;
-
-    setSavingToCloud(true);
-    try {
-      const synced = await syncWealthNow();
-      if (!synced) {
-        setOcrError(
-          'El valor quedó guardado localmente, pero no pude confirmarlo en la nube. No se marcará como guardado; revisa la conexión y reintenta.',
-        );
-        return false;
-      }
-      return true;
-    } finally {
-      setSavingToCloud(false);
+    if (section === 'investment') {
+      void syncWealthNow();
     }
+    return true;
   };
 
   const openImagePicker = () => {
