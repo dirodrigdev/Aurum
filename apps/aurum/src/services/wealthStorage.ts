@@ -5349,7 +5349,8 @@ let wealthCloudSyncRequestedWhileRunning = false;
 
 const syncWealthToCloudNow = async (): Promise<boolean> => {
   if (wealthCloudSyncPromise) {
-    wealthCloudSyncRequestedWhileRunning = true;
+    // A second caller observing the same in-flight snapshot is not a new edit.
+    // Only actual local mutations (scheduleWealthCloudSync) request a follow-up.
     return wealthCloudSyncPromise;
   }
 
@@ -5588,6 +5589,12 @@ export const syncWealthNow = async (): Promise<boolean> => {
       wealthCloudSyncTimer = null;
     }
     const ok = await syncWealthToCloudNow();
+    if (ok && loadWealthSyncUiState().status === 'synced') {
+      // A successful transaction has acknowledged the latest local snapshot.
+      // Do not report a stale error left over from a previous manual attempt.
+      setLastWealthSyncIssue('');
+      return true;
+    }
     if (wealthCloudSyncRequestedWhileRunning || wealthCloudSyncTimer || wealthCloudSyncPromise) {
       if (wealthCloudSyncTimer) {
         clearTimeout(wealthCloudSyncTimer);
@@ -5598,7 +5605,6 @@ export const syncWealthNow = async (): Promise<boolean> => {
       setLastWealthSyncIssue('cloud_sync_kept_changing_during_close');
       return false;
     }
-    if (ok) return true;
     authOrWriteRetries += 1;
     await new Promise((resolve) => setTimeout(resolve, 350));
   }
