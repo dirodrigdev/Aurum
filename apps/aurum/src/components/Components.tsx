@@ -291,7 +291,15 @@ export const WealthSyncBanner: React.FC = () => {
     // Recover pending local changes after a browser restart / new app session.
     const initial = loadWealthSyncUiState();
     if (initial.status !== 'synced' && navigator.onLine) void syncWealthNow();
+    // Keep retrying pending writes even if the user leaves the app open and
+    // no focus/online event occurs. Never retry a confirmed clean snapshot.
+    const retryInterval = setInterval(() => {
+      if (navigator.onLine && loadWealthSyncUiState().status !== 'synced') {
+        void syncWealthNow();
+      }
+    }, 60_000);
     return () => {
+      clearInterval(retryInterval);
       clearHideTimer();
       window.removeEventListener(WEALTH_SYNC_STATUS_UPDATED_EVENT, refresh);
       window.removeEventListener('storage', refresh);
