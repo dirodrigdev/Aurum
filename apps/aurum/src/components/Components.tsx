@@ -243,6 +243,84 @@ export const SwipeRow = ({
   );
 };
 
+// --- ESTADO GLOBAL DE SINCRONIZACIÓN PATRIMONIAL ---
+// The pending state survives navigation and reloads through wealthStorage.
+// Never show a historical 'synced' value as a new success notification.
+export const WealthSyncBanner: React.FC = () => {
+  const [state, setState] = useState<WealthSyncUiState>(() => loadWealthSyncUiState());
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastStatus = useRef(state.status);
+
+  useEffect(() => {
+    const clearHideTimer = () => {
+      if (hideTimer.current) clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+    };
+    const refresh = () => {
+      const next = loadWealthSyncUiState();
+      const wasPending = lastStatus.current !== 'synced';
+      lastStatus.current = next.status;
+      setState(next);
+      clearHideTimer();
+      if (next.status === 'synced' && wasPending) {
+        setShowSuccess(true);
+        hideTimer.current = setTimeout(() => setShowSuccess(false), 10_000);
+      } else if (next.status !== 'synced') {
+        setShowSuccess(false);
+      }
+    };
+    const onOnline = () => {
+      setOnline(true);
+      const pending = loadWealthSyncUiState();
+      if (pending.status !== 'synced') void syncWealthNow();
+    };
+    const onOffline = () => setOnline(false);
+    const onResume = () => {
+      if (document.visibilityState !== 'visible') return;
+      const pending = loadWealthSyncUiState();
+      if (pending.status !== 'synced' && navigator.onLine) void syncWealthNow();
+    };
+    window.addEventListener(WEALTH_SYNC_STATUS_UPDATED_EVENT, refresh);
+    window.addEventListener('storage', refresh);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    window.addEventListener('focus', onResume);
+    document.addEventListener('visibilitychange', onResume);
+    // Recover pending local changes after a browser restart / new app session.
+    const initial = loadWealthSyncUiState();
+    if (initial.status !== 'synced' && navigator.onLine) void syncWealthNow();
+    return () => {
+      clearHideTimer();
+      window.removeEventListener(WEALTH_SYNC_STATUS_UPDATED_EVENT, refresh);
+      window.removeEventListener('storage', refresh);
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+      window.removeEventListener('focus', onResume);
+      document.removeEventListener('visibilitychange', onResume);
+    };
+  }, []);
+
+  // Offline banner has priority; avoid stacking two fixed top strips.
+  if (!online) return null;
+  const pending = state.status !== 'synced';
+  if (!pending && !showSuccess) return null;
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={cn(
+        'fixed top-0 inset-x-0 z-[51] flex h-7 items-center justify-center gap-2 px-3 text-xs font-medium',
+        pending ? 'bg-amber-200 text-amber-950' : 'bg-emerald-200 text-emerald-950',
+      )}
+    >
+      {pending ? <LucideIcons.Clock3 size={13} /> : <LucideIcons.CheckCircle2 size={13} />}
+      <span className="truncate">{pending ? 'Pendiente de sincronización' : 'Sincronización realizada'}</span>
+    </div>
+  );
+};
+
 // --- BANNER DE CONEXIÓN ---
 
 export const ConnectionBanner: React.FC = () => {
