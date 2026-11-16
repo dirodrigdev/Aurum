@@ -40,6 +40,8 @@ import {
   loadFxRates,
   loadIncludeRiskCapitalInTotals,
   loadWealthRecords,
+  loadWealthSyncUiState,
+  syncWealthNow,
   previewLiveFxRates,
   resolveRiskCapitalRecordsForTotals,
   saveFxRates,
@@ -560,7 +562,14 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     document.addEventListener('visibilitychange', onVisibilityChange);
 
     (async () => {
-      await hydrateWealthFromCloudShared({ force: true, minIntervalMs: 0 });
+      // Never hydrate an older remote snapshot over unacknowledged local edits.
+      // First try to flush the pending snapshot; if it fails, retain local data.
+      if (loadWealthSyncUiState().status !== 'synced') {
+        if (navigator.onLine) await syncWealthNow();
+      }
+      if (loadWealthSyncUiState().status === 'synced') {
+        await hydrateWealthFromCloudShared({ force: true, minIntervalMs: 0 });
+      }
       if (cancelled) return;
       hydrated = true;
       await reconcileGastappRevisions();
