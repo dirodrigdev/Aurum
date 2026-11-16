@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { Gauge, Landmark, CalendarRange, Settings as SettingsIcon, LineChart } from 'lucide-react';
-import { cn, ConnectionBanner, FirestoreStatusBanner, FxSyncStatusBanner } from './Components';
+import { cn, ConnectionBanner, FirestoreStatusBanner, WealthSyncBanner, FxSyncStatusBanner } from './Components';
 import { WealthDeltaToast } from './ui/WealthDeltaToast';
 import { useWealthDelta } from '../hooks/useWealthDelta';
 import { AurumWordmark } from './AurumWordmark';
@@ -31,6 +31,7 @@ export const Layout: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900">
       <ConnectionBanner />
+      <WealthSyncBanner />
       <FirestoreStatusBanner onGoSettings={() => navigate('/settings')} />
 
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
