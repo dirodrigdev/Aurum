@@ -1652,7 +1652,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   }>({ label: '', currency: 'CLP', amount: '', note: '' });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [fintocStatus, setFintocStatus] = useState('');
-  const [savingToCloud, setSavingToCloud] = useState(false);
+  const savingToCloud = false; // Local saves no longer block on cloud confirmation.
   const [fintocDiscovering, setFintocDiscovering] = useState(false);
   const [fintocDiscovery, setFintocDiscovery] = useState<FintocDiscoverResponse | null>(null);
   const [fintocLastSync, setFintocLastSync] = useState<{
