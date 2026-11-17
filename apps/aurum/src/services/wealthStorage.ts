@@ -5348,15 +5348,23 @@ let wealthCloudSyncPromise: Promise<boolean> | null = null;
 let wealthCloudSyncRequestedWhileRunning = false;
 
 const syncWealthToCloudNow = async (): Promise<boolean> => {
+  // An immediate save consumes the debounced request too. Otherwise its old
+  // timer can turn a confirmed success back into a pending save minutes later.
+  if (wealthCloudSyncTimer) {
+    clearTimeout(wealthCloudSyncTimer);
+    wealthCloudSyncTimer = null;
+  }
   if (wealthCloudSyncPromise) {
     // A second caller observing the same in-flight snapshot is not a new edit.
     // Only actual local mutations (scheduleWealthCloudSync) request a follow-up.
     return wealthCloudSyncPromise;
   }
 
-  saveWealthSyncUiState({ status: 'syncing', at: nowIso() });
-  wealthCloudSyncPromise = (async () => {
+  // Install the shared promise before auth or UI callbacks can queue a save.
+  wealthCloudSyncPromise = Promise.resolve().then(async () => {
+    let acknowledgedLocalUpdatedAt: string | null = null;
     try {
+      saveWealthSyncUiState({ status: 'syncing', at: nowIso() });
       const ref = await getWealthCloudRef();
       if (!ref) {
         setLastWealthSyncIssue('no_uid_or_firebase_config');
@@ -5497,6 +5505,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
         return false;
       }
 
+      acknowledgedLocalUpdatedAt = localUpdatedAt;
       if (
         !sameRecords(localRecords, mergedRecords) ||
           !sameClosures(localClosures, mergedClosures) ||
@@ -5518,11 +5527,20 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
           skipCloudSync: true,
           silent: true,
         });
-        touchWealthUpdatedAt();
+        acknowledgedLocalUpdatedAt = touchWealthUpdatedAt();
         dispatchWealthDataUpdated();
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent(FX_RATES_UPDATED_EVENT, { detail: loadFxRates() }));
         }
+      }
+
+      // A synchronous data/FX subscriber may itself save a new local edit.
+      if (isWealthCloudWriteStale(acknowledgedLocalUpdatedAt, readWealthUpdatedAt())) {
+        acknowledgedLocalUpdatedAt = null;
+        wealthCloudSyncRequestedWhileRunning = true;
+        setLastWealthSyncIssue('local_state_changed_during_cloud_sync');
+        saveWealthSyncUiState({ status: 'dirty', at: nowIso(), message: 'Cambios sin guardar' });
+        return false;
       }
 
       if (publishResult.ok === false) {
@@ -5558,12 +5576,16 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       return false;
     } finally {
       wealthCloudSyncPromise = null;
-      if (wealthCloudSyncRequestedWhileRunning) {
-        wealthCloudSyncRequestedWhileRunning = false;
+      const needsFollowUp = wealthCloudSyncRequestedWhileRunning && (
+        acknowledgedLocalUpdatedAt === null ||
+        isWealthCloudWriteStale(acknowledgedLocalUpdatedAt, readWealthUpdatedAt())
+      );
+      wealthCloudSyncRequestedWhileRunning = false;
+      if (needsFollowUp) {
         scheduleWealthCloudSync(40);
       }
     }
-  })();
+  });
 
   return wealthCloudSyncPromise;
 };
@@ -5581,13 +5603,8 @@ export const syncWealthNow = async (): Promise<boolean> => {
   let authOrWriteRetries = 0;
   let queuedFollowUps = 0;
   while (authOrWriteRetries < 3) {
-    // Flush an idle debounced save now. When another save is in flight,
-    // syncWealthToCloudNow coalesces this request and schedules a follow-up;
-    // that follow-up must finish before callers verify the persisted state.
-    if (!wealthCloudSyncPromise && wealthCloudSyncTimer) {
-      clearTimeout(wealthCloudSyncTimer);
-      wealthCloudSyncTimer = null;
-    }
+    // The immediate path consumes the debounce and joins any in-flight write.
+    // If that write missed a local edit, finish its follow-up before returning.
     const ok = await syncWealthToCloudNow();
     if (ok && loadWealthSyncUiState().status === 'synced') {
       // A successful transaction has acknowledged the latest local snapshot.
@@ -5596,12 +5613,9 @@ export const syncWealthNow = async (): Promise<boolean> => {
       return true;
     }
     if (wealthCloudSyncRequestedWhileRunning || wealthCloudSyncTimer || wealthCloudSyncPromise) {
-      if (wealthCloudSyncTimer) {
-        clearTimeout(wealthCloudSyncTimer);
-        wealthCloudSyncTimer = null;
-      }
       queuedFollowUps += 1;
       if (queuedFollowUps <= 3) continue;
+      // Leave the automatic follow-up intact even when this caller stops waiting.
       setLastWealthSyncIssue('cloud_sync_kept_changing_during_close');
       return false;
     }
