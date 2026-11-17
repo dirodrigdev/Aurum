@@ -1,7 +1,8 @@
 import React from 'react';
 import { CalendarDays, ChevronDown, Info, LineChart, X, Zap } from 'lucide-react';
 import { Card, cn } from '../Components';
-import type { WealthCurrency } from '../../services/wealthStorage';
+import type { WealthCurrency, WealthMonthlyClosure } from '../../services/wealthStorage';
+import { InvestmentEvolutionPanel } from './InvestmentEvolutionPanel';
 import { formatCurrency, formatIsoDateTime, formatMonthLabel as monthLabel } from '../../utils/wealthFormat';
 import { getGastappMonthlyRuntimeDiagnostic } from '../../services/gastosMonthly';
 import { buildPendingOfficialReturnInfo, buildReturnsMonthlySourceDiagnostics } from '../../services/returnsAnalysis';
@@ -357,6 +358,7 @@ export type ReturnsTabProps = {
   periodSummaries: AggregatedSummary[];
   yearlySummaries: AggregatedSummary[];
   wealthEvolutionModel: WealthEvolutionComparisonModel;
+  investmentEvolution?: { closures: WealthMonthlyClosure[]; dataRevision: number };
   visualVariant?: 'official' | 'calendar-control';
 };
 
@@ -1219,6 +1221,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   periodSummaries,
   yearlySummaries,
   wealthEvolutionModel,
+  investmentEvolution,
   visualVariant = 'official',
 }) => {
   const estimatedToggleId = React.useId();
@@ -1973,6 +1976,13 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
 
     <WealthUfChartCard model={wealthEvolutionModel} />
     <WealthBase100ComparisonCard model={wealthEvolutionModel} />
+    {investmentEvolution && (
+      <InvestmentEvolutionPanel
+        closures={investmentEvolution.closures}
+        dataRevision={investmentEvolution.dataRevision}
+        currency={currency}
+      />
+    )}
 
     {provisionalEstimate && (
       <Card className="border-dashed border-amber-300 bg-white p-2.5 text-xs text-slate-700">
