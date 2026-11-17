@@ -45,7 +45,17 @@ for (const viewport of [
         service.requestImmediateWealthSync();
       });
       await firstCommit;
-      await expect(page.getByText('Pendiente de sincronización', { exact: true })).toBeVisible();
+      const pendingBanner = page.getByText('Pendiente de sincronización', { exact: true });
+      await expect.poll(() => page.evaluate(async () => {
+        const path = '/src/services/wealthStorage.ts';
+        return (await import(path)).loadWealthSyncUiState().status;
+      })).not.toBe('synced');
+      await page.evaluate(() => window.scrollTo(0, 200));
+      await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(4);
+      await expect(pendingBanner).toHaveCount(0);
+      await page.screenshot({ path: testInfo.outputPath(`sync-pending-scrolled-${viewport.name}.png`) });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await expect(pendingBanner).toBeVisible();
       await page.screenshot({ path: testInfo.outputPath(`sync-pending-${viewport.name}.png`), fullPage: true });
       await syncButton.click();
       resume();

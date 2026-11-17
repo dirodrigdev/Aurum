@@ -250,10 +250,15 @@ export const WealthSyncBanner: React.FC = () => {
   const [state, setState] = useState<WealthSyncUiState>(() => loadWealthSyncUiState());
   const [showSuccess, setShowSuccess] = useState(false);
   const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
+  const [atPageTop, setAtPageTop] = useState(() => typeof window === 'undefined' || window.scrollY <= 4);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastStatus = useRef(state.status);
 
   useEffect(() => {
+    const onScroll = () => {
+      const nextAtPageTop = window.scrollY <= 4;
+      setAtPageTop((current) => current === nextAtPageTop ? current : nextAtPageTop);
+    };
     const clearHideTimer = () => {
       if (hideTimer.current) clearTimeout(hideTimer.current);
       hideTimer.current = null;
@@ -287,6 +292,7 @@ export const WealthSyncBanner: React.FC = () => {
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', onOffline);
     window.addEventListener('focus', onResume);
+    window.addEventListener('scroll', onScroll, { passive: true });
     document.addEventListener('visibilitychange', onResume);
     // Recover pending local changes after a browser restart / new app session.
     const initial = loadWealthSyncUiState();
@@ -306,12 +312,13 @@ export const WealthSyncBanner: React.FC = () => {
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
       window.removeEventListener('focus', onResume);
+      window.removeEventListener('scroll', onScroll);
       document.removeEventListener('visibilitychange', onResume);
     };
   }, []);
 
   // Offline banner has priority; avoid stacking two fixed top strips.
-  if (!online) return null;
+  if (!online || !atPageTop) return null;
   const pending = state.status !== 'synced';
   if (!pending && !showSuccess) return null;
   return (

@@ -434,7 +434,7 @@ test('cross-app shared scenario applies GastApp revision, acknowledges once and 
       const { loadWealthSyncUiState } = await import('/src/services/wealthStorage.ts');
       return loadWealthSyncUiState().status;
     });
-    return status === 'synced' && firestoreCommitSequence.length > 0
+    return status === 'synced'
       && firestoreCommitSequence.every((attempt) => attempt.status !== null);
   };
   await expect.poll(browserSyncSettled, { timeout: 15_000 }).toBe(true);
@@ -708,14 +708,14 @@ test('accepted GastApp snapshots survive reload and match Dashboard and presenta
       const { loadWealthSyncUiState } = await import('/src/services/wealthStorage.ts');
       return loadWealthSyncUiState().status;
     });
-    return status === 'synced' && firestoreCommitSequence.length > 0
+    return status === 'synced'
       && firestoreCommitSequence.every((attempt) => attempt.status !== null);
   };
   await expect.poll(appSyncIsSettled, { timeout: 15_000 }).toBe(true);
+  expect(firestoreCommitSequence).toHaveLength(0);
   const settledCommitCount = firestoreCommitSequence.length;
   // The fixture below updates the cloud document through Admin SDK. Let initial
-  // app defaults/autosync finish first so this deliberate out-of-band seed cannot
-  // race a stale transaction from startup.
+  // reads settle first; read-only startup must not produce a cloud commit.
   await page.waitForTimeout(200);
   await expect.poll(appSyncIsSettled, { timeout: 15_000 }).toBe(true);
   expect(firestoreCommitSequence).toHaveLength(settledCommitCount);
@@ -1093,7 +1093,18 @@ test.beforeEach(async () => {
     records: julyRecords,
     closures: original.closures.filter((closure: { monthKey: string }) => closure.monthKey < '2026-07'),
     fx: rates,
-    instruments: [],
+    // This close fixture needs optional instruments. Seed them explicitly;
+    // opening Patrimonio must no longer create catalog entries in Firestore.
+    instruments: [
+      ['Capital de riesgo CLP', 'CLP'],
+      ['Capital de riesgo USD', 'USD'],
+      ['Tenencia / CxC', 'CLP'],
+      ['Tenencia / CxC USD', 'USD'],
+      ['Tenencia / CxC EUR', 'EUR'],
+    ].map(([label, currency], index) => ({
+      id: `e2e-close-instrument-${index + 1}`, label, currency,
+      createdAt: '2026-07-01T12:00:00.000Z',
+    })),
     closureDeletionTombstones: [],
   });
 });
@@ -1220,13 +1231,12 @@ async function prepare(
     return records.filter((record: { snapshotDate?: string }) => record.snapshotDate?.startsWith(`${targetMonth}-`)).length;
   }, monthKey), { message: `Synthetic records for ${monthKey} must hydrate before closing` }).toBeGreaterThan(0);
   await expect(page.getByRole('button', { name: 'Cerrar mes', exact: true })).toBeVisible();
-  // These optional instruments are created after cloud hydration. Read their
-  // final IDs before configuring this close fixture, not an intermediate list.
+  // Wait for the explicitly seeded catalog before configuring its rule IDs.
   await expect.poll(() => page.evaluate(() => {
     const instruments = JSON.parse(window.localStorage.getItem('wealth_investment_instruments_v1') || '[]');
     return ['Capital de riesgo CLP', 'Capital de riesgo USD'].every((label) =>
       instruments.some((instrument: { label: string }) => instrument.label === label));
-  }), { message: 'Default instruments must finish initializing before configuring the close fixture' }).toBe(true);
+  }), { message: 'Synthetic optional instruments must hydrate before configuring the close fixture' }).toBe(true);
   await page.evaluate(() => {
     const config = JSON.parse(window.localStorage.getItem('aurum.closing.config.v1') || '{"rules":{}}');
     const instruments = JSON.parse(window.localStorage.getItem('wealth_investment_instruments_v1') || '[]');

@@ -200,13 +200,6 @@ const BANKS_UPDATE_MODE_KEY = 'aurum.banks.update.mode.v1';
 const BANKS_UPDATE_MODE_CHANGED_EVENT = 'aurum:banks:update-mode';
 const CLOSING_CONFIG_STORAGE_KEY = 'aurum.closing.config.v1';
 const NEXT_MONTH_START_REMINDER_SNOOZE_PREFIX = 'aurum.next-month-start-reminder.snooze.v1.';
-const DEFAULT_BASE_INVESTMENT_INSTRUMENTS: Array<{ label: string; currency: WealthCurrency }> = [
-  { label: RISK_CAPITAL_LABEL_CLP, currency: 'CLP' },
-  { label: RISK_CAPITAL_LABEL_USD, currency: 'USD' },
-  { label: TENENCIA_CXC_PREFIX_LABEL, currency: 'CLP' },
-  { label: `${TENENCIA_CXC_PREFIX_LABEL} USD`, currency: 'USD' },
-  { label: `${TENENCIA_CXC_PREFIX_LABEL} EUR`, currency: 'EUR' },
-];
 
 type StartMonthActionKey = 'carry' | 'fx' | 'banks' | 'realEstate';
 type StartMonthActionStatus = Record<StartMonthActionKey, 'pending' | 'applied'>;
@@ -5062,22 +5055,8 @@ export const Patrimonio: React.FC = () => {
     };
   }, []);
 
-  useEffect(() => {
-    if (!hydrationReady) return;
-    const existing = new Set(investmentInstruments.map((item) => normalizeForMatch(item.label)));
-    const missingDefaults = DEFAULT_BASE_INVESTMENT_INSTRUMENTS.filter(
-      (item) => !existing.has(normalizeForMatch(item.label)),
-    );
-    if (!missingDefaults.length) return;
-    missingDefaults.forEach((item) => {
-      upsertInvestmentInstrument({
-        label: item.label,
-        currency: item.currency,
-        note: isRiskCapitalInvestmentLabel(item.label) ? 'Opcional: capital de riesgo' : undefined,
-      });
-    });
-    setInvestmentInstruments(loadInvestmentInstruments());
-  }, [hydrationReady, investmentInstruments]);
+  // Opening this screen only reads the persisted catalog. Instrument creation
+  // belongs to the explicit user action below, never to hydration/navigation.
 
   const monthRecords = useMemo(() => latestRecordsForMonth(records, monthKey), [records, monthKey]);
   const startMonthCheckpointRecord = useMemo(

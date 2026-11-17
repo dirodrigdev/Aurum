@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  auth: vi.fn(), transaction: vi.fn(), publish: vi.fn(), snapshot: vi.fn(),
+  auth: vi.fn(), transaction: vi.fn(), publish: vi.fn(), snapshot: vi.fn(), getDoc: vi.fn(),
 }));
 vi.mock('../src/services/firebase', () => ({
   db: {}, ensureAuthPersistence: mocks.auth, getCurrentUid: () => 'synthetic-user',
@@ -14,7 +14,7 @@ vi.mock('../src/services/midasPublished', () => ({ publishAurumOptimizableInvest
 vi.mock('firebase/firestore', async (original) => ({
   ...await original<typeof import('firebase/firestore')>(),
   doc: () => ({ path: 'aurum_wealth/synthetic-user' }),
-  runTransaction: mocks.transaction, onSnapshot: mocks.snapshot,
+  runTransaction: mocks.transaction, onSnapshot: mocks.snapshot, getDoc: mocks.getDoc,
 }));
 
 type Cloud = Record<string, unknown>;
@@ -36,6 +36,7 @@ beforeEach(async () => {
   mocks.auth.mockResolvedValue(undefined);
   mocks.publish.mockResolvedValue({ ok: true, snapshot: null });
   mocks.snapshot.mockImplementation((_ref, next) => { onSnapshot = next; return () => {}; });
+  mocks.getDoc.mockImplementation(async () => ({ exists: () => true, data: () => structuredClone(cloud) }));
   cloud = { records: [], closures: [], fx: { usdClp: 900, eurClp: 1000, ufClp: 39000 } };
   mocks.transaction.mockImplementation(async (_db, callback) => {
     const result = await callback({
@@ -48,6 +49,53 @@ beforeEach(async () => {
   service = await import('../src/services/wealthStorage');
   service.saveWealthRecords([record(123)], { skipCloudSync: true, silent: true });
 });
+
+describe('read-only hydration and Firestore subscription', () => {
+  it.each([false, true])('does not dirty or write on identical hydration (legacy catalog missing: %s)', async (legacy) => {
+    expect(await service.syncWealthNow()).toBe(true);
+    if (legacy) delete cloud.instruments;
+    const stamp = localStorage.getItem('wealth_updated_at_v1');
+    const before = structuredClone(cloud);
+    vi.clearAllMocks();
+    for (let i = 0; i < 3; i += 1) await service.hydrateWealthFromCloud();
+    await vi.advanceTimersByTimeAsync(300_001);
+    expect(service.loadWealthSyncUiState().status).toBe('synced');
+    expect(localStorage.getItem('wealth_updated_at_v1')).toBe(stamp);
+    expect(cloud).toEqual(before);
+    expect(mocks.getDoc).toHaveBeenCalledTimes(3);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.publish).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('does not dirty or write on identical snapshots (legacy catalog missing: %s)', async (legacy) => {
+    expect(await service.syncWealthNow()).toBe(true);
+    if (legacy) delete cloud.instruments;
+    await service.subscribeWealthCloud();
+    const stamp = localStorage.getItem('wealth_updated_at_v1');
+    const before = structuredClone(cloud);
+    vi.clearAllMocks();
+    for (let i = 0; i < 3; i += 1) {
+      onSnapshot?.({ exists: () => true, data: () => structuredClone(cloud) });
+    }
+    await vi.advanceTimersByTimeAsync(300_001);
+    expect(service.loadWealthSyncUiState().status).toBe('synced');
+    expect(localStorage.getItem('wealth_updated_at_v1')).toBe(stamp);
+    expect(cloud).toEqual(before);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.publish).not.toHaveBeenCalled();
+  });
+
+  it('still immediately persists an explicitly created instrument', async () => {
+    expect(await service.syncWealthNow()).toBe(true);
+    vi.clearAllMocks();
+    const instrument = service.upsertInvestmentInstrument({ label: 'Explicit synthetic instrument', currency: 'CLP' });
+    expect(service.loadWealthSyncUiState().status).toBe('dirty');
+    expect(await service.syncWealthNow()).toBe(true);
+    expect(cloud.instruments).toContainEqual(expect.objectContaining({ id: instrument?.id, label: 'Explicit synthetic instrument' }));
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(service.loadWealthSyncUiState().status).toBe('synced');
+  });
+});
 afterEach(async () => {
   if (root) await act(async () => root?.unmount());
   root = undefined; container?.remove(); container = undefined;
@@ -58,6 +106,41 @@ afterEach(async () => {
 const settle = async () => { for (let i = 0; i < 30; i += 1) await Promise.resolve(); };
 
 describe('wealth sync scheduling acknowledgement', () => {
+  it('hides pending and success banners while scrolled and restores them at the top', async () => {
+    const { WealthSyncBanner } = await import('../src/components/Components');
+    container = document.createElement('div'); document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => { root?.render(React.createElement(WealthSyncBanner)); });
+
+    const scrollDescriptor = Object.getOwnPropertyDescriptor(window, 'scrollY');
+    const scrollToY = async (y: number) => {
+      Object.defineProperty(window, 'scrollY', { configurable: true, value: y });
+      await act(async () => { window.dispatchEvent(new Event('scroll')); });
+    };
+    try {
+      await act(async () => {
+        service.scheduleWealthCloudSync(5000);
+        await settle();
+      });
+      expect(container.textContent).toContain('Pendiente de sincronización');
+
+      await scrollToY(120);
+      expect(container.textContent).not.toContain('Pendiente de sincronización');
+      await scrollToY(0);
+      expect(container.textContent).toContain('Pendiente de sincronización');
+
+      await act(async () => { expect(await service.syncWealthNow()).toBe(true); });
+      expect(container.textContent).toContain('Sincronización realizada');
+      await scrollToY(120);
+      expect(container.textContent).not.toContain('Sincronización realizada');
+      await scrollToY(0);
+      expect(container.textContent).toContain('Sincronización realizada');
+    } finally {
+      if (scrollDescriptor) Object.defineProperty(window, 'scrollY', scrollDescriptor);
+      else Reflect.deleteProperty(window, 'scrollY');
+    }
+  });
+
   it('does not leave the yellow banner behind a successful immediate/manual sync', async () => {
     service.scheduleWealthCloudSync(5000);
     service.requestImmediateWealthSync();

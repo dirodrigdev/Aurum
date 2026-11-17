@@ -571,7 +571,7 @@ export const AnalysisAurum: React.FC = () => {
             aria-controls="analysis-section-menu"
             aria-label={`${isSectionMenuOpen ? 'Ocultar' : 'Mostrar'} secciones de Análisis`}
             onClick={() => setIsSectionMenuOpen((open) => !open)}
-            className="flex h-10 min-w-0 w-[100px] shrink items-center justify-between gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-left text-[11px] font-semibold text-slate-700 touch-manipulation sm:w-[160px]"
+            className="flex h-10 min-w-0 w-[94px] shrink items-center justify-between gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-left text-[11px] font-semibold text-slate-700 touch-manipulation sm:w-[160px]"
           >
             <span className="truncate">{analysisTabLabel(tab)}</span>
             <ChevronDown
@@ -583,7 +583,7 @@ export const AnalysisAurum: React.FC = () => {
 
           {tab === 'returns' || tab === 'gastapp-validation' ? (
             <div
-              className="flex h-10 min-w-0 flex-1 items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 sm:max-w-[240px]"
+              className="flex h-12 min-w-0 flex-1 items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 sm:h-10 sm:max-w-[240px]"
               aria-label="Moneda"
               aria-busy={isCurrencyUpdating}
             >
@@ -592,7 +592,7 @@ export const AnalysisAurum: React.FC = () => {
                   key={item}
                   type="button"
                   onClick={() => setCurrency(item)}
-                  className={`h-9 min-w-0 flex-1 rounded-md px-1 text-[10px] font-semibold transition touch-manipulation ${
+                  className={`h-11 min-h-11 min-w-[44px] shrink-0 flex-1 rounded-md px-1 text-[10px] font-semibold transition touch-manipulation sm:h-9 sm:min-h-0 sm:min-w-0 sm:shrink ${
                     currency === item
                       ? 'bg-slate-800 text-white shadow-sm'
                       : 'text-slate-600'
