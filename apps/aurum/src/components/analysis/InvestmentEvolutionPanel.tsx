@@ -169,7 +169,7 @@ const EvolutionPlot: React.FC<PlotProps> = ({
                   key={rows[index].monthKey}
                   cx={x(index)}
                   cy={y(value)}
-                  r={hovered?.key === line.key && hovered.index === index ? 6 : 3.5}
+                  r={hovered?.key === line.key && hovered?.index === index ? 6 : 3.5}
                   stroke="white" strokeWidth="1.5" fill={line.color}
                   tabIndex={0}
                   role="button"
@@ -258,7 +258,7 @@ export const InvestmentEvolutionPanel: React.FC<InvestmentEvolutionPanelProps> =
   const visibleDefs = EVOLUTION_SERIES.filter((definition) => selected.includes(definition.key));
   const activeDefs = visibleDefs.filter((definition) => !focused || definition.key === focused);
   const scaleFactor = unitScale(currency);
-  const chartLines = useMemo<ChartLine[]>(() => activeDefs.map((definition) => {
+  const chartLines: ChartLine[] = activeDefs.map((definition) => {
     const rawValues = visibleMonths.map((row) => {
       const converted = convertEvolutionAmount(row.amountsClp[definition.key], currency, row.fx);
       return converted === null ? null : converted / scaleFactor;
@@ -271,9 +271,7 @@ export const InvestmentEvolutionPanel: React.FC<InvestmentEvolutionPanelProps> =
         ? rawValues.map(() => null)
         : rawValues.map((value) => value === null ? null : value / base * 100),
     };
-  // activeDefs is derived from stable metadata; key selection determines memo.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [visibleMonths, selected, focused, currency, scaleFactor, mode]);
+  });
   const validSeries = chartLines.filter((line) => line.values.some((value) => value !== null));
   const currentUnit = mode === 'base100' ? 'índice' : unitLabel(currency);
   const effectiveLayout = mode === 'base100' ? 'overlay' : layout;
