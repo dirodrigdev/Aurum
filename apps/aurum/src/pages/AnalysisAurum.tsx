@@ -5,7 +5,6 @@ import { useLocation } from 'react-router-dom';
 import { Button, Card } from '../components/Components';
 import { LabTab } from '../components/analysis/LabTab';
 import { ReturnsTab, type ReturnsTabProps } from '../components/analysis/ReturnsTab';
-import { InvestmentEvolutionPanel } from '../components/analysis/InvestmentEvolutionPanel';
 import { GastappMonthlyValidationTab } from '../components/analysis/GastappMonthlyValidationTab';
 import { GastappReportDownloads } from '../components/GastappReportDownloads';
 import type {
@@ -565,14 +564,14 @@ export const AnalysisAurum: React.FC = () => {
   return (
     <div className="space-y-3 p-3">
       <Card className="sticky top-[41px] z-20 border-slate-200 bg-white/95 p-1.5 backdrop-blur">
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        <div className="flex min-w-0 flex-nowrap items-center gap-1">
           <button
             type="button"
             aria-expanded={isSectionMenuOpen}
             aria-controls="analysis-section-menu"
             aria-label={`${isSectionMenuOpen ? 'Ocultar' : 'Mostrar'} secciones de Análisis`}
             onClick={() => setIsSectionMenuOpen((open) => !open)}
-            className="flex min-h-10 min-w-[118px] max-w-[180px] flex-[1_1_135px] items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 touch-manipulation"
+            className="flex h-10 min-w-0 w-[100px] shrink items-center justify-between gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-left text-[11px] font-semibold text-slate-700 touch-manipulation sm:w-[160px]"
           >
             <span className="truncate">{analysisTabLabel(tab)}</span>
             <ChevronDown
@@ -584,7 +583,7 @@ export const AnalysisAurum: React.FC = () => {
 
           {tab === 'returns' || tab === 'gastapp-validation' ? (
             <div
-              className="inline-flex min-h-10 items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5"
+              className="flex h-10 min-w-0 flex-1 items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 sm:max-w-[240px]"
               aria-label="Moneda"
               aria-busy={isCurrencyUpdating}
             >
@@ -593,7 +592,7 @@ export const AnalysisAurum: React.FC = () => {
                   key={item}
                   type="button"
                   onClick={() => setCurrency(item)}
-                  className={`min-h-11 min-w-[44px] rounded-md px-2 text-[10px] font-semibold transition touch-manipulation ${
+                  className={`h-9 min-w-0 flex-1 rounded-md px-1 text-[10px] font-semibold transition touch-manipulation ${
                     currency === item
                       ? 'bg-slate-800 text-white shadow-sm'
                       : 'text-slate-600'
@@ -605,12 +604,12 @@ export const AnalysisAurum: React.FC = () => {
             </div>
           ) : null}
 
-          <div className="ml-auto inline-flex min-h-10 items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 pl-2 pr-1 text-[9px] text-slate-500">
+          <div className="ml-auto inline-flex h-10 shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 pl-1 pr-0.5 text-[9px] text-slate-500">
             <span className="whitespace-nowrap">{formatAnalysisUpdatedAt(analysisEntry.builtAt)}</span>
             <button
               type="button"
               onClick={refreshAnalysisModels}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50 touch-manipulation"
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50 touch-manipulation"
               aria-label="Actualizar análisis"
               title="Actualizar análisis"
             >
@@ -675,10 +674,10 @@ export const AnalysisAurum: React.FC = () => {
           officialRowsWithoutCrp={monthlyRowsAscWithoutCrp}
         />
       ) : (
-        <>
-          <InvestmentEvolutionPanel closures={closures} dataRevision={wealthSourceVersion} />
-          <ReturnsTab {...returnsTabProps} />
-        </>
+        <ReturnsTab
+          {...returnsTabProps}
+          investmentEvolution={{ closures, dataRevision: wealthSourceVersion }}
+        />
       )}
 
       {revisionAudit && <GastappRevisionAuditTable rows={revisionAudit} />}
