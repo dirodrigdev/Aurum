@@ -291,7 +291,6 @@ export const InvestmentEvolutionPanel: React.FC<InvestmentEvolutionPanelProps> =
   };
   const resetView = () => {
     setPeriod(6);
-    setCurrency('CLP');
     setMode('balance');
     setScaleMode('auto');
     setManualMin('');
