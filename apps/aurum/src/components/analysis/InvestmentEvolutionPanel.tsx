@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useMemo, useState } from 'react';
-import { ChevronDown, Info, RotateCcw, SlidersHorizontal } from 'lucide-react';
+import { ChevronDown, Info, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
 import { Card } from '../Components';
 import { buildSmartVisualDomain } from './chartVisuals';
 import {
@@ -356,6 +356,7 @@ export const InvestmentEvolutionPanel: React.FC<InvestmentEvolutionPanelProps> =
               5 principales
             </button>
             <button type="button" className={buttonClass(showPicker)} aria-expanded={showPicker}
+              aria-controls="investment-evolution-series-picker"
               onClick={() => setShowPicker((value) => !value)}>
               Elegir ({selected.length})
             </button>
@@ -364,7 +365,7 @@ export const InvestmentEvolutionPanel: React.FC<InvestmentEvolutionPanelProps> =
       </div>
 
       {showPicker && (
-        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+        <div id="investment-evolution-series-picker" className="rounded-xl border border-slate-200 bg-slate-50 p-3">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs font-semibold text-slate-700">Seleccionar series</span>
             <div className="flex gap-2">
@@ -375,6 +376,13 @@ export const InvestmentEvolutionPanel: React.FC<InvestmentEvolutionPanelProps> =
               <button type="button" className="text-xs font-semibold text-slate-600 underline"
                 onClick={() => { setSelected([]); setFocused(null); }}>
                 Ninguna
+              </button>
+              <button type="button"
+                aria-label="Cerrar selección de inversiones"
+                title="Cerrar selector"
+                onClick={() => setShowPicker(false)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 touch-manipulation">
+                <X size={16} aria-hidden="true" />
               </button>
             </div>
           </div>
@@ -388,6 +396,12 @@ export const InvestmentEvolutionPanel: React.FC<InvestmentEvolutionPanelProps> =
                 <span>{item.label}</span>
               </label>
             ))}
+          </div>
+          <div className="mt-3 flex justify-end border-t border-slate-200 pt-3">
+            <button type="button" onClick={() => setShowPicker(false)}
+              className="min-h-10 rounded-lg bg-slate-800 px-4 text-xs font-semibold text-white shadow-sm hover:bg-slate-700 touch-manipulation">
+              Listo · ver gráfico
+            </button>
           </div>
         </div>
       )}
