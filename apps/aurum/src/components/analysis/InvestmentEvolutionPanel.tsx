@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useId, useMemo, useState } from 'react';
 import { ChevronDown, Info, RotateCcw, SlidersHorizontal } from 'lucide-react';
 import { Card } from '../Components';
 import { buildSmartVisualDomain } from './chartVisuals';
@@ -83,6 +83,7 @@ const EvolutionPlot: React.FC<PlotProps> = ({
   rows, lines, scaleMode, manualMin, manualMax, unit, compact = false,
 }) => {
   const [hovered, setHovered] = useState<{ key: EvolutionKey; index: number } | null>(null);
+  const clipId = useId();
   const values = lines.flatMap((line) => line.values.filter((value): value is number => value !== null));
   if (!values.length) {
     return <div className="rounded-lg bg-slate-50 p-5 text-center text-xs text-slate-500">
@@ -137,6 +138,11 @@ const EvolutionPlot: React.FC<PlotProps> = ({
         role="img"
         aria-label={'Curvas de evolución de inversiones, eje vertical en ' + unit}
       >
+        <defs>
+          <clipPath id={clipId}>
+            <rect x={left} y={top} width={plotWidth} height={plotHeight} />
+          </clipPath>
+        </defs>
         {Array.from({ length: 5 }, (_, index) => {
           const tick = min + (max - min) * index / 4;
           const yy = y(tick);
@@ -157,6 +163,7 @@ const EvolutionPlot: React.FC<PlotProps> = ({
             </text>
           ) : null,
         )}
+        <g clipPath={'url(#' + clipId + ')'}>
         {lines.map((line) => (
           <g key={line.key}>
             <path d={linePath(line.values)} fill="none" stroke={line.color}
@@ -182,6 +189,7 @@ const EvolutionPlot: React.FC<PlotProps> = ({
             })}
           </g>
         ))}
+        </g>
       </svg>
       {activeLine && hovered && activeValue !== null ? (
         <div className="flex min-h-8 flex-wrap items-center gap-x-3 gap-y-1 px-2 text-[11px] text-slate-700" role="status">
@@ -264,12 +272,13 @@ export const InvestmentEvolutionPanel: React.FC<InvestmentEvolutionPanelProps> =
       return converted === null ? null : converted / scaleFactor;
     });
     if (mode === 'balance') return { ...definition, values: rawValues };
-    const base = rawValues.find((value) => value !== null && value !== 0);
+    const baseIndex = rawValues.findIndex((value) => value !== null && value !== 0);
+    const base = baseIndex >= 0 ? rawValues[baseIndex] : null;
     return {
       ...definition,
-      values: base === undefined
+      values: base === null
         ? rawValues.map(() => null)
-        : rawValues.map((value) => value === null ? null : value / base * 100),
+        : rawValues.map((value, index) => index < baseIndex || value === null ? null : value / base * 100),
     };
   });
   const validSeries = chartLines.filter((line) => line.values.some((value) => value !== null));
