@@ -256,7 +256,6 @@ export const InvestmentEvolutionPanel: React.FC<InvestmentEvolutionPanelProps> =
   const history = useMemo(
     () => buildInvestmentEvolutionHistory(closures, loadWealthRecords(), loadFxRates()),
     // dataRevision signals newly hydrated/edited wealth records even if closures did not change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [closures, dataRevision],
   );
   const visibleMonths = useMemo(
