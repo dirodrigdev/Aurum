@@ -15,11 +15,11 @@ import type { WealthCurrency, WealthMonthlyClosure } from '../../services/wealth
 type Period = 3 | 6 | 12 | 14 | 18 | 24 | 36 | 'all';
 type ScaleMode = 'auto' | 'zero' | 'manual';
 type ChartMode = 'balance' | 'base100';
-type Layout = 'panels' | 'overlay';
 
 interface InvestmentEvolutionPanelProps {
   closures: WealthMonthlyClosure[];
   dataRevision: number;
+  currency: WealthCurrency;
 }
 
 type ChartLine = {
@@ -30,6 +30,8 @@ type ChartLine = {
 };
 
 const PERIODS: Period[] = [3, 6, 12, 14, 18, 24, 36, 'all'];
+const QUICK_PERIODS: Period[] = [3, 6, 12, 24, 'all'];
+const MORE_PERIODS: Period[] = [14, 18, 36];
 const PREFS_KEY = 'aurum:investment-evolution-view-v1';
 const monthNames = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sept', 'oct', 'nov', 'dic'];
 
@@ -53,7 +55,7 @@ const formatAxisNumber = (value: number) =>
   value.toLocaleString('es-CL', { maximumFractionDigits: Math.abs(value) < 10 ? 2 : 1 });
 
 const buttonClass = (active: boolean) =>
-  'min-h-9 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition touch-manipulation ' +
+  'min-h-9 rounded-lg border px-2 py-1.5 text-xs font-semibold transition touch-manipulation ' +
   (active ? 'border-slate-800 bg-slate-800 text-white shadow-sm' :
     'border-slate-200 bg-white text-slate-600 hover:bg-slate-50');
 
@@ -214,18 +216,13 @@ const EvolutionPlot: React.FC<PlotProps> = ({
 };
 
 export const InvestmentEvolutionPanel: React.FC<InvestmentEvolutionPanelProps> = ({
-  closures, dataRevision,
+  closures, dataRevision, currency,
 }) => {
   const [period, setPeriod] = useState<Period>(() => {
     const saved = readPrefs().period;
     return PERIODS.includes(saved as Period) ? saved as Period : 6;
   });
-  const [currency, setCurrency] = useState<WealthCurrency>(() => {
-    const saved = readPrefs().currency;
-    return ['CLP', 'USD', 'EUR', 'UF'].includes(String(saved)) ? saved as WealthCurrency : 'CLP';
-  });
   const [mode, setMode] = useState<ChartMode>(() => readPrefs().mode === 'base100' ? 'base100' : 'balance');
-  const [layout, setLayout] = useState<Layout>(() => readPrefs().layout === 'overlay' ? 'overlay' : 'panels');
   const [scaleMode, setScaleMode] = useState<ScaleMode>(() => {
     const saved = readPrefs().scaleMode;
     return saved === 'zero' || saved === 'manual' ? saved : 'auto';
@@ -246,12 +243,12 @@ export const InvestmentEvolutionPanel: React.FC<InvestmentEvolutionPanelProps> =
   useEffect(() => {
     try {
       localStorage.setItem(PREFS_KEY, JSON.stringify({
-        period, currency, mode, layout, scaleMode, selected,
+        period, mode, scaleMode, selected,
       }));
     } catch {
       // UI preferences do not affect financial data or cloud synchronization.
     }
-  }, [period, currency, mode, layout, scaleMode, selected]);
+  }, [period, mode, scaleMode, selected]);
 
   const history = useMemo(
     () => buildInvestmentEvolutionHistory(closures, loadWealthRecords(), loadFxRates()),
@@ -282,7 +279,6 @@ export const InvestmentEvolutionPanel: React.FC<InvestmentEvolutionPanelProps> =
   });
   const validSeries = chartLines.filter((line) => line.values.some((value) => value !== null));
   const currentUnit = mode === 'base100' ? 'índice' : unitLabel(currency);
-  const effectiveLayout = mode === 'base100' ? 'overlay' : layout;
   const lastMonth = visibleMonths.at(-1);
   const hasProvisional = Boolean(lastMonth?.provisional);
   const historicalMissing = validSeries.some((line) => line.values.some((value) => value === null));
@@ -297,7 +293,6 @@ export const InvestmentEvolutionPanel: React.FC<InvestmentEvolutionPanelProps> =
     setPeriod(6);
     setCurrency('CLP');
     setMode('balance');
-    setLayout('panels');
     setScaleMode('auto');
     setManualMin('');
     setManualMax('');
@@ -324,14 +319,32 @@ export const InvestmentEvolutionPanel: React.FC<InvestmentEvolutionPanelProps> =
       <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
         <div className="min-w-0">
           <p className="mb-1 text-[11px] font-semibold text-slate-500">Período</p>
-          <div className="flex flex-wrap gap-1" role="group" aria-label="Período de evolución">
-            {PERIODS.map((item) => (
+          <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Período de evolución">
+            {QUICK_PERIODS.map((item) => (
               <button key={item} type="button" aria-pressed={period === item}
                 onClick={() => { setPeriod(item); setFocused(null); }}
                 className={buttonClass(period === item)}>
                 {item === 'all' ? 'Todo' : String(item) + 'M'}
               </button>
             ))}
+            <select
+              aria-label="Otros períodos"
+              value={MORE_PERIODS.includes(period) ? period : ''}
+              onChange={(event) => {
+                if (!event.target.value) return;
+                setPeriod(Number(event.target.value) as Period);
+                setFocused(null);
+              }}
+              className={'min-h-9 rounded-lg border px-1.5 text-xs font-semibold touch-manipulation ' +
+                (MORE_PERIODS.includes(period)
+                  ? 'border-slate-800 bg-slate-800 text-white'
+                  : 'border-slate-200 bg-white text-slate-600')}
+            >
+              <option value="">Más…</option>
+              {MORE_PERIODS.map((item) => (
+                <option key={item} value={item}>{item}M</option>
+              ))}
+            </select>
           </div>
         </div>
         <div className="min-w-0">
@@ -380,20 +393,16 @@ export const InvestmentEvolutionPanel: React.FC<InvestmentEvolutionPanelProps> =
         </div>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 text-[11px] font-semibold text-slate-500">Moneda</span>
-          {(['CLP', 'USD', 'EUR', 'UF'] as WealthCurrency[]).map((item) => (
-            <button key={item} type="button" onClick={() => setCurrency(item)}
-              aria-pressed={currency === item} className={buttonClass(currency === item)}>{item}</button>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-1">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2">
+        <div className="flex items-center gap-1">
           <button type="button" className={buttonClass(mode === 'balance')} aria-pressed={mode === 'balance'}
             onClick={() => setMode('balance')}>Saldos</button>
           <button type="button" className={buttonClass(mode === 'base100')} aria-pressed={mode === 'base100'}
             onClick={() => setMode('base100')}>Base 100</button>
         </div>
+        <span className="text-[11px] font-medium text-slate-500">
+          {mode === 'base100' ? 'Índice (inicio = 100)' : 'Moneda: ' + currency}
+        </span>
       </div>
 
       {showAdvanced && (
@@ -427,19 +436,9 @@ export const InvestmentEvolutionPanel: React.FC<InvestmentEvolutionPanelProps> =
               </div>
             )}
           </div>
-          <div>
-            <p className="mb-1.5 text-xs font-semibold text-slate-700">Disposición de curvas</p>
-            <div className="flex flex-wrap gap-1">
-              <button type="button" className={buttonClass(layout === 'panels')}
-                onClick={() => setLayout('panels')}>Paneles independientes</button>
-              <button type="button" className={buttonClass(layout === 'overlay')}
-                onClick={() => setLayout('overlay')}>Superpuestas</button>
-            </div>
-            {mode === 'base100' && (
-              <p className="mt-1.5 text-[11px] text-slate-500">
-                En base 100 las curvas se superponen para facilitar su comparación.
-              </p>
-            )}
+          <div className="flex items-start text-[11px] text-slate-600">
+            <p>Un solo gráfico con todas las curvas seleccionadas. Pulsa una leyenda para aislarla
+              y ajustar automáticamente su escala. Los límites manuales permanecen disponibles.</p>
           </div>
           <div className="sm:col-span-2 flex justify-end">
             <button type="button" onClick={resetView}
@@ -480,34 +479,6 @@ export const InvestmentEvolutionPanel: React.FC<InvestmentEvolutionPanelProps> =
           {!visibleMonths.length ? 'Aún no hay cierres patrimoniales.' :
             'Selecciona alguna inversión en «Elegir» para mostrar su evolución.'}
         </div>
-      ) : effectiveLayout === 'panels' && !focused && validSeries.length > 1 ? (
-        <div className="grid gap-3 lg:grid-cols-2">
-          {validSeries.map((line) => {
-            const latest = [...line.values].reverse().find((value) => value !== null);
-            const first = line.values.find((value) => value !== null);
-            return (
-              <div key={line.key} className="min-w-0 rounded-xl border border-slate-200 p-2.5">
-                <div className="flex flex-wrap items-baseline justify-between gap-1 px-1">
-                  <button type="button" className="flex min-h-8 items-center gap-1.5 text-left text-xs font-semibold"
-                    onClick={() => setFocused(line.key)}>
-                    <span className="h-0.5 w-5" style={{ backgroundColor: line.color }} />
-                    {line.label}
-                  </button>
-                  <span className="text-xs font-semibold tabular-nums text-slate-700">
-                    {latest === undefined ? '—' : formatNumber(latest, 1)} {currentUnit}
-                    {first !== undefined && latest !== undefined && first !== 0 && (
-                      <span className="ml-2 text-[11px] font-normal text-slate-500">
-                        {formatNumber((latest / first - 1) * 100, 1)}%
-                      </span>
-                    )}
-                  </span>
-                </div>
-                <EvolutionPlot rows={visibleMonths} lines={[line]} scaleMode={scaleMode}
-                  manualMin={manualMin} manualMax={manualMax} unit={currentUnit} compact />
-              </div>
-            );
-          })}
-        </div>
       ) : validSeries.length ? (
         <EvolutionPlot rows={visibleMonths} lines={validSeries} scaleMode={scaleMode}
           manualMin={manualMin} manualMax={manualMax} unit={currentUnit} />
@@ -528,8 +499,8 @@ export const InvestmentEvolutionPanel: React.FC<InvestmentEvolutionPanelProps> =
           </p>
           {hasProvisional && <p>* Último mes provisional: valores todavía sujetos a cambios.</p>}
           {historicalMissing && <p>Algunas series empiezan después del inicio seleccionado: no se inventan valores anteriores.</p>}
-          {effectiveLayout === 'overlay' && validSeries.length > 1 && mode !== 'base100' &&
-            <p>Las series de distinta magnitud comparten eje. Elige «Paneles independientes» para apreciar sus movimientos.</p>}
+          {validSeries.length > 1 && mode !== 'base100' &&
+            <p>Las curvas comparten escala. Pulsa una inversión en la leyenda para aislarla y ver sus movimientos con mayor detalle; Base 100 facilita la comparación relativa.</p>}
           <p>Los subtotales y componentes individuales pueden solaparse; no deben sumarse entre sí.</p>
         </div>
       </div>
