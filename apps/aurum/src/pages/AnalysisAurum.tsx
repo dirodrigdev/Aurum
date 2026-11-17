@@ -5,6 +5,7 @@ import { useLocation } from 'react-router-dom';
 import { Button, Card } from '../components/Components';
 import { LabTab } from '../components/analysis/LabTab';
 import { ReturnsTab, type ReturnsTabProps } from '../components/analysis/ReturnsTab';
+import { InvestmentEvolutionPanel } from '../components/analysis/InvestmentEvolutionPanel';
 import { GastappMonthlyValidationTab } from '../components/analysis/GastappMonthlyValidationTab';
 import { GastappReportDownloads } from '../components/GastappReportDownloads';
 import type {
@@ -674,7 +675,10 @@ export const AnalysisAurum: React.FC = () => {
           officialRowsWithoutCrp={monthlyRowsAscWithoutCrp}
         />
       ) : (
-        <ReturnsTab {...returnsTabProps} />
+        <>
+          <InvestmentEvolutionPanel closures={closures} dataRevision={wealthSourceVersion} />
+          <ReturnsTab {...returnsTabProps} />
+        </>
       )}
 
       {revisionAudit && <GastappRevisionAuditTable rows={revisionAudit} />}
