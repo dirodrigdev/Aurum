@@ -130,7 +130,7 @@ export const buildInvestmentEvolutionHistory = (
   ));
   const todayKey = String(today.getFullYear()) + '-' + String(today.getMonth() + 1).padStart(2, '0');
   const latestClosed = official.at(-1);
-  if (latestClosed && todayKey <= latestClosed.monthKey) return months;
+  if (!records.length || (latestClosed && todayKey <= latestClosed.monthKey)) return months;
   const live = latestRecordsForMonth(records, todayKey);
   if (!live.length || !hasValidFx(liveFx)) return months;
 
