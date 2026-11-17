@@ -1,7 +1,6 @@
 import {
   buildCanonicalClosureSummary,
   dedupeLatestByAsset,
-  isRiskCapitalInvestmentLabel,
   latestRecordsForMonth,
   makeAssetKey,
 } from './wealthStorage';
