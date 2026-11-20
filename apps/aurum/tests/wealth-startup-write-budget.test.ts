@@ -12,7 +12,7 @@ describe('Aurum cold-open Firestore write budget', () => {
     expect(hydrateStart).toBeGreaterThan(0);
     expect(hydrateEnd).toBeGreaterThan(hydrateStart);
     expect(hydrateSource).not.toContain('publishAurumOptimizableInvestmentsSnapshot(');
-    expect(hydrateSource).toContain('if (cloudNeedsUpdate) scheduleWealthCloudSync(10)');
+    expect(hydrateSource).toContain('if (cloudNeedsUpdate) scheduleWealthCloudSync(10, { notifyUser: false })');
   });
 
   it('keeps the single MIDAS publication in the durable material sync path', () => {

@@ -682,10 +682,10 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setFsStatus(getFirestoreStatus());
   };
 
-  const syncLocalMutationNow = async () => {
+  const syncLocalMutationNow = async (notifyUser = false) => {
     let pushed = false;
     try {
-      pushed = await syncWealthNow();
+      pushed = await syncWealthNow({ notifyUser });
     } catch {
       pushed = false;
     }
@@ -2052,7 +2052,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         onToggle={() => toggleSection('sync')}
         onSyncNow={() => {
           void (async () => {
-            const pushed = await syncLocalMutationNow();
+            const pushed = await syncLocalMutationNow(true);
             const fs = getFirestoreStatus();
             setFsStatus(fs);
             setSyncMessage(describeManualSync(pushed));

@@ -8,6 +8,7 @@ import {
   loadFxLiveSyncMeta,
   loadFxRates,
   loadWealthSyncUiState,
+  loadWealthSyncFeedback,
   syncWealthNow,
   WEALTH_SYNC_STATUS_UPDATED_EVENT,
   WealthSyncUiState,
@@ -126,7 +127,7 @@ export const Input = React.forwardRef<
   const syncHint = useMemo(() => {
     if (syncState.status === 'dirty') return { icon: '🟡', text: 'Sin guardar', retry: false };
     if (syncState.status === 'syncing') return { icon: '🔄', text: 'Guardando', retry: false };
-    if (syncState.status === 'error') return { icon: '🔴', text: 'Error (reintentar)', retry: true };
+    if (syncState.status === 'error') return { icon: '🟡', text: 'Pendiente (reintentar)', retry: true };
     return { icon: '', text: '', retry: false };
   }, [syncState.status]);
 
@@ -177,7 +178,7 @@ export const Input = React.forwardRef<
           className={cn(
             'absolute -bottom-5 right-0 rounded-full border px-2 py-0.5 text-[10px] leading-none',
             syncHint.retry
-              ? 'border-rose-200 bg-rose-50 text-rose-700'
+              ? 'border-amber-200 bg-amber-50 text-amber-800'
               : 'border-slate-200 bg-white text-slate-500',
           )}
           tabIndex={syncHint.retry ? 0 : -1}
@@ -244,15 +245,19 @@ export const SwipeRow = ({
 };
 
 // --- ESTADO GLOBAL DE SINCRONIZACIÓN PATRIMONIAL ---
-// The pending state survives navigation and reloads through wealthStorage.
-// Never show a historical 'synced' value as a new success notification.
+// Pending writes survive reloads; notifications belong to user actions in this
+// session. Automatic reconciliation and recovery must remain silent.
 export const WealthSyncBanner: React.FC = () => {
   const [state, setState] = useState<WealthSyncUiState>(() => loadWealthSyncUiState());
+  const [feedback, setFeedback] = useState(loadWealthSyncFeedback);
+  const [showPending, setShowPending] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
   const [atPageTop, setAtPageTop] = useState(() => typeof window === 'undefined' || window.scrollY <= 4);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastStatus = useRef(state.status);
+  const lastUserActionId = useRef(feedback.userActionId);
+  const awaitingUserSave = useRef(false);
 
   useEffect(() => {
     const onScroll = () => {
@@ -265,15 +270,41 @@ export const WealthSyncBanner: React.FC = () => {
     };
     const refresh = () => {
       const next = loadWealthSyncUiState();
+      const nextFeedback = loadWealthSyncFeedback();
       const wasPending = lastStatus.current !== 'synced';
       lastStatus.current = next.status;
       setState(next);
-      clearHideTimer();
-      if (next.status === 'synced' && wasPending) {
-        setShowSuccess(true);
-        hideTimer.current = setTimeout(() => setShowSuccess(false), 10_000);
-      } else if (next.status !== 'synced') {
+      setFeedback(nextFeedback);
+      if (nextFeedback.userActionId !== lastUserActionId.current) {
+        lastUserActionId.current = nextFeedback.userActionId;
+        awaitingUserSave.current = true;
+        clearHideTimer();
         setShowSuccess(false);
+      }
+      if (nextFeedback.localSaveFailed) {
+        awaitingUserSave.current = false;
+        clearHideTimer();
+        setShowSuccess(false);
+        setShowPending(false);
+      } else if (next.status === 'error' && awaitingUserSave.current) {
+        // Data is already local. Explain once, then retry silently; a later
+        // recovery must not generate a fresh green success notification.
+        awaitingUserSave.current = false;
+        clearHideTimer();
+        setShowSuccess(false);
+        setShowPending(true);
+        hideTimer.current = setTimeout(() => setShowPending(false), 4000);
+      } else if (next.status === 'synced' && wasPending && awaitingUserSave.current) {
+        awaitingUserSave.current = false;
+        clearHideTimer();
+        setShowPending(false);
+        setShowSuccess(true);
+        hideTimer.current = setTimeout(() => setShowSuccess(false), 3000);
+      } else if (next.status !== 'synced' && awaitingUserSave.current) {
+        setShowPending(true);
+        setShowSuccess(false);
+      } else if (next.status === 'synced') {
+        setShowPending(false);
       }
     };
     const onOnline = () => {
@@ -317,10 +348,18 @@ export const WealthSyncBanner: React.FC = () => {
     };
   }, []);
 
-  // Offline banner has priority; avoid stacking two fixed top strips.
+  // A failed local save requires immediate attention, even offline or scrolled.
+  if (feedback.localSaveFailed) {
+    return (
+      <div role="alert" className="fixed top-0 inset-x-0 z-[52] flex h-7 items-center justify-center gap-2 bg-red-600 px-3 text-xs font-medium text-white">
+        <LucideIcons.AlertTriangle size={13} className="shrink-0" />
+        <span className="whitespace-nowrap">No se guardó aquí. Reintenta antes de cerrar.</span>
+      </div>
+    );
+  }
   if (!online || !atPageTop) return null;
   const pending = state.status !== 'synced';
-  if (!pending && !showSuccess) return null;
+  if (!(pending ? showPending : showSuccess)) return null;
   return (
     <div
       role="status"
@@ -331,7 +370,9 @@ export const WealthSyncBanner: React.FC = () => {
       )}
     >
       {pending ? <LucideIcons.Clock3 size={13} /> : <LucideIcons.CheckCircle2 size={13} />}
-      <span className="truncate">{pending ? 'Pendiente de sincronización' : 'Sincronización realizada'}</span>
+      <span className="truncate">{pending
+        ? state.status === 'error' ? 'Guardado aquí. Pendiente de sincronizar.' : 'Pendiente de sincronización'
+        : 'Sincronización realizada'}</span>
     </div>
   );
 };
@@ -358,9 +399,9 @@ export const ConnectionBanner: React.FC = () => {
   const WifiOff = (LucideIcons as any).WifiOff;
 
   return (
-    <div className="fixed top-0 inset-x-0 z-50 bg-red-600 text-white text-xs flex items-center justify-center gap-2 py-1">
-      <WifiOff size={14} />
-      <span>No se detecta conexión. Espera a tener internet para ingresar o sincronizar datos.</span>
+    <div className="fixed top-0 inset-x-0 z-50 bg-amber-200 text-amber-950 text-xs flex h-7 items-center justify-center gap-2 px-3">
+      <WifiOff size={13} className="shrink-0" />
+      <span className="whitespace-nowrap">Sin conexión. Reintento automático.</span>
     </div>
   );
 };
@@ -388,7 +429,7 @@ export const FirestoreStatusBanner: React.FC<{ onGoSettings?: () => void }> = ({
 
   if (status.state === 'ok' || status.state === 'checking') return null;
 
-  const topOffset = online ? 0 : 24; // si el banner de conexión está visible, bajamos este un poco
+  const topOffset = online ? 0 : 28; // deja espacio para la franja de conexión
 
   const ShieldAlert = (LucideIcons as any).ShieldAlert;
   const AlertTriangle = (LucideIcons as any).AlertTriangle;
@@ -407,9 +448,9 @@ export const FirestoreStatusBanner: React.FC<{ onGoSettings?: () => void }> = ({
   }
   if (status.state === 'quota') {
     title = 'Límite de Firestore alcanzado';
-    body = 'En este momento Firestore está rechazando lecturas/escrituras (cuota). La app puede mostrar datos antiguos, pero no guardará cambios hasta que se restablezca.';
+    body = 'La nube está rechazando lecturas/escrituras (cuota). Los cambios guardados en este dispositivo quedan pendientes de sincronización.';
     Icon = DatabaseZap;
-    bg = 'bg-red-600';
+    bg = 'bg-orange-600';
   }
   if (status.state === 'unavailable') {
     title = 'Firestore temporalmente no disponible';

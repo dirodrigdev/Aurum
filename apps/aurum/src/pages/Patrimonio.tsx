@@ -2105,9 +2105,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const upsertRecordForVisualMonth = (
     payload: Omit<WealthRecord, 'id' | 'createdAt'> & { id?: string },
     _operation: string,
+    notifyUser = true,
   ) => {
     const snapshotDate = normalizeSnapshotDateForVisualMonth(payload.snapshotDate);
-    const saved = upsertWealthRecord({ ...payload, snapshotDate });
+    const saved = upsertWealthRecord({ ...payload, snapshotDate }, { notifyUser });
     const persisted = loadWealthRecords().find((record) => record.id === saved.id) || saved;
     const inExpectedMonth = String(persisted.snapshotDate || '').startsWith(expectedMonthPrefix);
     if (!inExpectedMonth) {
@@ -3175,7 +3176,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
   const runFintocDiscovery = async (
     bankId: BankProviderId,
-    options?: { silent?: boolean; refreshIntentId?: string },
+    options?: { silent?: boolean; refreshIntentId?: string; notifyUser?: boolean },
   ): Promise<FintocReadOutcome | null> => {
     if (section !== 'bank') return;
     const silent = !!options?.silent;
@@ -3291,7 +3292,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           currency,
           snapshotDate,
           note,
-        }, `runFintocDiscovery:${label}`);
+        }, `runFintocDiscovery:${label}`, options?.notifyUser ?? !silent);
         if (!saved) throw new Error(`No pude guardar ${label} en ${monthLabel(monthKey).toLowerCase()}.`);
       };
       upsertByLabel(
@@ -3373,7 +3374,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     }
   };
 
-  const runRefreshForBank = async (bank: { id: BankProviderId; label: string }) => {
+  const runRefreshForBank = async (bank: { id: BankProviderId; label: string }, notifyUser = true) => {
     const linkToken = String(bankTokens[bank.id] || '').trim();
     const refreshIntent = await createFintocRefreshIntent(linkToken);
     if (!refreshIntent.ok || !refreshIntent.refresh_intent_id) {
@@ -3409,7 +3410,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       return { status: 'uncertain' as const, bankLabel: bank.label };
     }
 
-    const outcome = await runFintocDiscovery(bank.id, { silent: true, refreshIntentId });
+    const outcome = await runFintocDiscovery(bank.id, { silent: true, refreshIntentId, notifyUser });
     return outcome || { status: 'error' as const, bankLabel: bank.label };
   };
 
@@ -3434,7 +3435,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     }
     const outcomes: FintocReadOutcome[] = [];
     for (const bank of banksWithToken) {
-      const outcome = await runRefreshForBank(bank);
+      const outcome = await runRefreshForBank(bank, !silent);
       if (outcome) outcomes.push(outcome);
     }
     setUpdatingAllBanks(false);
