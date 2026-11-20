@@ -105,6 +105,160 @@ afterEach(async () => {
 // Flush the async Firestore/publication chain without advancing debounce timers.
 const settle = async () => { for (let i = 0; i < 30; i += 1) await Promise.resolve(); };
 
+const mountSyncBanner = async () => {
+  const { WealthSyncBanner } = await import('../src/components/Components');
+  container = document.createElement('div'); document.body.appendChild(container);
+  root = createRoot(container);
+  await act(async () => { root?.render(React.createElement(WealthSyncBanner)); });
+};
+
+describe('user save feedback and silent recovery', () => {
+  it('keeps automatic writes silent while still persisting them', async () => {
+    await mountSyncBanner();
+    await act(async () => {
+      service.saveWealthRecords([record(456)], { notifyUser: false });
+      await settle();
+    });
+    expect(service.loadWealthSyncUiState().status).toBe('dirty');
+    expect(container.textContent).toBe('');
+    await act(async () => { await vi.advanceTimersByTimeAsync(300_001); });
+    expect(service.loadWealthSyncUiState().status).toBe('synced');
+    expect(cloud.records).toEqual(service.loadWealthRecords());
+    expect(container.textContent).toBe('');
+  });
+
+  it('shows feedback for a user edit and dismisses success after three seconds', async () => {
+    await mountSyncBanner();
+    await act(async () => { service.saveWealthRecords([record(456)]); });
+    expect(container.textContent).toContain('Pendiente de sincronización');
+    await act(async () => { expect(await service.syncWealthNow()).toBe(true); });
+    expect(container.textContent).toContain('Sincronización realizada');
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(container.textContent).toBe('');
+  });
+
+  it('shows feedback for an explicit sync even without a new edit', async () => {
+    await mountSyncBanner();
+    await act(async () => { expect(await service.syncWealthNow({ notifyUser: true })).toBe(true); });
+    expect(container.textContent).toContain('Sincronización realizada');
+  });
+
+  it.each(['dirty', 'syncing', 'error'])('recovers a legacy %s state silently in a new session', async (status) => {
+    localStorage.setItem('aurum:wealth-sync-status-v1', JSON.stringify({ status, at: '2026-07-15T12:00:00.000Z' }));
+    await mountSyncBanner();
+    expect(service.loadWealthSyncUiState().status).toBe('synced');
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toBe('');
+  });
+
+  it('explains a cloud failure once without red, preserves local data, and retries silently', async () => {
+    await mountSyncBanner();
+    mocks.transaction.mockRejectedValueOnce(new Error('unavailable'));
+    await act(async () => {
+      service.saveWealthRecords([record(789)]);
+      service.requestImmediateWealthSync();
+      await settle();
+    });
+    expect(service.loadWealthSyncUiState().status).toBe('error');
+    expect(service.loadWealthRecords()[0].amount).toBe(789);
+    expect(container.textContent).toContain('Guardado aquí. Pendiente de sincronizar.');
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    expect(container.textContent).toBe('');
+    await act(async () => { await vi.advanceTimersByTimeAsync(56_000); });
+    expect(service.loadWealthSyncUiState().status).toBe('synced');
+    expect(cloud.records).toEqual(service.loadWealthRecords());
+    expect(container.textContent).toBe('');
+  });
+
+  it('does not let an unrelated storage event keep the green notice visible', async () => {
+    await mountSyncBanner();
+    await act(async () => {
+      service.saveWealthRecords([record(456)]);
+      expect(await service.syncWealthNow()).toBe(true);
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    await act(async () => { window.dispatchEvent(new StorageEvent('storage', { key: 'unrelated-preference' })); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(container.textContent).toBe('');
+  });
+
+  it('confirms a new user edit after an earlier cloud failure', async () => {
+    await mountSyncBanner();
+    mocks.transaction.mockRejectedValueOnce(new Error('unavailable'));
+    await act(async () => {
+      service.saveWealthRecords([record(456)]);
+      service.requestImmediateWealthSync();
+      await settle();
+    });
+    expect(service.loadWealthSyncUiState().status).toBe('error');
+    await act(async () => { service.saveWealthRecords([record(789)]); });
+    expect(container.textContent).toContain('Pendiente de sincronización');
+    await act(async () => { expect(await service.syncWealthNow()).toBe(true); });
+    expect(container.textContent).toContain('Sincronización realizada');
+    expect(service.loadWealthRecords()[0].amount).toBe(789);
+  });
+
+  it('shows red only for a failed local user write and does not clear it with a background refresh', async () => {
+    await mountSyncBanner();
+    const original = Storage.prototype.setItem;
+    const fail = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+      if (key === 'wealth_records_v1') throw new DOMException('Storage full', 'QuotaExceededError');
+      return original.call(this, key, value);
+    });
+    try {
+      await act(async () => {
+        expect(() => service.saveWealthRecords([record(999)])).toThrow('Storage full');
+      });
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain('No se guardó aquí. Reintenta antes de cerrar.');
+      expect(service.loadWealthRecords()[0].amount).toBe(123);
+      expect(mocks.transaction).not.toHaveBeenCalled();
+    } finally {
+      fail.mockRestore();
+    }
+    await act(async () => {
+      service.saveWealthRecords([record(123)], { skipCloudSync: true, silent: true });
+    });
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    await act(async () => { service.saveWealthRecords([record(999)]); });
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(service.loadWealthRecords()[0].amount).toBe(999);
+  });
+
+  it('keeps connection loss amber while showing a local save failure even offline and scrolled', async () => {
+    const onlineDescriptor = Object.getOwnPropertyDescriptor(navigator, 'onLine');
+    const scrollDescriptor = Object.getOwnPropertyDescriptor(window, 'scrollY');
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 200 });
+    const { ConnectionBanner, WealthSyncBanner } = await import('../src/components/Components');
+    container = document.createElement('div'); document.body.appendChild(container);
+    root = createRoot(container);
+    try {
+      await act(async () => { root?.render(React.createElement(React.Fragment, null,
+        React.createElement(ConnectionBanner), React.createElement(WealthSyncBanner),
+      )); });
+      expect(container.querySelector('.bg-red-600')).toBeNull();
+      expect(container.textContent).toContain('Sin conexión');
+      const original = Storage.prototype.setItem;
+      const fail = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+        if (key === 'wealth_records_v1') throw new DOMException('Storage full', 'QuotaExceededError');
+        return original.call(this, key, value);
+      });
+      try {
+        await act(async () => { expect(() => service.saveWealthRecords([record(999)])).toThrow('Storage full'); });
+        expect(container.querySelector('[role="alert"]')?.classList.contains('bg-red-600')).toBe(true);
+      } finally {
+        fail.mockRestore();
+      }
+    } finally {
+      if (onlineDescriptor) Object.defineProperty(navigator, 'onLine', onlineDescriptor);
+      else Reflect.deleteProperty(navigator, 'onLine');
+      if (scrollDescriptor) Object.defineProperty(window, 'scrollY', scrollDescriptor);
+      else Reflect.deleteProperty(window, 'scrollY');
+    }
+  });
+});
+
 describe('wealth sync scheduling acknowledgement', () => {
   it('hides pending and success banners while scrolled and restores them at the top', async () => {
     const { WealthSyncBanner } = await import('../src/components/Components');

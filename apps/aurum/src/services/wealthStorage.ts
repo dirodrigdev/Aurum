@@ -509,6 +509,7 @@ export const WEALTH_SYNC_STATUS_UPDATED_EVENT = 'aurum:wealth-sync-status-update
 type PersistOptions = {
   skipCloudSync?: boolean;
   silent?: boolean;
+  notifyUser?: boolean;
 };
 
 export const mortgageAutoCalcDefaults: MortgageAutoCalcConfig = {
@@ -653,6 +654,41 @@ const readWealthSyncUiStateFromStorage = (): WealthSyncUiState => {
 };
 
 export const loadWealthSyncUiState = (): WealthSyncUiState => readWealthSyncUiStateFromStorage();
+
+// Feedback belongs to this browser session, not the persisted financial state.
+// Recovering a pending write after reload must not announce a new user action.
+let wealthSyncUserActionId = 0;
+const failedLocalWealthKeys = new Set<string>();
+export const loadWealthSyncFeedback = () => ({
+  userActionId: wealthSyncUserActionId,
+  localSaveFailed: failedLocalWealthKeys.size > 0,
+});
+
+const dispatchWealthSyncFeedback = () => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(WEALTH_SYNC_STATUS_UPDATED_EVENT));
+  }
+};
+
+const markUserWealthSyncAction = () => {
+  wealthSyncUserActionId += 1;
+};
+
+const persistLocalWealthValue = (key: string, value: string, options?: PersistOptions) => {
+  const userWrite = !options?.skipCloudSync && options?.notifyUser !== false;
+  try {
+    localStorage.setItem(key, value);
+  } catch (error) {
+    if (userWrite) {
+      failedLocalWealthKeys.add(key);
+      dispatchWealthSyncFeedback();
+    }
+    throw error;
+  }
+  // Only retrying a user write can clear its failure. A background refresh
+  // writing the last confirmed data cannot confirm an unsuccessful edit.
+  if (userWrite && failedLocalWealthKeys.delete(key)) dispatchWealthSyncFeedback();
+};
 
 const saveWealthSyncUiState = (state: WealthSyncUiState) => {
   try {
@@ -1471,10 +1507,10 @@ const loadClosureDeletionTombstones = (): WealthClosureDeletionTombstone[] => {
 };
 
 const saveClosureDeletionTombstones = (items: WealthClosureDeletionTombstone[], options?: PersistOptions) => {
-  localStorage.setItem(CLOSURE_DELETION_TOMBSTONES_KEY, JSON.stringify(normalizeClosureDeletionTombstones(items)));
+  persistLocalWealthValue(CLOSURE_DELETION_TOMBSTONES_KEY, JSON.stringify(normalizeClosureDeletionTombstones(items)), options);
   touchWealthUpdatedAt();
   if (!options?.silent) dispatchWealthDataUpdated();
-  if (!options?.skipCloudSync) scheduleWealthCloudSync();
+  if (!options?.skipCloudSync) scheduleWealthCloudSync(undefined, options);
 };
 
 const clearAurumAndWealthLocalStorage = () => {
@@ -2146,10 +2182,10 @@ export const loadBankTokens = (): WealthBankTokenMap => {
 };
 
 export const saveBankTokens = (tokens: WealthBankTokenMap, options?: PersistOptions) => {
-  localStorage.setItem(BANK_TOKENS_KEY, JSON.stringify(normalizeBankTokensFromRaw(tokens)));
+  persistLocalWealthValue(BANK_TOKENS_KEY, JSON.stringify(normalizeBankTokensFromRaw(tokens)), options);
   touchWealthUpdatedAt();
   if (!options?.silent) dispatchWealthDataUpdated();
-  if (!options?.skipCloudSync) scheduleWealthCloudSync();
+  if (!options?.skipCloudSync) scheduleWealthCloudSync(undefined, options);
 };
 
 export const loadInvestmentInstruments = (): WealthInvestmentInstrument[] => {
@@ -2190,27 +2226,28 @@ const loadDeletedRecordAssetMonthKeys = (): string[] => {
 };
 
 const saveDeletedRecordIds = (ids: string[], options?: PersistOptions) => {
-  localStorage.setItem(DELETED_RECORD_IDS_KEY, JSON.stringify(normalizeDeletedRecordIds(ids)));
+  persistLocalWealthValue(DELETED_RECORD_IDS_KEY, JSON.stringify(normalizeDeletedRecordIds(ids)), options);
   touchWealthUpdatedAt();
   if (!options?.silent) dispatchWealthDataUpdated();
-  if (!options?.skipCloudSync) scheduleWealthCloudSync();
+  if (!options?.skipCloudSync) scheduleWealthCloudSync(undefined, options);
 };
 
 const saveDeletedRecordAssetMonthKeys = (keys: string[], options?: PersistOptions) => {
-  localStorage.setItem(
+  persistLocalWealthValue(
     DELETED_RECORD_ASSET_MONTH_KEYS_KEY,
     JSON.stringify(normalizeDeletedRecordAssetMonthKeys(keys)),
+    options,
   );
   touchWealthUpdatedAt();
   if (!options?.silent) dispatchWealthDataUpdated();
-  if (!options?.skipCloudSync) scheduleWealthCloudSync();
+  if (!options?.skipCloudSync) scheduleWealthCloudSync(undefined, options);
 };
 
 export const saveInvestmentInstruments = (items: WealthInvestmentInstrument[], options?: PersistOptions) => {
-  localStorage.setItem(INSTRUMENTS_KEY, JSON.stringify(items));
+  persistLocalWealthValue(INSTRUMENTS_KEY, JSON.stringify(items), options);
   touchWealthUpdatedAt();
   if (!options?.silent) dispatchWealthDataUpdated();
-  if (!options?.skipCloudSync) scheduleWealthCloudSync();
+  if (!options?.skipCloudSync) scheduleWealthCloudSync(undefined, options);
 };
 
 export const upsertInvestmentInstrument = (input: {
@@ -2280,13 +2317,16 @@ export const setInvestmentInstrumentMonthExcluded = (
 };
 
 export const saveWealthRecords = (records: WealthRecord[], options?: PersistOptions) => {
-  localStorage.setItem(RECORDS_KEY, JSON.stringify(records));
+  persistLocalWealthValue(RECORDS_KEY, JSON.stringify(records), options);
   touchWealthUpdatedAt();
   if (!options?.silent) dispatchWealthDataUpdated();
-  if (!options?.skipCloudSync) scheduleWealthCloudSync();
+  if (!options?.skipCloudSync) scheduleWealthCloudSync(undefined, options);
 };
 
-export const upsertWealthRecord = (input: Omit<WealthRecord, 'id' | 'createdAt'> & { id?: string }) => {
+export const upsertWealthRecord = (
+  input: Omit<WealthRecord, 'id' | 'createdAt'> & { id?: string },
+  options?: PersistOptions,
+) => {
   const current = loadWealthRecords();
   const id = input.id || crypto.randomUUID();
   const numericAmount = toNumber(input.amount);
@@ -2314,10 +2354,10 @@ export const upsertWealthRecord = (input: Omit<WealthRecord, 'id' | 'createdAt'>
   );
   const merged = [next, ...filteredCurrent];
 
-  saveWealthRecords(merged.sort(sortByCreatedDesc));
+  saveWealthRecords(merged.sort(sortByCreatedDesc), options);
   const deletedIds = loadDeletedRecordIds();
   if (deletedIds.includes(id)) {
-    saveDeletedRecordIds(deletedIds.filter((item) => item !== id));
+    saveDeletedRecordIds(deletedIds.filter((item) => item !== id), options);
   }
   const assetMonthKey = makeAssetMonthKey(next);
   if (assetMonthKey) {
@@ -2325,6 +2365,7 @@ export const upsertWealthRecord = (input: Omit<WealthRecord, 'id' | 'createdAt'>
     if (deletedAssetMonthKeys.includes(assetMonthKey)) {
       saveDeletedRecordAssetMonthKeys(
         deletedAssetMonthKeys.filter((item) => item !== assetMonthKey),
+        options,
       );
     }
   }
@@ -3530,10 +3571,10 @@ export const loadClosures = (): WealthMonthlyClosure[] => {
 
 export const saveClosures = (closures: WealthMonthlyClosure[], options?: PersistOptions) => {
   const sorted = [...closures].sort(compareClosuresByMonthDesc);
-  localStorage.setItem(CLOSURES_KEY, JSON.stringify(sorted));
+  persistLocalWealthValue(CLOSURES_KEY, JSON.stringify(sorted), options);
   touchWealthUpdatedAt();
   if (!options?.silent) dispatchWealthDataUpdated();
-  if (!options?.skipCloudSync) scheduleWealthCloudSync();
+  if (!options?.skipCloudSync) scheduleWealthCloudSync(undefined, options);
 };
 
 const cloneClosureForCheckpoint = (closure: WealthMonthlyClosure | null): WealthMonthlyClosure | null => {
@@ -5582,7 +5623,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       );
       wealthCloudSyncRequestedWhileRunning = false;
       if (needsFollowUp) {
-        scheduleWealthCloudSync(40);
+        scheduleWealthCloudSync(40, { notifyUser: false });
       }
     }
   });
@@ -5598,7 +5639,11 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
  * writes unless you explicitly need reconciliation/debugging: the local state is
  * already the source of truth for the current UI transaction.
  */
-export const syncWealthNow = async (): Promise<boolean> => {
+export const syncWealthNow = async (options?: { notifyUser?: boolean }): Promise<boolean> => {
+  if (options?.notifyUser) {
+    markUserWealthSyncAction();
+    if (wealthCloudSyncPromise) dispatchWealthSyncFeedback();
+  }
   // Reintento corto para tolerar ventanas donde auth.currentUser aún se rehidrata.
   let authOrWriteRetries = 0;
   let queuedFollowUps = 0;
@@ -5630,17 +5675,23 @@ export const requestImmediateWealthSync = () => {
     requestedAt: nowIso(),
     localFxUsdClp: Number(loadFxRates()?.usdClp ?? NaN),
   });
+  markUserWealthSyncAction();
   saveWealthSyncUiState({ status: 'dirty', at: nowIso(), message: 'Cambios sin guardar' });
   void syncWealthToCloudNow();
 };
 
-export const scheduleWealthCloudSync = (delayMs = WEALTH_SYNC_BATCH_INTERVAL_MS) => {
+export const scheduleWealthCloudSync = (
+  delayMs = WEALTH_SYNC_BATCH_INTERVAL_MS,
+  options?: { notifyUser?: boolean },
+) => {
   if (typeof window === 'undefined') return;
+  if (options?.notifyUser !== false) markUserWealthSyncAction();
   if (!wealthCloudSyncPromise) {
     saveWealthSyncUiState({ status: 'dirty', at: nowIso(), message: 'Cambios sin guardar' });
   }
   if (wealthCloudSyncPromise) {
     wealthCloudSyncRequestedWhileRunning = true;
+    if (options?.notifyUser !== false) dispatchWealthSyncFeedback();
     return;
   }
   if (wealthCloudSyncTimer) clearTimeout(wealthCloudSyncTimer);
@@ -5774,7 +5825,7 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     // publishes MIDAS once after its durable wealth write. Publishing here as
     // well created a fresh publishedAt and rewrote optimizableInvestments on
     // every cold open even when the payload was otherwise identical.
-    if (cloudNeedsUpdate) scheduleWealthCloudSync(10);
+    if (cloudNeedsUpdate) scheduleWealthCloudSync(10, { notifyUser: false });
 
     if (!hasLocalData && hasRemoteData) return 'cloud';
     if (localNeedsUpdate && hasRemoteData) return 'cloud';
@@ -6119,13 +6170,13 @@ const sameClosures = (a: WealthMonthlyClosure[], b: WealthMonthlyClosure[]) => {
 };
 
 const saveFxRatesInternal = (rates: WealthFxRates, options?: PersistOptions) => {
-  localStorage.setItem(FX_KEY, JSON.stringify(rates));
+  persistLocalWealthValue(FX_KEY, JSON.stringify(rates), options);
   touchWealthUpdatedAt();
   if (!options?.silent && typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(FX_RATES_UPDATED_EVENT, { detail: rates }));
   }
   if (!options?.silent) dispatchWealthDataUpdated();
-  if (!options?.skipCloudSync) scheduleWealthCloudSync();
+  if (!options?.skipCloudSync) scheduleWealthCloudSync(undefined, options);
 };
 
 export const upsertMonthlyClosure = (input: {
@@ -7301,7 +7352,7 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
             loadClosures().length > 0 ||
             loadInvestmentInstruments().length > 0 ||
             Object.keys(loadBankTokens()).length > 0;
-          if (hasLocalData) scheduleWealthCloudSync(20);
+          if (hasLocalData) scheduleWealthCloudSync(20, { notifyUser: false });
           return;
         }
 
@@ -7374,7 +7425,7 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
           !sameStringList(merged.deletedRecordIds, remote.deletedRecordIds) ||
           !sameStringList(merged.deletedRecordAssetMonthKeys, remote.deletedRecordAssetMonthKeys) ||
           JSON.stringify(merged.fx) !== JSON.stringify(remote.fx);
-        if (cloudNeedsUpdate) scheduleWealthCloudSync(20);
+        if (cloudNeedsUpdate) scheduleWealthCloudSync(20, { notifyUser: false });
       },
       (err) => {
         setLastWealthSyncIssue(`${(err as any)?.code || 'snapshot_error'} ${(err as any)?.message || ''}`.trim());
