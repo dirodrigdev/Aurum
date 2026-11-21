@@ -373,7 +373,7 @@ const isOfficialClosedSpend = (row: MonthlyReturnRow) =>
   row.gastosContractSource !== 'legacy_static' &&
   row.gastosDayToDaySource !== 'legacy';
 
-const hasOfficialClosedSpend = (
+export const hasOfficialClosedSpend = (
   row: MonthlyReturnRow,
 ): row is MonthlyReturnRow & {
   gastosClp: number;

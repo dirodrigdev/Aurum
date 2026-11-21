@@ -29,6 +29,10 @@ vi.mock('../src/components/analysis/ReturnsTab', () => ({
   ReturnsTab: () => React.createElement('div', null, 'ReturnsTab mock'),
 }));
 
+vi.mock('../src/components/analysis/PortfolioReview', () => ({
+  PortfolioReview: () => null,
+}));
+
 vi.mock('../src/components/analysis/FreedomTab', () => ({
   FreedomTab: () => React.createElement('div', null, 'FreedomTab mock'),
 }));

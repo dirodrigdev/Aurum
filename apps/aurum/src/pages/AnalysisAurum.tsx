@@ -5,6 +5,7 @@ import { useLocation } from 'react-router-dom';
 import { Button, Card } from '../components/Components';
 import { LabTab } from '../components/analysis/LabTab';
 import { ReturnsTab, type ReturnsTabProps } from '../components/analysis/ReturnsTab';
+import { PortfolioReview } from '../components/analysis/PortfolioReview';
 import { GastappMonthlyValidationTab } from '../components/analysis/GastappMonthlyValidationTab';
 import { GastappReportDownloads } from '../components/GastappReportDownloads';
 import type {
@@ -712,6 +713,14 @@ export const AnalysisAurum: React.FC = () => {
       </Card>
 
       {tab !== 'lab' && <GastappReportDownloads />}
+      {tab === 'returns' && (
+        <PortfolioReview
+          closures={closures}
+          rows={returnsSeriesView.officialRows}
+          currency={analysisCurrency}
+          includeRisk={includeRiskCapitalInTotals}
+        />
+      )}
     </div>
   );
 };
